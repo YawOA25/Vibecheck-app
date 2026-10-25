@@ -1,0 +1,13 @@
+# Prettier auto-formats our code so it always looks the same.
+# Its settings live in .prettierrc.json (single quotes, 100-character lines,
+# trailing commas). JSON files can't hold comments, so they are explained here.
+#
+# Folders and files below are generated or installed, not written by us,
+# so Prettier leaves them alone.
+node_modules/
+.expo/
+dist/
+coverage/
+assets/
+package-lock.json
+expo-env.d.ts

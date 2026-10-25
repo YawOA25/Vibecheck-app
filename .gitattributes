@@ -1,0 +1,10 @@
+# Line endings: always store and check out text files with Unix-style (LF) endings.
+#
+# Why: git on Windows normally converts files to Windows-style (CRLF) endings
+# when it checks them out. Prettier expects LF, so after a fresh checkout
+# `npm run check` would fail on every file even though nothing changed.
+# This rule keeps LF everywhere, on every computer.
+* text=auto eol=lf
+
+# Images are binary: never touch their bytes.
+*.png binary

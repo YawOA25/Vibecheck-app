@@ -1,0 +1,20 @@
+// TypeScript settings for VibeCheck.
+// - "extends" pulls in Expo's recommended base settings, so we only list our changes.
+// - "strict" turns on all of TypeScript's safety checks. It catches bugs such as
+//   using a value that might be missing before we ever run the app.
+// - "paths" lets us write `import { colors } from '@/theme'` instead of long
+//   relative paths like '../../src/theme'. '@/' always means the `src/` folder.
+// - "types" lists global type packages to load. TypeScript 6 stopped loading
+//   them automatically, so without "jest" here the tests' `describe`, `it`
+//   and `expect` would be unknown names.
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "types": ["jest"],
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"]
+}

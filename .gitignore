@@ -1,0 +1,38 @@
+# Files git should never save for the VibeCheck app.
+# The repo-level .gitignore already covers .env, node_modules and editor files.
+# We repeat the most important ones here so the app stays safe even if it is
+# ever moved out of this repo.
+
+# Secrets: real keys live in .env on your PC only. .env.example is the safe template.
+.env
+.env.*
+!.env.example
+
+# Installed packages (recreated by `npm install`)
+node_modules/
+
+# Expo's local cache and generated type files (recreated by `npx expo start`)
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native project folders. Expo generates these during builds, so we never edit or save them.
+/ios
+/android
+
+# Signing keys for the app stores (never commit)
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.pem
+
+# Metro (the bundler) health-check files
+.metro-health-check*
+
+# Logs and test coverage reports
+npm-debug.*
+coverage/
+*.tsbuildinfo
