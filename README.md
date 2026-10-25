@@ -2,36 +2,60 @@
 
 A phone app (iPhone and Android) that shows the live "vibe" of a party, rated by the guests who are there. Built with Expo, TypeScript and expo-router. The full plan is in `team/projects/vibecheck/mvp-plan.md`.
 
+## Where the app folder is
+
+All commands below are for **PowerShell** (the normal Windows terminal, and the one in VS Code).
+
+- **Right now (before this branch is merged):** `C:\dev\wt\vibecheck\apps\vibecheck`. This is a separate working copy (a "worktree") used while the cto reviews the code.
+- **After the branch is merged into main:** `C:\dev\startup\apps\vibecheck`. That folder doesn't exist on main until then.
+
+Use whichever one applies in the `cd` commands below. The examples use the current one.
+
 ## What you need
 
-- **Node 22.13 or newer.** Expo refuses to start on older versions. Your PC has Node 22.14 through `fnm`, and the `.node-version` file in this folder tells fnm which version to use. If `node -v` shows 22.12, run `fnm use` in this folder first.
-- **Expo Go** on your iPhone (free, App Store).
+- **Node 22.13 or newer.** Expo refuses to start on older versions, and this PC's Node is 22.12. Check yours with `node -v`. Pick one fix:
+  - **(a) Recommended, one time:** download the latest **Node 22 LTS** installer from [nodejs.org](https://nodejs.org) and run it. It upgrades your current Node in place. Open a new PowerShell window and check that `node -v` shows 22.13 or newer. You never need to think about this again.
+  - **(b) Per terminal, no install:** this PC already has Node 22.14 through a tool called `fnm`, but a new PowerShell window doesn't know about it yet. Run these two lines in each new window, inside the app folder:
+    ```powershell
+    fnm env --use-on-cd | Out-String | Invoke-Expression   # teaches this window how to use fnm
+    fnm use                                                  # switches to the version in .node-version (22.14.0)
+    ```
+- **Expo Go** on your iPhone (free, App Store). Keep it updated: see the troubleshooting notes below.
 - Your iPhone and your PC on the **same Wi-Fi network**.
 
 ## First-time setup
 
-```bash
-cd apps/vibecheck
-npm install            # downloads the packages the app uses (into node_modules/)
-cp .env.example .env   # makes your private settings file (filled in from task VC-B02)
+```powershell
+cd C:\dev\wt\vibecheck\apps\vibecheck
+npm install                      # downloads the packages the app uses (into node_modules\)
+Copy-Item .env.example .env      # makes your private settings file (filled in from task VC-B02)
 ```
 
 ## Open the app on your iPhone (Expo Go)
 
-1. In this folder, run `npx expo start`.
-2. A QR code appears in the terminal.
-3. On your iPhone, open the **Camera** app and point it at the QR code. Tap the "Open in Expo Go" banner.
-4. The app loads and shows the **Tonight** screen.
+1. In PowerShell, in the app folder, run:
+   ```powershell
+   cd C:\dev\wt\vibecheck\apps\vibecheck
+   npx expo start
+   ```
+2. **First time only:** Windows may show a **Windows Defender Firewall** pop-up for "Node.js". Tick **Private networks** and click **Allow access**. Without this, your phone can't reach your PC.
+3. A QR code appears in the terminal.
+4. On your iPhone, open the **Camera** app and point it at the QR code. Tap the "Open in Expo Go" banner.
+5. The app loads and shows the **Tonight** screen.
 
 Save a file on your PC and the phone updates by itself within a second or two. Press `r` in the terminal to reload the app, or `Ctrl+C` to stop.
 
-**If the phone can't connect:** check you're on the same Wi-Fi. If it still fails (some home or office networks block it), stop and run `npx expo start --tunnel` instead, which goes through the internet.
+**If something goes wrong:**
+
+- **The phone can't connect or keeps loading:** check that both are on the same Wi-Fi, and that you allowed Node.js through the firewall (step 2). If it still fails, press `Ctrl+C`, then run `npx expo start --tunnel`. This sends the connection through the internet instead of your Wi-Fi. It's slower, but it works on most networks.
+- **Expo Go says the project needs a different SDK version:** update Expo Go from the App Store. This app uses Expo SDK 58, and an older Expo Go can't open it.
+- **`npx expo start` says Node is outdated:** see "What you need" above.
 
 **Android emulator:** with the emulator running, run `npx expo start` and press `a`.
 
 ## Checks (run before every commit)
 
-```bash
+```powershell
 npm run check
 ```
 
