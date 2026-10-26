@@ -126,6 +126,37 @@ $env:VIBECHECK_REQUIRE_DB = "1"; npm run check; Remove-Item Env:VIBECHECK_REQUIR
 
 **Try it on your iPhone:** start the app (above), type your email, type the code from the email, then enter a name and a date of birth. A date less than 18 years ago shows "Sorry, VibeCheck is for people 18 and older." and only offers Sign out. An adult date takes you to Tonight, which has a **Sign out** button at the bottom.
 
+## Admins and creating events (VC-B04)
+
+**How it works.** Only admins can create or edit events. The server functions `create_event` and `update_event` check the caller's profile `role`, and refuse everyone else, even with a hand-made request that skips the app. Admins see a gold **New event** button in the Tonight header; nobody else does. The exact location (map pin), the check-in radius and the party code are saved in a private table that no app user can read. Guests only see the title, the area label (neighbourhood, never an address) and the times.
+
+**Make yourself an admin (one time, by hand).** The app has no way to make someone an admin, on purpose: users can't change their own `role`. You do it once in the Supabase dashboard:
+
+1. Sign in to the app once and finish the age gate, so you have a profile.
+2. In the Supabase dashboard, open the project (`vibecheck-dev` for testing; the real project later), then **SQL Editor > New query**.
+3. Paste this, put your sign-in email in place of `you@example.com`, and click **Run**:
+
+```sql
+-- One-off: make the founder an admin (VC-B04).
+-- Finds your login by email and sets role = 'admin' on that profile only.
+-- "returning" shows the row it changed, so you can check it was you.
+update public.profiles p
+set role = 'admin'
+from auth.users u
+where u.id = p.id
+  and u.email = 'you@example.com'
+returning p.id, p.display_name, p.role;
+```
+
+4. Check the result shows one row with your name and `admin`. If it shows no rows, the email doesn't match, or you haven't finished the age gate yet.
+5. In the app, sign out and sign back in (or close and reopen it). The **New event** button appears on Tonight.
+
+To remove admin rights later, run the same query with `set role = 'user'`.
+
+**Create an event on your phone.** Stand at the place, tap **New event**, fill in the name and area, check the dates and times (for a party past midnight, set the end date to the next day), tap **Use my current location** (allow location when asked), set the switches, then **Create event**. The next screen shows the 6-character party code to write or print on a card; **Get a new code** replaces it if it leaks. Turn on **Test event** while trying things out: only testers see test events.
+
+**Staff picks (VC-29).** For a venue event the team picked: turn on **Staff pick**, paste the ticket link (only `https://` links on eventbrite.com are accepted) and write a summary of 15 words or fewer **in our own words**. Never paste the organizer's description, and never use their flyer or Eventbrite's logo (legal conditions, `team/projects/vibecheck/legal/eventbrite-terms-2026-10-26.md`).
+
 ## Where things live
 
 | Path              | What's there                                                                                                 |
@@ -140,4 +171,4 @@ $env:VIBECHECK_REQUIRE_DB = "1"; npm run check; Remove-Item Env:VIBECHECK_REQUIR
 | `supabase/`       | Database tables and security rules (`migrations/`) and their pgTAP tests (`tests/database/`).                |
 | `scripts/`        | Helper scripts, such as `test-db.js`, which runs the database tests or explains why they were skipped.       |
 
-Screens so far: `app/(auth)/sign-in.tsx` (email code), `app/(auth)/age-gate.tsx` (name and date of birth) and `app/index.tsx` (Tonight, placeholder). A folder name in brackets, like `(auth)`, groups screens without adding to their address.
+Screens so far: `app/(auth)/sign-in.tsx` (email code), `app/(auth)/age-gate.tsx` (name and date of birth), `app/index.tsx` (Tonight, placeholder) and `app/admin/new-event.tsx` (admins only). A folder name in brackets, like `(auth)`, groups screens without adding to their address.

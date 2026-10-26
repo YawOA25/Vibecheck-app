@@ -44,6 +44,20 @@ const config: ExpoConfig = {
   },
   plugins: [
     'expo-router',
+    // "Use my current location" on the admin New event screen (VC-B04), and
+    // GPS check-in later (VC-B06). Foreground ("while using the app") only:
+    // we never track location in the background. The sentence is what
+    // iPhone shows in its permission pop-up. (Expo Go uses its own wording;
+    // this matters for our own builds from VC-B10.)
+    [
+      'expo-location',
+      {
+        locationWhenInUsePermission:
+          'VibeCheck uses your location to check you in at events and to set where an event is.',
+        isIosBackgroundLocationEnabled: false,
+        isAndroidBackgroundLocationEnabled: false,
+      },
+    ],
     [
       'expo-splash-screen',
       {

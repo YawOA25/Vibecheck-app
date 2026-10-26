@@ -8,6 +8,7 @@
  *        signed out            -> only the sign-in screen
  *        signed in, no profile -> only the age gate
  *        signed in + profile   -> the app itself (Tonight)
+ *        ... and an admin      -> also the New event screen (VC-B04)
  *        refused by the 18+ gate -> only the "sorry" screen (VC-30)
  *      `Stack.Protected` hides screens whose `guard` is false. If someone is on
  *      a screen that becomes hidden (for example they sign out), expo-router
@@ -71,7 +72,7 @@ export default function RootLayout() {
  *   profile couldn't load.
  */
 function RootNavigator({ fontsReady }: { fontsReady: boolean }) {
-  const { status, refreshProfile, signOut } = useAuth();
+  const { status, profile, refreshProfile, signOut } = useAuth();
   const loading = status === 'loading' || !fontsReady;
 
   // Hide the splash screen once the sign-in check and the fonts are done.
@@ -109,6 +110,13 @@ function RootNavigator({ fontsReady }: { fontsReady: boolean }) {
       <Stack.Protected guard={status === 'ready'}>
         {/* index.tsx is the Tonight screen. */}
         <Stack.Screen name="index" options={{ title: 'Tonight' }} />
+      </Stack.Protected>
+
+      {/* Admins only (VC-B04): the New event screen. This only keeps the
+          screen out of reach for others; the server's create_event refuses
+          non-admins by itself. */}
+      <Stack.Protected guard={status === 'ready' && profile?.role === 'admin'}>
+        <Stack.Screen name="admin/new-event" options={{ title: 'New event' }} />
       </Stack.Protected>
 
       {/* Not signed in: only the sign-in screen exists. */}

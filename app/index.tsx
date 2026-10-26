@@ -6,11 +6,14 @@
  * becomes the list of tonight's parties with their live vibe. For now it
  * proves the app runs, greets the signed-in person, and offers "Sign out"
  * (VC-B03) in the header. Sign-out moves to the settings screen in task VC-B13.
+ * Admins also get a "New event" button in the header (VC-B04); everyone
+ * else never sees it.
  *
  * expo-router makes `app/index.tsx` the app's home address ("/"). The root
  * layout only allows it for signed-in people who passed the 18+ gate.
  */
 import { StyleSheet, Text, View } from 'react-native';
+import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Button } from '@/components/Button';
@@ -36,6 +39,9 @@ function tonightKicker(date: Date = new Date()): string {
  */
 export default function TonightScreen() {
   const { profile, signOut } = useAuth();
+  const router = useRouter();
+  // Only admins create events (the server checks this too, VC-B04).
+  const isAdmin = profile?.role === 'admin';
   return (
     // SafeAreaView adds padding so content isn't hidden under the iPhone's notch or clock.
     <SafeAreaView style={styles.container}>
@@ -46,7 +52,16 @@ export default function TonightScreen() {
         <Text style={styles.title} accessibilityRole="header">
           Tonight
         </Text>
-        <Button label="Sign out" variant="outline" size="small" onPress={signOut} />
+        <View style={styles.headerActions}>
+          {isAdmin ? (
+            <Button
+              label="New event"
+              size="small"
+              onPress={() => router.push('/admin/new-event')}
+            />
+          ) : null}
+          <Button label="Sign out" variant="outline" size="small" onPress={signOut} />
+        </View>
       </View>
       <View style={styles.card}>
         {profile ? <Text style={styles.greeting}>Hi, {profile.display_name}.</Text> : null}
@@ -70,6 +85,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: spacing.gap12,
+  },
+  // The header buttons sit together on the right, and wrap if text is very large.
+  headerActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
+    gap: spacing.sm,
+    flexShrink: 1,
   },
   // flexShrink lets a very large title wrap instead of pushing the button off screen.
   title: { ...typography.title, color: colors.text, flexShrink: 1 },
