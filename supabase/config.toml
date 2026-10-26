@@ -244,6 +244,19 @@ otp_expiry = 3600
 # admin_email = "admin@email.com"
 # sender_name = "Admin"
 
+# VibeCheck (VC-B03): the app signs people in with a typed code, so both
+# sign-in emails must show the code ({{ .Token }}). "confirmation" is sent to
+# a brand-new address and "magic_link" to a returning one. These lines only
+# affect a local (Docker) Supabase; the cloud project's emails are set in its
+# dashboard (see README, "Sign-in emails").
+[auth.email.template.confirmation]
+subject = "Your VibeCheck code"
+content_path = "./supabase/templates/sign-in-code.html"
+
+[auth.email.template.magic_link]
+subject = "Your VibeCheck code"
+content_path = "./supabase/templates/sign-in-code.html"
+
 # Uncomment to customize email template
 # [auth.email.template.invite]
 # subject = "You have been invited"

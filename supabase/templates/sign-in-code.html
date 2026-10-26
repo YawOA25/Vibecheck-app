@@ -1,0 +1,18 @@
+<!--
+  VibeCheck sign-in email (task VC-B03).
+
+  What it is: the email Supabase sends when someone signs in. The app asks
+  people to TYPE a code, so this email must show the code. Supabase replaces
+  {{ .Token }} with the code when it sends the email.
+
+  Why this file exists: Supabase's default sign-in email has only a link, not
+  a code. The founder pastes this text into the Supabase dashboard (see the
+  README, "Sign-in emails"), in BOTH the "Confirm signup" and "Magic Link"
+  templates: Supabase uses the first for a brand-new email address and the
+  second for someone who has signed in before. The config.toml entries that
+  point here are only used by a local (Docker) Supabase.
+-->
+<h2>Your VibeCheck code</h2>
+<p>Type this code in the app to sign in:</p>
+<p style="font-size: 28px; font-weight: bold; letter-spacing: 4px">{{ .Token }}</p>
+<p>It works once and expires in 1 hour. If you didn't ask for it, you can ignore this email.</p>

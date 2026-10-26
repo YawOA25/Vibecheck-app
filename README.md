@@ -108,16 +108,36 @@ Each test runs inside a transaction that is undone at the end, so tests leave no
 $env:VIBECHECK_REQUIRE_DB = "1"; npm run check; Remove-Item Env:VIBECHECK_REQUIRE_DB
 ```
 
+## Sign-in and the 18+ gate (VC-B03)
+
+**How it works.** People sign in with a code sent to their email (no passwords). The first time, the app asks for a display name and date of birth, then calls the server function `complete_profile`. That function creates the profile only for people 18 or older. Without a profile, the app shows nothing but the age gate, and the database hides events. The phone checks the age too, but only to answer faster; the server has the final say.
+
+**The age rule** (same on the phone in `src/lib/age.ts` and on the server in `supabase/migrations/20261026160000_complete_profile.sql`):
+
+- 18 or older means the 18th birthday is today or earlier.
+- "Today" is the date in New York (America/New_York), because the MVP runs in the DMV. A phone set to another time zone can't change it.
+- A 29 February birthday turns 18 on 1 March in years without 29 February.
+
+**One-time setup in the Supabase dashboard** (for the `vibecheck-dev` project, at supabase.com):
+
+1. **App settings in `.env`.** Go to **Project Settings > API Keys** (or **Data API**). Copy the **Project URL** into `EXPO_PUBLIC_SUPABASE_URL` and the **anon / publishable** key into `EXPO_PUBLIC_SUPABASE_ANON_KEY`. Never copy the `service_role` / secret key. Until this is done, the app shows "Setup needed".
+2. **Make the emails show a code.** Supabase's standard sign-in email has only a link. Go to **Authentication > Emails** (Templates). In **Confirm signup** and in **Magic Link**, set the subject to `Your VibeCheck code` and replace the message body with the text of `supabase\templates\sign-in-code.html`. Both are needed: the first is sent to new addresses, the second to returning ones.
+3. **Who can get emails, for now.** Until real email delivery is set up (task VC-B11), Supabase only sends sign-in emails to members of your Supabase organization, and only about 2 an hour. To let a teammate test, invite them under **Organization settings > Team**. Anyone else sees "Sign-in emails can only go to the VibeCheck team's addresses for now."
+
+**Try it on your iPhone:** start the app (above), type your email, type the code from the email, then enter a name and a date of birth. A date less than 18 years ago shows "Sorry, VibeCheck is for people 18 and older." and only offers Sign out. An adult date takes you to Tonight, which has a **Sign out** button at the bottom.
+
 ## Where things live
 
-| Path            | What's there                                                                                                 |
-| --------------- | ------------------------------------------------------------------------------------------------------------ |
-| `app/`          | Screens. Each file is a screen, and its path is its address (expo-router). `_layout.tsx` wraps every screen. |
-| `src/theme.ts`  | Colors, spacing and text sizes from the design (wireframes v1). Use these instead of typing colors by hand.  |
-| `__tests__/`    | Automated tests.                                                                                             |
-| `app.config.ts` | App name, icon, splash screen and plugins.                                                                   |
-| `.env.example`  | Template for private settings. Copy to `.env`; never commit `.env`.                                          |
-| `supabase/`     | Database tables and security rules (`migrations/`) and their pgTAP tests (`tests/database/`).                |
-| `scripts/`      | Helper scripts, such as `test-db.js`, which runs the database tests or explains why they were skipped.       |
+| Path              | What's there                                                                                                 |
+| ----------------- | ------------------------------------------------------------------------------------------------------------ |
+| `app/`            | Screens. Each file is a screen, and its path is its address (expo-router). `_layout.tsx` wraps every screen. |
+| `src/theme.ts`    | Colors, spacing and text sizes from the design (wireframes v1). Use these instead of typing colors by hand.  |
+| `src/lib/`        | Helpers: the Supabase connection, the sign-in state (`auth-context.tsx`), age maths, error messages.         |
+| `src/components/` | Shared pieces of screens, such as `Button` and `TextField`.                                                  |
+| `__tests__/`      | Automated tests.                                                                                             |
+| `app.config.ts`   | App name, icon, splash screen and plugins.                                                                   |
+| `.env.example`    | Template for private settings. Copy to `.env`; never commit `.env`.                                          |
+| `supabase/`       | Database tables and security rules (`migrations/`) and their pgTAP tests (`tests/database/`).                |
+| `scripts/`        | Helper scripts, such as `test-db.js`, which runs the database tests or explains why they were skipped.       |
 
-Coming in later tasks: `src/lib/` (helpers) and `src/components/`.
+Screens so far: `app/(auth)/sign-in.tsx` (email code), `app/(auth)/age-gate.tsx` (name and date of birth) and `app/index.tsx` (Tonight, placeholder). A folder name in brackets, like `(auth)`, groups screens without adding to their address.

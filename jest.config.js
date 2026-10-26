@@ -12,4 +12,9 @@ module.exports = {
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
   },
+  // How long one test may take before Jest calls it stuck (default 5 s).
+  // On a first run (nothing cached yet), the first screen test in a file has
+  // to translate React Native's text boxes and scroll views for Jest, which
+  // took over 5 s on this PC. 30 s still catches a truly stuck test. (VC-B03)
+  testTimeout: 30000,
 };
