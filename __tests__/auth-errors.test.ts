@@ -41,6 +41,11 @@ describe('describeProfileError and isUnder18Error', () => {
 
   it('recognises only the under-18 refusal', () => {
     expect(isUnder18Error({ code: 'VCA18' })).toBe(true);
+    // VC-30: a login locked by an earlier under-18 answer.
+    expect(isUnder18Error({ code: 'VCLCK' })).toBe(true);
+    expect(describeProfileError({ code: 'VCLCK' })).toBe(
+      'Sorry, VibeCheck is for people 18 and older.',
+    );
     expect(isUnder18Error({ code: 'VCDOB' })).toBe(false);
     expect(isUnder18Error(null)).toBe(false);
   });

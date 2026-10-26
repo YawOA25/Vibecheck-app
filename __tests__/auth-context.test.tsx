@@ -1,15 +1,20 @@
 /**
- * Tests for the shared sign-in state (src/lib/auth-context.tsx), task VC-B03.
+ * Tests for the shared sign-in state (src/lib/auth-context.tsx), tasks
+ * VC-B03 and VC-30.
  *
- * Supabase is replaced with a fake. A tiny "probe" component prints the
- * current status so we can check that each situation (no login, login
- * without profile, login with profile, profile failed to load) gives the
- * right status, which is what decides the screens a person can reach.
+ * Supabase is replaced with a fake, and phone storage with the in-memory
+ * fake that the AsyncStorage package ships for tests. A tiny "probe"
+ * component prints the current status so we can check that each situation
+ * (no login, login without profile, login with profile, profile failed to
+ * load, refused by the age gate) gives the right status, which is what
+ * decides the screens a person can reach.
  */
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { Pressable, Text } from 'react-native';
 
 import { AuthProvider, useAuth } from '@/lib/auth-context';
+import { ageLockKey } from '@/lib/age-lock';
 import { supabase } from '@/lib/supabase';
 
 jest.mock('@/lib/supabase', () => ({
@@ -17,8 +22,12 @@ jest.mock('@/lib/supabase', () => ({
   supabase: {
     auth: { getSession: jest.fn(), onAuthStateChange: jest.fn(), signOut: jest.fn() },
     from: jest.fn(),
+    rpc: jest.fn(),
   },
 }));
+jest.mock('@react-native-async-storage/async-storage', () =>
+  require('@react-native-async-storage/async-storage/jest/async-storage-mock'),
+);
 
 const auth = supabase.auth as unknown as {
   getSession: jest.Mock;
@@ -26,6 +35,7 @@ const auth = supabase.auth as unknown as {
   signOut: jest.Mock;
 };
 const from = supabase.from as unknown as jest.Mock;
+const rpc = supabase.rpc as unknown as jest.Mock;
 
 // Fakes for the chain supabase.from('profiles').select(...).eq(...).maybeSingle().
 const select = jest.fn();
@@ -39,8 +49,11 @@ let emitAuthChange: (event: string, session: unknown) => void = () => {};
 const SESSION = { user: { id: 'user-1' } };
 const PROFILE = { id: 'user-1', display_name: 'Ava', role: 'user', is_tester: false };
 
-beforeEach(() => {
+beforeEach(async () => {
   jest.clearAllMocks();
+  await AsyncStorage.clear();
+  // By default the server says "not locked" (VC-30's age_gate_locked).
+  rpc.mockResolvedValue({ data: false, error: null });
   auth.onAuthStateChange.mockImplementation((callback) => {
     emitAuthChange = callback;
     return { data: { subscription: { unsubscribe: jest.fn() } } };
@@ -51,14 +64,24 @@ beforeEach(() => {
   eq.mockReturnValue({ maybeSingle });
 });
 
-/** Shows the status and a sign-out button, so tests can read and press them. */
+/** Shows the status and some buttons, so tests can read and press them. */
 function Probe() {
-  const { status, profile, signOut } = useAuth();
+  const { status, profile, signOut, markAgeBlocked } = useAuth();
   return (
     <>
       <Text>status:{status}</Text>
       <Text>name:{profile?.display_name ?? '-'}</Text>
       <Pressable accessibilityRole="button" accessibilityLabel="out" onPress={signOut} />
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="locked"
+        onPress={() => markAgeBlocked('locked')}
+      />
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="deleted"
+        onPress={() => markAgeBlocked('deleted')}
+      />
     </>
   );
 }
@@ -129,5 +152,64 @@ describe('AuthProvider', () => {
     await screen.findByText('status:ready');
     await fireEvent.press(screen.getByRole('button', { name: 'out' }));
     expect(auth.signOut).toHaveBeenCalledWith({ scope: 'local' });
+  });
+  // ---- VC-30: the lock after an under-18 answer ----------------------------
+
+  it('is blocked when the server says this login was refused, and remembers it on the phone', async () => {
+    auth.getSession.mockResolvedValue({ data: { session: SESSION } });
+    maybeSingle.mockResolvedValue({ data: null, error: null });
+    rpc.mockResolvedValue({ data: true, error: null });
+    await renderProbe();
+    expect(await screen.findByText('status:blocked')).toBeOnTheScreen();
+    expect(rpc).toHaveBeenCalledWith('age_gate_locked');
+    expect(await AsyncStorage.getItem(ageLockKey('user-1'))).toBe('1');
+  });
+
+  it('is blocked from the phone flag alone, without waiting for the server', async () => {
+    await AsyncStorage.setItem(ageLockKey('user-1'), '1');
+    auth.getSession.mockResolvedValue({ data: { session: SESSION } });
+    maybeSingle.mockResolvedValue({ data: null, error: null });
+    await renderProbe();
+    expect(await screen.findByText('status:blocked')).toBeOnTheScreen();
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it('is error (not needsProfile) when the lock check fails, so the form is not shown by mistake', async () => {
+    auth.getSession.mockResolvedValue({ data: { session: SESSION } });
+    maybeSingle.mockResolvedValue({ data: null, error: null });
+    rpc.mockResolvedValue({ data: null, error: { message: 'Network request failed' } });
+    await renderProbe();
+    expect(await screen.findByText('status:error')).toBeOnTheScreen();
+  });
+
+  it('a 13-17 refusal blocks the login and sets the phone flag', async () => {
+    auth.getSession.mockResolvedValue({ data: { session: SESSION } });
+    maybeSingle.mockResolvedValue({ data: null, error: null });
+    await renderProbe();
+    await screen.findByText('status:needsProfile');
+    await fireEvent.press(screen.getByRole('button', { name: 'locked' }));
+    expect(await screen.findByText('status:blocked')).toBeOnTheScreen();
+    expect(await AsyncStorage.getItem(ageLockKey('user-1'))).toBe('1');
+    // Not signed out: the login stays, so the lock holds on the next sign-in.
+    expect(auth.signOut).not.toHaveBeenCalled();
+  });
+
+  it('an under-13 refusal signs the phone out, keeps the sorry screen up, and stores nothing', async () => {
+    auth.getSession.mockResolvedValue({ data: { session: SESSION } });
+    maybeSingle.mockResolvedValue({ data: null, error: null });
+    await renderProbe();
+    await screen.findByText('status:needsProfile');
+    await fireEvent.press(screen.getByRole('button', { name: 'deleted' }));
+    expect(auth.signOut).toHaveBeenCalledWith({ scope: 'local' });
+
+    // Supabase reports the sign-out; the sorry screen must stay up.
+    await act(async () => emitAuthChange('SIGNED_OUT', null));
+    expect(await screen.findByText('status:blocked')).toBeOnTheScreen();
+    // Legal condition: nothing is kept about an under-13, not even on the phone.
+    expect(await AsyncStorage.getAllKeys()).toEqual([]);
+
+    // Dismissing it goes to sign-in.
+    await fireEvent.press(screen.getByRole('button', { name: 'out' }));
+    expect(await screen.findByText('status:signedOut')).toBeOnTheScreen();
   });
 });

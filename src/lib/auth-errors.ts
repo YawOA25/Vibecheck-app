@@ -20,11 +20,16 @@ export interface ErrorLike {
 }
 
 /**
- * Our own error codes from `complete_profile` (see the migration
- * supabase/migrations/20261026160000_complete_profile.sql). Keep in sync.
+ * Our own error codes from `complete_profile` (see the migrations
+ * supabase/migrations/20261026160000_complete_profile.sql and
+ * 20261026170000_age_gate_lock.sql). Keep in sync.
  */
 export const ProfileErrorCode = {
+  // Version 1 of complete_profile raised this for under-18 answers. Version 2
+  // returns a refusal instead, but we still understand it, just in case.
   under18: 'VCA18',
+  // VC-30: this login was refused by the age gate before; nothing is accepted.
+  locked: 'VCLCK',
   badName: 'VCNAM',
   badBirthdate: 'VCDOB',
   alreadyDone: 'VCDUP',
@@ -49,13 +54,14 @@ function isNetworkError(error: ErrorLike): boolean {
 }
 
 /**
- * Says whether the server refused because the person is under 18.
+ * Says whether the server refused because the person is under 18, either now
+ * (VCA18) or earlier (VCLCK: the login is locked).
  *
  * @param error - an error from `complete_profile`, or null.
- * @returns true only for the under-18 refusal.
+ * @returns true only for the age refusals.
  */
 export function isUnder18Error(error: ErrorLike | null | undefined): boolean {
-  return error?.code === ProfileErrorCode.under18;
+  return error?.code === ProfileErrorCode.under18 || error?.code === ProfileErrorCode.locked;
 }
 
 /**
@@ -97,6 +103,7 @@ export function describeProfileError(error: ErrorLike): string {
   if (isNetworkError(error)) return "Can't reach VibeCheck. Check your connection and try again.";
   switch (error.code) {
     case ProfileErrorCode.under18:
+    case ProfileErrorCode.locked:
       return 'Sorry, VibeCheck is for people 18 and older.';
     case ProfileErrorCode.badName:
       return 'Please enter a name of 1 to 40 characters.';

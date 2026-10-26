@@ -5,8 +5,8 @@
 -- * The age rule on fixed dates: exactly 18 today passes, 17 years and 364
 --   days fails, and leap-day birthdays turn 18 on 1 March in non-leap years.
 -- * complete_profile, called the way the app calls it: an adult gets a
---   profile; an under-18 gets an error and NO profile (so they still can't
---   see events), even when they skip the app and send the request by hand.
+--   profile; an under-18 is refused with NO profile (so they still can't
+--   see events), and a hand-made retry with an adult year is refused too.
 -- * Bad input is refused with clear codes, a second call can't overwrite the
 --   birthdate, and only signed-in users may run the function at all.
 --
@@ -97,20 +97,24 @@ select is(private.is_adult_user(), true,
   'the 18-today user counts as an adult user');
 
 -- ---- 5. Under 18 is refused and leaves no profile (5 checks) ---------------
+-- Since VC-30 the refusal comes back as a normal answer (so the refusal mark
+-- stays saved), and any later answer from the same login is refused with
+-- VCLCK. The under-13 path and the mark itself are tested in
+-- 007_age_gate_lock.test.sql.
 select set_config('request.jwt.claims',
   '{"sub":"a0000000-0000-4000-8000-000000000003","role":"authenticated"}', true);
 
-select throws_ok(
-  $$ select public.complete_profile('Min', (select one_day_short from gate_dates)) $$,
-  'VCA18', 'VibeCheck is for people 18 and older.',
-  '17 years and 364 days is refused');
+select is(
+  public.complete_profile('Min', (select one_day_short from gate_dates)),
+  'refused_locked',
+  '17 years and 364 days is refused (and the login is locked)');
 
--- "Even if the app is bypassed": a hand-made request with a clearly young
--- birthdate gets the same answer.
+-- "Even if the app is bypassed": a hand-made retry with an adult year gets
+-- nowhere, because this login is now locked.
 select throws_ok(
-  $$ select public.complete_profile('Min', '2015-06-01') $$,
-  'VCA18', 'VibeCheck is for people 18 and older.',
-  'a hand-made request for an 11-year-old is refused');
+  $$ select public.complete_profile('Min', '1990-06-01') $$,
+  'VCLCK', 'VibeCheck is for people 18 and older.',
+  'a hand-made retry with an adult year is refused');
 
 select is_empty(
   $$ select id from public.profiles where id = 'a0000000-0000-4000-8000-000000000003' $$,

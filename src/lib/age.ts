@@ -1,10 +1,12 @@
 /**
  * Age maths for the 18+ gate (task VC-B03, proposal VC-10).
  *
- * Why this file exists: the sign-up screen checks the date of birth on the
- * phone so it can answer at once. The SERVER makes the real decision (the
- * `complete_profile` function in supabase/migrations/..._complete_profile.sql);
- * these rules copy the server's rules exactly so the two never disagree:
+ * Why this file exists: the sign-up screen uses it to catch typing mistakes
+ * (a future date, a year before 1900) before anything is sent. Since VC-30 it
+ * does NOT stop an under-18 date on the phone: every real date goes to the
+ * server, which alone decides and records refusals (the `complete_profile`
+ * function in supabase/migrations/..._age_gate_lock.sql). These rules copy
+ * the server's rules exactly so the two never disagree:
  *   - "18 or older" means the 18th birthday is today or earlier.
  *   - A 29 February birthday turns 18 on 1 March in a year with no 29 February
  *     (the stricter reading, so nobody gets in a day early).
@@ -163,7 +165,9 @@ export function isAtLeast18(birth: CalendarDate, today: CalendarDate): boolean {
 export type BirthdateCheck = 'ok' | 'under18' | 'invalid';
 
 /**
- * The full check the sign-up screen runs before calling the server.
+ * The full check the sign-up screen runs before calling the server. The
+ * screen only acts on 'invalid'; an 'under18' date is still sent so the
+ * server can lock the login (VC-30).
  *
  * @param birth - date of birth (already a real calendar date).
  * @param now - the current moment (passed in so tests can pick any moment).

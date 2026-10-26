@@ -40,6 +40,7 @@ async function openAt(url: string) {
       index: () => <Text>Tonight screen</Text>,
       '(auth)/sign-in': () => <Text>Sign-in screen</Text>,
       '(auth)/age-gate': () => <Text>Age gate screen</Text>,
+      '(auth)/blocked': () => <Text>Sorry screen</Text>,
     },
     { initialUrl: url },
   );
@@ -76,6 +77,21 @@ describe('root layout guards', () => {
     setStatus('ready');
     await openAt('/age-gate');
     expect(await screen.findByText('Tonight screen')).toBeOnTheScreen();
+  });
+
+  // VC-30: a login refused by the 18+ gate sees only the sorry screen.
+  it('keeps a refused login on the sorry screen, even when opening Tonight or the age gate', async () => {
+    setStatus('blocked');
+    await openAt('/');
+    expect(await screen.findByText('Sorry screen')).toBeOnTheScreen();
+    expect(screen.queryByText('Tonight screen')).toBeNull();
+  });
+
+  it('does not let a refused login reach the age gate form again by address', async () => {
+    setStatus('blocked');
+    await openAt('/age-gate');
+    expect(await screen.findByText('Sorry screen')).toBeOnTheScreen();
+    expect(screen.queryByText('Age gate screen')).toBeNull();
   });
 
   it('offers retry and sign-out when the profile fails to load', async () => {

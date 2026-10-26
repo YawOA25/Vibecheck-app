@@ -8,6 +8,7 @@
  *        signed out            -> only the sign-in screen
  *        signed in, no profile -> only the age gate
  *        signed in + profile   -> the app itself (Tonight)
+ *        refused by the 18+ gate -> only the "sorry" screen (VC-30)
  *      `Stack.Protected` hides screens whose `guard` is false. If someone is on
  *      a screen that becomes hidden (for example they sign out), expo-router
  *      moves them to the first screen that is allowed. So there is no way to
@@ -109,6 +110,11 @@ function RootNavigator() {
       {/* Signed in, but no profile yet: only the age gate exists. */}
       <Stack.Protected guard={status === 'needsProfile'}>
         <Stack.Screen name="(auth)/age-gate" options={{ title: 'Almost there' }} />
+      </Stack.Protected>
+
+      {/* Refused by the 18+ gate (VC-30): only the "sorry" screen exists. */}
+      <Stack.Protected guard={status === 'blocked'}>
+        <Stack.Screen name="(auth)/blocked" options={{ title: 'Sorry' }} />
       </Stack.Protected>
     </Stack>
   );

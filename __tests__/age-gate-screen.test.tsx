@@ -1,10 +1,12 @@
 /**
- * Tests for the age gate screen (app/(auth)/age-gate.tsx), task VC-B03.
+ * Tests for the age gate screen (app/(auth)/age-gate.tsx), tasks VC-B03
+ * and VC-30.
  *
  * Supabase and the sign-in state are replaced with fakes. We check that:
  *   - an adult's details go to `complete_profile` in the right format;
- *   - an under-18 date is blocked on the phone and never sent;
- *   - if the server says "under 18", the screen blocks too (server wins);
+ *   - an under-18 date is SENT to the server (VC-30), and each kind of
+ *     refusal leads to the right "sorry" handling;
+ *   - the birthdate never reaches the console;
  *   - bad input is caught with a clear message.
  *
  * The exact-birthday edge cases (18 today, 17 years 364 days, leap days,
@@ -28,12 +30,17 @@ const rpc = supabase.rpc as unknown as jest.Mock;
 const refreshProfile = jest.fn();
 const signOut = jest.fn();
 
-// A birth year that is 10 years ago: clearly under 18 whenever the tests run.
+const markAgeBlocked = jest.fn();
+
+// Birth years 10 and 15 years ago: clearly under 13 and clearly 13-17
+// whenever the tests run.
 const childYear = String(new Date().getFullYear() - 10);
+const teenYear = String(new Date().getFullYear() - 15);
 
 beforeEach(() => {
   jest.clearAllMocks();
-  (useAuth as jest.Mock).mockReturnValue({ refreshProfile, signOut });
+  (useAuth as jest.Mock).mockReturnValue({ refreshProfile, signOut, markAgeBlocked });
+  markAgeBlocked.mockResolvedValue(undefined);
   rpc.mockResolvedValue({ data: null, error: null });
   refreshProfile.mockResolvedValue(undefined);
 });
@@ -59,25 +66,63 @@ describe('AgeGateScreen', () => {
     expect(refreshProfile).toHaveBeenCalled();
   });
 
-  it('blocks an under-18 date on the phone and sends nothing', async () => {
+  // ---- VC-30: every answer goes to the server, which decides --------------
+
+  it('sends an under-18 date to the server instead of stopping on the phone', async () => {
+    rpc.mockResolvedValue({ data: 'refused_locked', error: null });
+    await render(<AgeGateScreen />);
+    await submit('Teen', '6', '1', teenYear);
+
+    expect(rpc).toHaveBeenCalledWith('complete_profile', {
+      p_display_name: 'Teen',
+      p_birthdate: `${teenYear}-06-01`,
+    });
+    // 13-17: the login is locked; the root layout then shows the sorry screen.
+    expect(markAgeBlocked).toHaveBeenCalledWith('locked');
+    expect(refreshProfile).not.toHaveBeenCalled();
+  });
+
+  it('signs the phone out when the server deleted an under-13 login', async () => {
+    rpc.mockResolvedValue({ data: 'refused_deleted', error: null });
     await render(<AgeGateScreen />);
     await submit('Kid', '6', '1', childYear);
 
-    expect(rpc).not.toHaveBeenCalled();
-    expect(await screen.findByText('VibeCheck is for people 18 and older.')).toBeOnTheScreen();
-    // The form is gone; the only way on is to sign out.
-    expect(screen.queryByLabelText('Year')).toBeNull();
-    await fireEvent.press(screen.getByRole('button', { name: 'Sign out' }));
-    expect(signOut).toHaveBeenCalled();
+    expect(markAgeBlocked).toHaveBeenCalledWith('deleted');
+    expect(refreshProfile).not.toHaveBeenCalled();
   });
 
-  it('blocks when the server says under 18, even if the phone thought otherwise', async () => {
+  it('shows the sorry screen when a locked login tries again with an adult year', async () => {
+    rpc.mockResolvedValue({ data: null, error: { code: 'VCLCK', message: 'locked' } });
+    await render(<AgeGateScreen />);
+    await submit('Teen', '5', '5', '1995');
+
+    expect(markAgeBlocked).toHaveBeenCalledWith('locked');
+    expect(refreshProfile).not.toHaveBeenCalled();
+  });
+
+  it('still understands the old under-18 error code', async () => {
     rpc.mockResolvedValue({ data: null, error: { code: 'VCA18', message: 'under 18' } });
     await render(<AgeGateScreen />);
     await submit('Ava', '5', '5', '1995');
 
-    expect(await screen.findByText('VibeCheck is for people 18 and older.')).toBeOnTheScreen();
+    expect(markAgeBlocked).toHaveBeenCalledWith('locked');
     expect(refreshProfile).not.toHaveBeenCalled();
+  });
+
+  it('never writes the birthdate to the console (legal condition 1)', async () => {
+    // Watch every console channel while a refusal and an error happen.
+    const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((level) =>
+      jest.spyOn(console, level).mockImplementation(() => {}),
+    );
+    rpc.mockResolvedValueOnce({ data: 'refused_locked', error: null });
+    await render(<AgeGateScreen />);
+    await submit('Teen', '6', '1', teenYear);
+    rpc.mockResolvedValueOnce({ data: null, error: { code: 'VCDOB', message: 'bad date' } });
+    await submit('Teen', '6', '1', teenYear);
+
+    const printed = spies.flatMap((spy) => spy.mock.calls.flat().map(String)).join('\n');
+    expect(printed).not.toContain(teenYear);
+    spies.forEach((spy) => spy.mockRestore());
   });
 
   it('refuses a date that does not exist', async () => {
