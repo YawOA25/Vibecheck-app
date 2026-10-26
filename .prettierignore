@@ -11,3 +11,5 @@ coverage/
 assets/
 package-lock.json
 expo-env.d.ts
+# Files the Supabase tool writes when you link a project (kept out of git too).
+supabase/.temp/

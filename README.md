@@ -59,7 +59,7 @@ Save a file on your PC and the phone updates by itself within a second or two. P
 npm run check
 ```
 
-This runs four things in order and stops at the first failure:
+This runs five things in order and stops at the first failure:
 
 | Step   | Command                | What it checks                                                            |
 | ------ | ---------------------- | ------------------------------------------------------------------------- |
@@ -67,6 +67,46 @@ This runs four things in order and stops at the first failure:
 | Format | `npm run format:check` | Prettier checks the code layout is consistent (`npm run format` fixes it) |
 | Types  | `npm run typecheck`    | TypeScript checks every value is used the way its type allows             |
 | Tests  | `npm test`             | Jest runs the automated tests in `__tests__/`                             |
+| DB     | `npm run test:db`      | pgTAP tests check the database security rules (see below)                 |
+
+## Database tests
+
+The database rules (who may read or change what) live in `supabase/migrations/`, and their tests live in `supabase/tests/database/`. The tests need a real database to run against.
+
+**Main way: a free Supabase "dev" project in the cloud.** No Docker needed. Use a separate project named something like `vibecheck-dev`, never the real one. Connect this folder to it once:
+
+```powershell
+cd C:\dev\wt\vibecheck\apps\vibecheck
+npx supabase login                                # opens your browser to sign in
+npx supabase link --project-ref <your-project-id> # the id is in the project's web address; asks for its database password
+npx supabase db push                              # copies our migrations to that project (again after each change)
+```
+
+Then add the same database password to `.env` as `SUPABASE_DB_PASSWORD=...` (see `.env.example`), and run:
+
+```powershell
+npm run test:db                                   # runs the database tests there
+```
+
+How it works: `supabase test db --linked` would still need Docker, so `scripts/test-db.js` connects to the dev project itself (through Supabase's pooler, over an encrypted connection checked against Supabase's certificate in `supabase/certs/`) and runs each test file. It prints one line per file, for example `ok 002_profiles.test.sql: 21/21 passed`, and fails on any failed check, a wrong check count, or an SQL error. If the password is wrong, it prints `Could not connect`.
+
+**Alternative: a local database with Docker Desktop.** Free, works offline, and nothing leaves your PC. Docker Desktop is a large install (a few GB) and has to be running while you test.
+
+```powershell
+cd C:\dev\wt\vibecheck\apps\vibecheck
+npx supabase start       # the first time, this downloads the database images; later starts take seconds
+npm run test:db          # runs the database tests (the local database is used first if it's running)
+npx supabase db reset    # after changing a migration: rebuilds the local database from scratch
+npx supabase stop        # when you're done, frees up memory
+```
+
+Each test runs inside a transaction that is undone at the end, so tests leave no data behind. That includes pgTAP itself (the test tool): each test file switches it on inside its transaction, so it isn't left installed on the dev project.
+
+**If neither is set up**, `npm run check` still runs everything else, then prints `Database tests (pgTAP): SKIPPED` with these instructions. A skip is not a pass. Before merging database changes, run the checks with the skip turned into a failure:
+
+```powershell
+$env:VIBECHECK_REQUIRE_DB = "1"; npm run check; Remove-Item Env:VIBECHECK_REQUIRE_DB
+```
 
 ## Where things live
 
@@ -77,5 +117,7 @@ This runs four things in order and stops at the first failure:
 | `__tests__/`    | Automated tests.                                                                                             |
 | `app.config.ts` | App name, icon, splash screen and plugins.                                                                   |
 | `.env.example`  | Template for private settings. Copy to `.env`; never commit `.env`.                                          |
+| `supabase/`     | Database tables and security rules (`migrations/`) and their pgTAP tests (`tests/database/`).                |
+| `scripts/`      | Helper scripts, such as `test-db.js`, which runs the database tests or explains why they were skipped.       |
 
-Coming in later tasks: `src/lib/` (helpers), `src/components/`, and `supabase/` (database rules and their tests).
+Coming in later tasks: `src/lib/` (helpers) and `src/components/`.

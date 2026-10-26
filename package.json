@@ -15,7 +15,8 @@
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
     "test": "jest",
-    "check": "npm run lint && npm run format:check && npm run typecheck && npm run test -- --ci"
+    "test:db": "node scripts/test-db.js",
+    "check": "npm run lint && npm run format:check && npm run typecheck && npm run test -- --ci && npm run test:db"
   },
   "dependencies": {
     "expo": "~58.0.19",
@@ -40,7 +41,9 @@
     "eslint-config-prettier": "^10.1.8",
     "jest": "~30.5.2",
     "jest-expo": "~58.0.12",
+    "pg": "^8.23.1",
     "prettier": "^3.9.10",
+    "supabase": "^2.122.0",
     "typescript": "~6.0.3"
   }
 }
