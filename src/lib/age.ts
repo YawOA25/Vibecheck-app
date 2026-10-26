@@ -179,3 +179,47 @@ export function checkBirthdate(birth: CalendarDate, now: Date): BirthdateCheck {
   if (birth.year < EARLIEST_BIRTH_YEAR || compareDates(birth, today) > 0) return 'invalid';
   return isAtLeast18(birth, today) ? 'ok' : 'under18';
 }
+
+/** The longest the date-of-birth box may get: "MM / DD / YYYY" is 14 characters. */
+export const DATE_INPUT_MAX_LENGTH = 14;
+
+/**
+ * Formats what is typed in the single date-of-birth box (v3 design, spec
+ * 2.3): keeps digits only, at most 8, and puts " / " between month, day and
+ * year as the person types.
+ *
+ * A separator is added only once a digit follows it ("04" stays "04"; "041"
+ * becomes "04 / 1"). That way pressing delete never gets stuck on a
+ * separator that keeps coming back.
+ *
+ * @param text - what is in the box after a key press or paste.
+ * @returns the tidied text, for example "04181998" -> "04 / 18 / 1998".
+ */
+export function formatDateInput(text: string): string {
+  const digits = dateDigits(text);
+  const parts = [digits.slice(0, 2), digits.slice(2, 4), digits.slice(4, 8)];
+  return parts.filter((part) => part.length > 0).join(' / ');
+}
+
+/**
+ * Pulls the digits out of the date-of-birth box.
+ *
+ * @param text - the box's text, for example "04 / 18 / 1998".
+ * @returns up to 8 digits, for example "04181998".
+ */
+export function dateDigits(text: string): string {
+  return text.replace(/\D/g, '').slice(0, 8);
+}
+
+/**
+ * Turns the date-of-birth box's text into a calendar date.
+ *
+ * @param text - the box's text, for example "04 / 18 / 1998".
+ * @returns the date, or null unless all 8 digits are there and form a real
+ *   date (month 01-12, a day that month has).
+ */
+export function parseDateInput(text: string): CalendarDate | null {
+  const digits = dateDigits(text);
+  if (digits.length !== 8) return null;
+  return parseDateParts(digits.slice(0, 2), digits.slice(2, 4), digits.slice(4, 8));
+}

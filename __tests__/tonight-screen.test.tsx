@@ -1,10 +1,11 @@
 /**
- * Render test for the Tonight screen.
+ * Render test for the Tonight screen (placeholder, v3 header).
  *
  * React Native Testing Library draws the screen in memory (no phone needed) and
  * lets us look for text the way a user would see it. This proves the screen
- * renders without crashing, shows its title, note and greeting, and that
- * "Sign out" signs out (VC-B03). The sign-in state is replaced with a fake.
+ * renders without crashing, shows the day line, title, greeting and note,
+ * and that the "Sign out" pill signs out (VC-B03). The sign-in state is
+ * replaced with a fake.
  */
 import { fireEvent, render, screen } from '@testing-library/react-native';
 
@@ -23,13 +24,15 @@ beforeEach(() => {
 });
 
 describe('TonightScreen', () => {
-  it('shows the Tonight heading, a greeting and the placeholder note', async () => {
+  it('shows the day, the Tonight heading, a greeting and the placeholder note', async () => {
     await render(<TonightScreen />);
 
+    // For example "SATURDAY NIGHT".
+    expect(screen.getByText(/^[A-Z]+DAY NIGHT$/)).toBeOnTheScreen();
     // getByRole finds the heading the same way a screen reader would.
     expect(screen.getByRole('header', { name: 'Tonight' })).toBeOnTheScreen();
     expect(screen.getByText('Hi, Ava.')).toBeOnTheScreen();
-    expect(screen.getByText('Parties near you will show up here.')).toBeOnTheScreen();
+    expect(screen.getByText('Events are coming soon.')).toBeOnTheScreen();
   });
 
   it('signs out from the Sign out button', async () => {

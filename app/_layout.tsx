@@ -13,8 +13,11 @@
  *      a screen that becomes hidden (for example they sign out), expo-router
  *      moves them to the first screen that is allowed. So there is no way to
  *      reach Tonight without passing the age gate;
- *   3. keeps the splash screen up while the saved login is being checked, so
- *      people don't see the sign-in screen flash for a moment.
+ *   3. keeps the splash screen up while the saved login is being checked
+ *      AND the app's fonts are loading (v3 design, src/lib/fonts.ts), so
+ *      people don't see the sign-in screen flash, or text jump from the
+ *      phone's font to ours. If the fonts fail to load, the app carries on
+ *      with the phone's own font.
  */
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
@@ -25,10 +28,12 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { Button } from '@/components/Button';
 import { AuthProvider, useAuth } from '@/lib/auth-context';
+import { useAppFonts } from '@/lib/fonts';
 import { isSupabaseConfigured } from '@/lib/supabase';
 import { colors, spacing, typography } from '@/theme';
 
-// Keep the splash screen showing until we know who is signed in.
+// Keep the splash screen showing until we know who is signed in and the
+// fonts are ready.
 // `.catch` because this can fail harmlessly if the splash is already gone.
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -39,6 +44,8 @@ SplashScreen.preventAutoHideAsync().catch(() => {});
  *   `.env` has no Supabase settings.
  */
 export default function RootLayout() {
+  // Start loading the fonts straight away, alongside the sign-in check.
+  const fontsReady = useAppFonts();
   if (!isSupabaseConfigured) {
     return (
       <Message
@@ -50,7 +57,7 @@ export default function RootLayout() {
   return (
     <AuthProvider>
       <StatusBar style="light" />
-      <RootNavigator />
+      <RootNavigator fontsReady={fontsReady} />
     </AuthProvider>
   );
 }
@@ -59,18 +66,20 @@ export default function RootLayout() {
  * The stack navigator (screens slide on top of each other), with each group
  * of screens allowed only in the matching sign-in state.
  *
+ * @param props.fontsReady - true once the fonts have loaded (or failed to).
  * @returns the navigator, nothing while loading, or a retry note if the
  *   profile couldn't load.
  */
-function RootNavigator() {
+function RootNavigator({ fontsReady }: { fontsReady: boolean }) {
   const { status, refreshProfile, signOut } = useAuth();
+  const loading = status === 'loading' || !fontsReady;
 
-  // Hide the splash screen once the sign-in check has finished.
+  // Hide the splash screen once the sign-in check and the fonts are done.
   useEffect(() => {
-    if (status !== 'loading') SplashScreen.hideAsync().catch(() => {});
-  }, [status]);
+    if (!loading) SplashScreen.hideAsync().catch(() => {});
+  }, [loading]);
 
-  if (status === 'loading') return null; // the splash screen is still showing
+  if (loading) return null; // the splash screen is still showing
   if (status === 'error') {
     return (
       <Message
@@ -79,7 +88,7 @@ function RootNavigator() {
         actions={
           <>
             <Button label="Try again" onPress={refreshProfile} />
-            <Button label="Sign out" variant="text" onPress={signOut} />
+            <Button label="Sign out" variant="outline" onPress={signOut} />
           </>
         }
       />
@@ -147,9 +156,9 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     gap: spacing.md,
-    padding: spacing.gutter,
+    padding: spacing.authGutter,
     backgroundColor: colors.bg,
   },
-  title: { ...typography.title, color: colors.text },
+  title: { ...typography.h1, color: colors.text },
   body: { ...typography.body, color: colors.muted },
 });

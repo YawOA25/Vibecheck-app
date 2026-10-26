@@ -7,7 +7,9 @@
  *   - an under-18 date is SENT to the server (VC-30), and each kind of
  *     refusal leads to the right "sorry" handling;
  *   - the birthdate never reaches the console;
- *   - bad input is caught with a clear message.
+ *   - bad input is caught with a clear message;
+ *   - the single "MM / DD / YYYY" date box (v3 look, VC-B03c) fills in its
+ *     own separators and keeps Continue off until the form is complete.
  *
  * The exact-birthday edge cases (18 today, 17 years 364 days, leap days,
  * time zones) are tested on the age maths itself in age.test.ts and on the
@@ -45,12 +47,14 @@ beforeEach(() => {
   refreshProfile.mockResolvedValue(undefined);
 });
 
-/** Fills in the form and taps Continue. */
+/**
+ * Fills in the form and taps Continue. Month and day are padded to 2 digits,
+ * because the date box takes exactly 8 digits (MMDDYYYY).
+ */
 async function submit(name: string, month: string, day: string, year: string) {
-  await fireEvent.changeText(screen.getByLabelText('Display name'), name);
-  await fireEvent.changeText(screen.getByLabelText('Month'), month);
-  await fireEvent.changeText(screen.getByLabelText('Day'), day);
-  await fireEvent.changeText(screen.getByLabelText('Year'), year);
+  await fireEvent.changeText(screen.getByLabelText('Your name'), name);
+  const digits = month.padStart(2, '0') + day.padStart(2, '0') + year;
+  await fireEvent.changeText(screen.getByLabelText('Date of birth'), digits);
   await fireEvent.press(screen.getByRole('button', { name: 'Continue' }));
 }
 
@@ -130,7 +134,7 @@ describe('AgeGateScreen', () => {
     await submit('Ava', '2', '30', '1995');
 
     expect(rpc).not.toHaveBeenCalled();
-    expect(await screen.findByText(/Please enter a real date/)).toBeOnTheScreen();
+    expect(await screen.findByText('Enter a real date, like 04 / 18 / 1998.')).toBeOnTheScreen();
   });
 
   it('refuses a future date', async () => {
@@ -138,7 +142,7 @@ describe('AgeGateScreen', () => {
     await submit('Ava', '1', '1', String(new Date().getFullYear() + 1));
 
     expect(rpc).not.toHaveBeenCalled();
-    expect(await screen.findByText('Please enter a valid date of birth.')).toBeOnTheScreen();
+    expect(await screen.findByText('Enter a real date, like 04 / 18 / 1998.')).toBeOnTheScreen();
   });
 
   it('asks for a name', async () => {
@@ -146,7 +150,7 @@ describe('AgeGateScreen', () => {
     await submit('   ', '5', '5', '1995');
 
     expect(rpc).not.toHaveBeenCalled();
-    expect(await screen.findByText('Please enter a name of 1 to 40 characters.')).toBeOnTheScreen();
+    expect(await screen.findByText('Enter your name.')).toBeOnTheScreen();
   });
 
   it('shows the server message for other refusals', async () => {
@@ -164,6 +168,27 @@ describe('AgeGateScreen', () => {
     await submit('Ava', '5', '5', '1995');
 
     expect(refreshProfile).toHaveBeenCalled();
+  });
+
+  it('fills in the date separators and keeps Continue off until the form is complete', async () => {
+    await render(<AgeGateScreen />);
+    const continueButton = screen.getByRole('button', { name: 'Continue' });
+    expect(continueButton).toBeDisabled();
+
+    await fireEvent.changeText(screen.getByLabelText('Your name'), 'Ava');
+    await fireEvent.changeText(screen.getByLabelText('Date of birth'), '041');
+    expect(screen.getByLabelText('Date of birth')).toHaveDisplayValue('04 / 1');
+    expect(continueButton).toBeDisabled();
+
+    await fireEvent.changeText(screen.getByLabelText('Date of birth'), '04181998');
+    expect(screen.getByLabelText('Date of birth')).toHaveDisplayValue('04 / 18 / 1998');
+    expect(continueButton).toBeEnabled();
+  });
+
+  it('never mentions an age limit before the answer (neutral age screen)', async () => {
+    await render(<AgeGateScreen />);
+    expect(screen.getByRole('header', { name: 'A little about you' })).toBeOnTheScreen();
+    expect(screen.queryByText(/18|older|age/i)).toBeNull();
   });
 
   it('lets the person sign out to use a different email', async () => {

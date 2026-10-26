@@ -1,9 +1,11 @@
 /**
- * Tests for the "sorry" screen (app/(auth)/blocked.tsx), task VC-30.
+ * Tests for the "sorry" screen (app/(auth)/blocked.tsx), tasks VC-30 and
+ * VC-B03c (v3 look).
  *
- * The sign-in state is faked. We check that the screen explains the refusal,
- * offers only a way out, and labels that way out to match whether the phone
- * is still signed in (13-17, login kept) or not (under 13, login deleted).
+ * The sign-in state is faked. We check that the screen shows the neutral
+ * refusal (no reason given, spec 2.4), offers only a way out, and labels
+ * that way out to match whether the phone is still signed in (13-17, login
+ * kept) or not (under 13, login deleted).
  */
 import { fireEvent, render, screen } from '@testing-library/react-native';
 
@@ -23,9 +25,15 @@ describe('BlockedScreen', () => {
     (useAuth as jest.Mock).mockReturnValue({ session: { user: { id: 'u1' } }, signOut });
     await render(<BlockedScreen />);
 
-    expect(screen.getByText('VibeCheck is for people 18 and older.')).toBeOnTheScreen();
-    // No form: there is nothing to type in.
-    expect(screen.queryByLabelText('Year')).toBeNull();
+    expect(
+      screen.getByRole('header', { name: "Sorry, we can't set up your account." }),
+    ).toBeOnTheScreen();
+    expect(screen.getByText("VibeCheck isn't available for you right now.")).toBeOnTheScreen();
+    // No hint at the reason: the screen never mentions an age.
+    expect(screen.queryByText(/18/)).toBeNull();
+    // No form and no way back: only the exit button.
+    expect(screen.queryByLabelText('Date of birth')).toBeNull();
+    expect(screen.getAllByRole('button')).toHaveLength(1);
     await fireEvent.press(screen.getByRole('button', { name: 'Sign out' }));
     expect(signOut).toHaveBeenCalled();
   });

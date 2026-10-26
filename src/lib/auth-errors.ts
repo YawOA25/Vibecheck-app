@@ -94,6 +94,34 @@ export function describeSignInError(error: ErrorLike): string {
 }
 
 /**
+ * Picks the message to show for an error from the reviewer email-and-password
+ * sign-in (task B14, brought forward for founder testing on 2026-10-26).
+ *
+ * @param error - the error Supabase returned from `signInWithPassword`.
+ * @returns one short sentence for the screen. It never repeats what was
+ *   typed, so the password can't end up on screen or in a log.
+ */
+export function describePasswordSignInError(error: ErrorLike): string {
+  if (isNetworkError(error)) return "Can't reach VibeCheck. Check your connection and try again.";
+  switch (error.code) {
+    // Supabase uses one code for "no such user" and "wrong password", on
+    // purpose, so nobody can find out which emails have an account.
+    case 'invalid_credentials':
+      return "That email and password don't match. Check them and try again.";
+    case 'email_not_confirmed':
+      return 'This test account is not confirmed yet. Confirm it in the Supabase dashboard.';
+    case 'over_request_rate_limit':
+      return 'Too many tries. Please wait a few minutes and try again.';
+  }
+  if (error.status === 429) return 'Too many tries. Please wait a few minutes and try again.';
+  // Older Supabase versions send no code, only this message.
+  if (/invalid login credentials/i.test(error.message ?? '')) {
+    return "That email and password don't match. Check them and try again.";
+  }
+  return FALLBACK;
+}
+
+/**
  * Picks the message to show for an error from `complete_profile`.
  *
  * @param error - the error the database returned.

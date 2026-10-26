@@ -11,9 +11,12 @@
 import {
   ageOn,
   checkBirthdate,
+  dateDigits,
   daysInMonth,
+  formatDateInput,
   isAtLeast18,
   isLeapYear,
+  parseDateInput,
   parseDateParts,
   toIsoDate,
   todayInZone,
@@ -143,5 +146,34 @@ describe('small helpers', () => {
   it('formats dates as YYYY-MM-DD for the database', () => {
     expect(toIsoDate(d('2008-02-09'))).toBe('2008-02-09');
     expect(toIsoDate({ year: 1999, month: 7, day: 4 })).toBe('1999-07-04');
+  });
+});
+
+// The single "MM / DD / YYYY" box on the age gate (v3 design, spec 2.3).
+describe('date-of-birth box helpers', () => {
+  it('adds " / " between month, day and year as digits are typed', () => {
+    expect(formatDateInput('0')).toBe('0');
+    expect(formatDateInput('04')).toBe('04');
+    // The separator appears only once the next digit is typed, so delete never sticks.
+    expect(formatDateInput('041')).toBe('04 / 1');
+    expect(formatDateInput('0418')).toBe('04 / 18');
+    expect(formatDateInput('04181998')).toBe('04 / 18 / 1998');
+  });
+
+  it('copes with deleting, pasting and stray characters', () => {
+    // Deleting the space after "04 / " leaves "04 /", which tidies back to "04".
+    expect(formatDateInput('04 /')).toBe('04');
+    expect(formatDateInput('04-18-1998')).toBe('04 / 18 / 1998');
+    // More than 8 digits: the extra ones are dropped.
+    expect(formatDateInput('0418199812')).toBe('04 / 18 / 1998');
+    expect(dateDigits('04 / 18 / 1998')).toBe('04181998');
+  });
+
+  it('reads a full, real date and refuses anything else', () => {
+    expect(parseDateInput('04 / 18 / 1998')).toEqual(d('1998-04-18'));
+    expect(parseDateInput('02 / 29 / 2000')).toEqual(d('2000-02-29'));
+    expect(parseDateInput('02 / 29 / 2001')).toBeNull(); // no 29 Feb in 2001
+    expect(parseDateInput('13 / 01 / 1998')).toBeNull(); // no 13th month
+    expect(parseDateInput('04 / 18 / 98')).toBeNull(); // not all 8 digits
   });
 });

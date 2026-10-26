@@ -3,6 +3,7 @@
  * sign-in input helpers (src/lib/sign-in-input.ts), task VC-B03.
  */
 import {
+  describePasswordSignInError,
   describeProfileError,
   describeSignInError,
   isUnder18Error,
@@ -62,5 +63,27 @@ describe('sign-in input helpers', () => {
   it('keeps only digits in the code, at most 10', () => {
     expect(cleanCode('123 456')).toBe('123456');
     expect(cleanCode('12-34-56-78-90-12')).toBe('1234567890');
+  });
+});
+
+// Reviewer email-and-password sign-in (B14, dev builds only for now).
+describe('describePasswordSignInError', () => {
+  it('explains a wrong email or password in plain words', () => {
+    expect(describePasswordSignInError({ code: 'invalid_credentials', status: 400 })).toBe(
+      "That email and password don't match. Check them and try again.",
+    );
+    // Older servers: no code, only the message.
+    expect(describePasswordSignInError({ message: 'Invalid login credentials' })).toMatch(
+      /don't match/,
+    );
+  });
+
+  it('covers unconfirmed accounts, rate limits, the network and unknown errors', () => {
+    expect(describePasswordSignInError({ code: 'email_not_confirmed' })).toMatch(/dashboard/);
+    expect(describePasswordSignInError({ status: 429 })).toMatch(/wait/);
+    expect(describePasswordSignInError({ name: 'AuthRetryableFetchError' })).toMatch(/connection/);
+    expect(describePasswordSignInError({ code: 'something_new' })).toBe(
+      'Something went wrong. Please try again.',
+    );
   });
 });

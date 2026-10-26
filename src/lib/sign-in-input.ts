@@ -10,6 +10,17 @@ export const MIN_CODE_LENGTH = 6;
 export const MAX_CODE_LENGTH = 10;
 
 /**
+ * How many digits OUR sign-in emails contain, and so how many code boxes the
+ * screen shows. It must match the hosted Supabase project's setting
+ * (Dashboard > Authentication > Email > "Email OTP Length"), which was 8 when
+ * checked on 2026-10-26. If that setting changes, change this one number
+ * (and `otp_length` in supabase/config.toml, which only affects a local
+ * database). If they differ, sign-in breaks: the screen would send a code
+ * that is too short or wait for digits that never come.
+ */
+export const EMAIL_CODE_LENGTH = 8;
+
+/**
  * Tidies an email address: removes spaces at the ends and lowercases it,
  * because email addresses aren't case-sensitive in practice.
  *
