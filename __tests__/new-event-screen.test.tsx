@@ -54,7 +54,8 @@ beforeEach(() => {
 async function fillForm(endDate: string = dayAfter) {
   await fireEvent.changeText(screen.getByLabelText('Event name'), 'Saturday rooftop');
   // VC-37: pick the state, then search its areas and pick the match.
-  await fireEvent.press(screen.getByRole('radio', { name: 'DC' }));
+  await fireEvent.changeText(screen.getByLabelText('State'), 'dc');
+  await fireEvent.press(screen.getByRole('button', { name: 'District of Columbia (DC)' }));
   await fireEvent.changeText(screen.getByLabelText('Area'), 'Shaw');
   await fireEvent.press(screen.getByRole('button', { name: 'Shaw, DC' }));
   await fireEvent.changeText(screen.getByLabelText('Start date'), tomorrow.replace(/\D/g, ''));

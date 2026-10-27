@@ -18,6 +18,7 @@ import {
   isAllowedTicketUrl,
   looksLikeStreetAddress,
   parseTimeInput,
+  STATE_REQUIRED,
   toEventMoment,
   validateEventForm,
   wordCount,
@@ -111,7 +112,7 @@ describe('validateEventForm', () => {
 
   it('asks for the state on a new event (VC-37)', () => {
     const result = validateEventForm(form({ state: null }), NOW);
-    expect(result).toEqual({ ok: false, errors: { state: 'Pick DC, Maryland or Virginia.' } });
+    expect(result).toEqual({ ok: false, errors: { state: STATE_REQUIRED } });
   });
 
   it('sends empty optional fields as null and the source as host', () => {

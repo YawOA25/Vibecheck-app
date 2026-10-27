@@ -16,7 +16,12 @@
  *   - fixing an event that already ended is allowed (create refuses that);
  *   - the same box rules as New event still apply (end after start).
  */
-import { END_BEFORE_START, validateEventEdit, valuesFromEvent } from '@/lib/event-form';
+import {
+  END_BEFORE_START,
+  STATE_REQUIRED,
+  validateEventEdit,
+  valuesFromEvent,
+} from '@/lib/event-form';
 import type { EditableEvent } from '@/lib/event-form';
 
 // A fixed "now": Saturday 31 October 2026, 3:00 PM in New York.
@@ -191,10 +196,14 @@ describe('validateEventEdit', () => {
     expect(validateEventEdit(valuesFromEvent(older), older, NOW)).toMatchObject({
       input: { p_state: 'DC' },
     });
-    // A typed area that isn't on the list gives no guess, and nothing is sent.
+    // A typed area that isn't on the list gives no guess, so saving asks
+    // for a state from the list (State lookup spec, section 4).
     const typed = event({ state: null, area_label: 'Ivy City' });
     expect(valuesFromEvent(typed).state).toBeNull();
-    expect(validateEventEdit(valuesFromEvent(typed), typed, NOW)).toMatchObject({ changed: false });
+    expect(validateEventEdit(valuesFromEvent(typed), typed, NOW)).toEqual({
+      ok: false,
+      errors: { state: STATE_REQUIRED },
+    });
   });
 
   it('keeps stored seconds when the time boxes are not touched', () => {

@@ -13,18 +13,26 @@
  *   - the Area box: no suggestions before typing; typing filters (at most
  *     6); picking fills the box and closes the list; with no match, "Use
  *     '<typed>'" fills it with exactly what was typed; with no state yet, it
- *     says to pick one;
+ *     is disabled (State lookup spec, section 3);
  *   - on the real New event screen: the state filters suggestions, a pin
  *     preselects the state, changing the state clears an area from another
- *     state, and the no-house-number rule still applies to "Use ...".
+ *     state but keeps a typed one, Area waits for a state, a half-typed
+ *     state can't be saved, and the no-house-number rule still applies to
+ *     "Use ...".
  */
 import { fireEvent, render, screen } from '@testing-library/react-native';
 import { useState } from 'react';
 
 import NewEventScreen from '../app/admin/new-event';
-import { AreaPicker, MAX_AREA_RESULTS, PICK_STATE_FIRST } from '@/components/AreaPicker';
+import {
+  AreaPicker,
+  CHOOSE_STATE_FIRST,
+  MAX_AREA_RESULTS,
+  PICK_STATE_TO_CHANGE_AREA,
+} from '@/components/AreaPicker';
 import { DMV_AREAS, searchAreas, stateForPin, stateOfListedArea } from '@/data/dmv-areas';
 import type { AreaState } from '@/data/dmv-areas';
+import { STATE_REQUIRED } from '@/lib/event-form';
 import { getCurrentPin } from '@/lib/location';
 import { supabase } from '@/lib/supabase';
 
@@ -47,8 +55,16 @@ const SUGGESTION = /, (DC|MD|VA)$/;
  * @param props.onChange - spy told about every change.
  * @returns the Area box.
  */
-function Harness({ state, onChange }: { state: AreaState | null; onChange?: jest.Mock }) {
-  const [value, setValue] = useState('');
+function Harness({
+  state,
+  onChange,
+  initial = '',
+}: {
+  state: AreaState | null;
+  onChange?: jest.Mock;
+  initial?: string;
+}) {
+  const [value, setValue] = useState(initial);
   return (
     <AreaPicker
       state={state}
@@ -152,22 +168,48 @@ describe('the Area box (search-first)', () => {
     expect(screen.queryByRole('button', { name: "Use 'shaw'" })).toBeNull();
   });
 
-  it('with no state yet, says to pick one first (and still offers "Use ...")', async () => {
+  it('with no state yet, is disabled and says to choose a state first', async () => {
     await render(<Harness state={null} />);
-    await fireEvent.changeText(screen.getByLabelText('Area'), 'shaw');
-    expect(screen.getByText(PICK_STATE_FIRST)).toBeOnTheScreen();
-    expect(screen.queryAllByRole('button', { name: SUGGESTION })).toHaveLength(0);
-    expect(screen.getByRole('button', { name: "Use 'shaw'" })).toBeOnTheScreen();
+    const box = screen.getByLabelText('Area');
+    expect(box).toBeDisabled();
+    expect(box.props.editable).toBe(false);
+    expect(screen.getByText(CHOOSE_STATE_FIRST)).toBeOnTheScreen();
+  });
+
+  it('with no state but a saved area, keeps the area greyed and says how to change it', async () => {
+    await render(<Harness state={null} initial="Ivy City" />);
+    expect(screen.getByLabelText('Area')).toHaveDisplayValue('Ivy City');
+    expect(screen.getByLabelText('Area')).toBeDisabled();
+    expect(screen.getByText(PICK_STATE_TO_CHANGE_AREA)).toBeOnTheScreen();
+  });
+
+  it('shows the example placeholder for the chosen state', async () => {
+    await render(<Harness state="MD" />);
+    expect(screen.getByLabelText('Area').props.placeholder).toBe('Bethesda, MD');
   });
 });
+
+/**
+ * Picks a state through the State lookup: types, then taps the row.
+ *
+ * @param typed - what to type in the State box.
+ * @param row - the row's spoken name, e.g. "Virginia".
+ */
+async function pickState(typed: string, row: string) {
+  await fireEvent.changeText(screen.getByLabelText('State'), typed);
+  await fireEvent.press(screen.getByRole('button', { name: row }));
+}
+
+/** The DC row's spoken name. */
+const DC_ROW = 'District of Columbia (DC)';
 
 describe('State and Area on the New event screen', () => {
   beforeEach(() => jest.clearAllMocks());
 
   it('the chosen state filters the suggestions', async () => {
     await render(<NewEventScreen />);
-    await fireEvent.press(screen.getByRole('radio', { name: 'Virginia' }));
-    expect(screen.getByRole('radio', { name: 'Virginia' })).toBeSelected();
+    await pickState('virg', 'Virginia');
+    expect(screen.getByLabelText('State')).toHaveDisplayValue('Virginia');
     await fireEvent.changeText(screen.getByLabelText('Area'), 'r');
     const names = screen
       .getAllByRole('button', { name: SUGGESTION })
@@ -183,11 +225,11 @@ describe('State and Area on the New event screen', () => {
     });
     await render(<NewEventScreen />);
     await fireEvent.press(screen.getByRole('button', { name: 'Use my current location' }));
-    expect(screen.getByRole('radio', { name: 'Maryland' })).toBeSelected();
+    expect(screen.getByLabelText('State')).toHaveDisplayValue('Maryland');
+    expect(screen.getByLabelText('Area')).not.toBeDisabled();
 
-    await fireEvent.press(screen.getByRole('radio', { name: 'DC' }));
-    expect(screen.getByRole('radio', { name: 'DC' })).toBeSelected();
-    expect(screen.getByRole('radio', { name: 'Maryland' })).not.toBeSelected();
+    await pickState('dc', DC_ROW);
+    expect(screen.getByLabelText('State')).toHaveDisplayValue('DC');
   });
 
   it('a typed map pin ("Enter location") preselects the state too', async () => {
@@ -198,23 +240,55 @@ describe('State and Area on the New event screen', () => {
       '38.8868, -77.0953',
     );
     await fireEvent.press(screen.getByRole('button', { name: 'Set this location' }));
-    expect(screen.getByRole('radio', { name: 'Virginia' })).toBeSelected();
+    expect(screen.getByLabelText('State')).toHaveDisplayValue('Virginia');
   });
 
   it('changing the state clears an area chosen from another state', async () => {
     await render(<NewEventScreen />);
-    await fireEvent.press(screen.getByRole('radio', { name: 'DC' }));
+    await pickState('dc', DC_ROW);
     await fireEvent.changeText(screen.getByLabelText('Area'), 'shaw');
     await fireEvent.press(screen.getByRole('button', { name: 'Shaw, DC' }));
     expect(screen.getByLabelText('Area')).toHaveDisplayValue('Shaw, DC');
 
-    await fireEvent.press(screen.getByRole('radio', { name: 'Maryland' }));
+    await pickState('mary', 'Maryland');
     expect(screen.getByLabelText('Area')).toHaveDisplayValue('');
+  });
+
+  it('changing the state keeps a typed ("Use ...") area', async () => {
+    await render(<NewEventScreen />);
+    await pickState('dc', DC_ROW);
+    await fireEvent.changeText(screen.getByLabelText('Area'), 'Ivy City');
+    await fireEvent.press(screen.getByRole('button', { name: "Use 'Ivy City'" }));
+
+    await pickState('va', 'Virginia');
+    expect(screen.getByLabelText('Area')).toHaveDisplayValue('Ivy City');
+  });
+
+  it('Area is disabled until a state is picked, and again while the state is retyped', async () => {
+    await render(<NewEventScreen />);
+    expect(screen.getByLabelText('Area')).toBeDisabled();
+    await pickState('dc', DC_ROW);
+    expect(screen.getByLabelText('Area')).not.toBeDisabled();
+    await fireEvent.changeText(screen.getByLabelText('Area'), 'shaw');
+    await fireEvent.press(screen.getByRole('button', { name: 'Shaw, DC' }));
+
+    // Retyping the state disables Area but keeps its text.
+    await fireEvent.changeText(screen.getByLabelText('State'), 'D');
+    expect(screen.getByLabelText('Area')).toBeDisabled();
+    expect(screen.getByLabelText('Area')).toHaveDisplayValue('Shaw, DC');
+  });
+
+  it('saving with a half-typed state asks for a pick from the list', async () => {
+    await render(<NewEventScreen />);
+    await fireEvent.changeText(screen.getByLabelText('State'), 'Virg');
+    await fireEvent.press(screen.getByRole('button', { name: 'Create event' }));
+    expect(screen.getByText(STATE_REQUIRED)).toBeOnTheScreen();
+    expect(supabase.rpc).not.toHaveBeenCalled();
   });
 
   it('still refuses a house number typed through "Use ..."', async () => {
     await render(<NewEventScreen />);
-    await fireEvent.press(screen.getByRole('radio', { name: 'DC' }));
+    await pickState('dc', DC_ROW);
     await fireEvent.changeText(screen.getByLabelText('Area'), '1420 U St NW');
     await fireEvent.press(screen.getByRole('button', { name: "Use '1420 U St NW'" }));
     await fireEvent.press(screen.getByRole('button', { name: 'Create event' }));

@@ -22,6 +22,8 @@ import type { PublicEvent } from '@/lib/tonight';
 
 /** Longest event name (same as the database rule). */
 export const MAX_TITLE_LENGTH = 80;
+/** The State box error when no state is picked from the list (exported for tests). */
+export const STATE_REQUIRED = 'Pick a state from the list.';
 /** Longest area label (same as the database rule). */
 export const MAX_AREA_LENGTH = 60;
 /** Most words allowed in our own summary (VC-29 legal condition). */
@@ -276,9 +278,11 @@ function checkEventForm(
   else if (title.length > MAX_TITLE_LENGTH)
     errors.title = `Keep the name to ${MAX_TITLE_LENGTH} characters.`;
 
-  // The state (VC-37) is required for new events. When editing, an older
-  // event may have none, and leaving it empty keeps it that way.
-  if (mode === 'create' && !values.state) errors.state = 'Pick DC, Maryland or Virginia.';
+  // The state (VC-37) must be picked from the State lookup on every save.
+  // An older event with no state (and a typed area, so none could be
+  // guessed) needs a pick before it can be saved (State lookup spec,
+  // section 4). Viewing it is never blocked.
+  if (!values.state) errors.state = STATE_REQUIRED;
 
   const areaLabel = values.areaLabel.trim();
   // The Area box only sets a value once a suggestion or "Use ..." is picked

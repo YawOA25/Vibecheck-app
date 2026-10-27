@@ -8,8 +8,13 @@
  * (src/data/dmv-areas.ts) appear under the box, matched anywhere in the
  * name and ignoring capitals ("yard" finds "Navy Yard, DC"). When nothing
  * matches, "Use '<what they typed>'" is offered instead: the "Other"
- * choice for a place not on the list. With no state picked yet, it says to
- * pick one first (and still offers "Use ...").
+ * choice for a place not on the list.
+ *
+ * Disabled until a state is picked (State lookup spec, section 3): greyed,
+ * can't be focused, helper "Choose a state first." Its text and saved value
+ * stay untouched while disabled, so retyping the state loses nothing. An
+ * older event with a saved area but no state shows the area greyed with
+ * "Pick a state to change the area."
  *
  * Picking a suggestion (or "Use ...") fills the box and closes the list.
  * Only then does the form's area value change. Typing again clears it
@@ -21,16 +26,30 @@
  * (src/lib/event-form.ts) and the server checks it again.
  */
 import { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
+import { SuggestionList, SuggestionRow } from '@/components/SuggestionList';
 import { TextField } from '@/components/TextField';
 import { searchAreas } from '@/data/dmv-areas';
 import type { AreaState } from '@/data/dmv-areas';
 import { MAX_AREA_LENGTH } from '@/lib/event-form';
-import { colors, minTapTarget, radius, spacing, typography } from '@/theme';
+import { spacing } from '@/theme';
 
-/** Shown while typing before a state is picked (exported for tests). */
-export const PICK_STATE_FIRST = 'Pick DC, Maryland or Virginia above to see suggestions.';
+/** The Area helper while no state is picked and the box is empty (exported for tests). */
+export const CHOOSE_STATE_FIRST = 'Choose a state first.';
+
+/** The Area helper while no state is picked but an area is saved (exported for tests). */
+export const PICK_STATE_TO_CHANGE_AREA = 'Pick a state to change the area.';
+
+/** The normal Area helper, once a state is picked. */
+const AREA_HELPER = 'Start typing the neighbourhood, like Shaw or Clarendon. Never the address.';
+
+/** An example area per state, used as the box's placeholder. */
+const PLACEHOLDERS: Record<AreaState, string> = {
+  DC: 'Shaw, DC',
+  MD: 'Bethesda, MD',
+  VA: 'Clarendon, VA',
+};
 
 /** Most suggestions shown at once (keeps the form short). */
 export const MAX_AREA_RESULTS = 6;
@@ -53,7 +72,10 @@ export interface AreaPickerProps {
   onChange: (label: string) => void;
   /** The form's error for the Area box, if any. */
   error?: string;
-  /** The chosen state (VC-37); suggestions only come from it. null = none yet. */
+  /**
+   * The chosen state (VC-37); suggestions only come from it. null = none
+   * yet, and the box is disabled.
+   */
   state: AreaState | null;
 }
 
@@ -91,12 +113,20 @@ export function AreaPicker({ value, onChange, error, state }: AreaPickerProps) {
     onChange(label);
   }
 
+  const disabled = state === null;
   const typed = text.trim();
-  const searching = open && typed !== '';
+  // No list at all while disabled (the box keeps its text for later).
+  const searching = !disabled && open && typed !== '';
   const matches = searching && state ? searchAreas(typed, state).slice(0, MAX_AREA_RESULTS) : [];
   // "Use ..." is the way in for a place that isn't on the list: offered
   // only when nothing matches (founder's rule).
   const offerTyped = searching && matches.length === 0;
+  // While disabled, the helper says why (and differs when an area is saved).
+  const helper = !disabled
+    ? AREA_HELPER
+    : value !== ''
+      ? PICK_STATE_TO_CHANGE_AREA
+      : CHOOSE_STATE_FIRST;
 
   return (
     <View style={styles.group}>
@@ -105,63 +135,33 @@ export function AreaPicker({ value, onChange, error, state }: AreaPickerProps) {
         value={text}
         onChangeText={onType}
         error={error}
-        helper="Start typing the neighbourhood, like Shaw or Clarendon. Never the address."
+        helper={helper}
+        editable={!disabled}
         maxLength={MAX_AREA_LENGTH}
         autoCapitalize="words"
         autoCorrect={false}
-        placeholder="Shaw, DC"
+        placeholder={PLACEHOLDERS[state ?? 'DC']}
       />
-      {searching && !state ? <Text style={styles.hint}>{PICK_STATE_FIRST}</Text> : null}
       {matches.length > 0 || offerTyped ? (
-        <View style={styles.results} accessibilityLabel="Area suggestions">
+        <SuggestionList accessibilityLabel="Area suggestions">
           {matches.map((area) => (
-            <Pressable
-              key={area}
-              accessibilityRole="button"
-              accessibilityLabel={area}
-              onPress={() => choose(area)}
-              style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
-            >
-              <Text style={styles.rowText}>{area}</Text>
-            </Pressable>
+            <SuggestionRow key={area} label={area} onPress={() => choose(area)} />
           ))}
           {offerTyped ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={typedAreaLabel(typed)}
+            <SuggestionRow
+              label={typedAreaLabel(typed)}
               accessibilityHint="Not on the list: use exactly what you typed."
               onPress={() => choose(typed)}
-              style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
-            >
-              <Text style={styles.otherText}>{typedAreaLabel(typed)}</Text>
-            </Pressable>
+              tone="accent"
+            />
           ) : null}
-        </View>
+        </SuggestionList>
       ) : null}
     </View>
   );
 }
 
-/** Styles built only from theme tokens. */
+/** Styles built only from theme tokens (row styles live in SuggestionList). */
 const styles = StyleSheet.create({
   group: { gap: spacing.sm },
-  hint: { ...typography.caption, color: colors.muted },
-  results: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.field,
-    overflow: 'hidden',
-  },
-  row: {
-    minHeight: minTapTarget,
-    justifyContent: 'center',
-    paddingHorizontal: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    backgroundColor: colors.surface,
-  },
-  rowPressed: { backgroundColor: colors.surfaceRaised },
-  rowText: { ...typography.body, color: colors.text },
-  // The "Use ..." row is gold, like a text link, so it reads as a different choice.
-  otherText: { ...typography.body, color: colors.accent },
 });

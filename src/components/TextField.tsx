@@ -10,6 +10,10 @@
  *   - error: the edge turns coral and 2 px thick, and an icon plus a sentence
  *     appear under the box (read aloud by screen readers).
  *
+ * Disabled (editable={false}, e.g. Area before a state is picked): the
+ * whole field is greyed to half strength, can't be focused, and screen
+ * readers hear "disabled".
+ *
  * Why one shared component: the label is linked to the box for screen
  * readers (they read "Email, text field"), and every form looks the same.
  */
@@ -47,9 +51,11 @@ export function TextField({
   ...inputProps
 }: TextFieldProps) {
   const [focused, setFocused] = useState(false);
+  // A box that can't be typed in is shown as disabled (greyed, skipped by focus).
+  const disabled = inputProps.editable === false;
 
   return (
-    <View style={styles.wrapper}>
+    <View style={[styles.wrapper, disabled && styles.disabled]}>
       {/* The visible label. Screen readers skip it because the box itself
           carries the same words as its accessibilityLabel (no double reading). */}
       <Text
@@ -63,6 +69,8 @@ export function TextField({
         accessibilityLabel={label}
         // The error is also given as a hint, so it is read when the box is reached.
         accessibilityHint={error ?? accessibilityHint}
+        accessibilityState={disabled ? { disabled: true } : undefined}
+        focusable={disabled ? false : undefined}
         placeholderTextColor={colors.muted}
         selectionColor={colors.accent}
         style={[
@@ -90,6 +98,8 @@ export function TextField({
 /** Styles built only from theme tokens. */
 const styles = StyleSheet.create({
   wrapper: { gap: spacing.sm },
+  // Same half-strength look as other disabled controls.
+  disabled: { opacity: 0.5 },
   // Capitals are made by the style, so screen readers still read "Email", not "E-M-A-I-L".
   label: { ...typography.label, color: colors.muted, textTransform: 'uppercase' },
   input: {

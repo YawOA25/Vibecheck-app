@@ -5,7 +5,8 @@
  * What's here:
  *   - useEventForm: the form's memory (what's typed, the error per box, the
  *     location buttons' busy state) and the actions that change it;
- *   - EventFormFields: the boxes, the Area picker (VC-37,
+ *   - EventFormFields: the boxes, the State lookup (VC-37 follow-up,
+ *     src/components/StatePicker.tsx), the Area picker (VC-37,
  *     src/components/AreaPicker.tsx), location buttons and switches, in the
  *     v3 look. Each screen adds its own heading and Save button around it.
  *
@@ -27,10 +28,10 @@ import { StyleSheet, Text, View } from 'react-native';
 import { AreaPicker } from '@/components/AreaPicker';
 import { Button } from '@/components/Button';
 import { FormMessage } from '@/components/FormMessage';
-import { SegmentedControl } from '@/components/SegmentedControl';
+import { StatePicker } from '@/components/StatePicker';
 import { TextField } from '@/components/TextField';
 import { ToggleRow } from '@/components/ToggleRow';
-import { AREA_STATES, stateForPin, stateOfListedArea } from '@/data/dmv-areas';
+import { stateForPin, stateOfListedArea } from '@/data/dmv-areas';
 import type { AreaState } from '@/data/dmv-areas';
 import { DATE_INPUT_MAX_LENGTH, formatDateInput } from '@/lib/age';
 import { MAX_SUMMARY_WORDS, MAX_TITLE_LENGTH, wordCount } from '@/lib/event-form';
@@ -78,6 +79,11 @@ export interface EventFormState {
    * is cleared, since it no longer fits.
    */
   chooseState: (state: AreaState) => void;
+  /**
+   * Forgets the picked state (the admin is typing in the State box again).
+   * The area is left alone, so nothing is lost by retyping.
+   */
+  clearState: () => void;
   /** Changes whenever the Area box must start afresh (its own text resets). */
   areaResetKey: number;
 }
@@ -212,6 +218,7 @@ export function useEventForm(initial: EventFormValues): EventFormState {
   return {
     values,
     chooseState,
+    clearState: () => update('state', null),
     areaResetKey,
     errors,
     setErrors,
@@ -265,14 +272,12 @@ export function EventFormFields({ form, mode, saving }: EventFormFieldsProps) {
         autoCapitalize="sentences"
         placeholder="Saturday rooftop"
       />
-      {/* VC-37: pick from the DMV list, or "Other (type it)". */}
-      <SegmentedControl
-        label="State"
-        options={AREA_STATES.map((s) => ({ value: s.code, label: s.name }))}
+      {/* VC-37 follow-up: search DC, Maryland or Virginia; Area waits for it. */}
+      <StatePicker
         value={values.state}
-        onChange={form.chooseState}
+        onPick={form.chooseState}
+        onClear={form.clearState}
         error={errors.state}
-        helper="Pick first: the area search only shows this state's neighbourhoods."
       />
       <AreaPicker
         key={form.areaResetKey}

@@ -10,14 +10,20 @@
  *   - an untouched form sends nothing and says so;
  *   - the server's refusal to change the test flag after check-ins (VCTST)
  *     is shown in plain words, and the screen stays open;
- *   - a missing event shows "Event not found".
+ *   - a missing event shows "Event not found";
+ *   - the State lookup (VC-37 follow-up): a saved state starts filled in;
+ *     an older event with no state guesses it from a listed area, or (with
+ *     a typed area) leaves State empty, greys out Area and asks for a pick
+ *     before saving.
  * Admin-only visibility is tested in route-guards.test.tsx (the address)
  * and event-screen.test.tsx (the button).
  */
 import { fireEvent, render, screen } from '@testing-library/react-native';
 
 import EditEventScreen, { NOTHING_CHANGED, SAVE_LABEL } from '../app/admin/edit-event/[id]';
+import { PICK_STATE_TO_CHANGE_AREA } from '@/components/AreaPicker';
 import { KEEPING_LOCATION } from '@/components/EventForm';
+import { STATE_REQUIRED } from '@/lib/event-form';
 import type { EditableEvent } from '@/lib/event-form';
 import { getCurrentPin } from '@/lib/location';
 import { supabase } from '@/lib/supabase';
@@ -91,8 +97,11 @@ describe('EditEventScreen', () => {
     expect(select).toHaveBeenCalledWith(expect.stringContaining('code_check_in_enabled'));
     expect(select).not.toHaveBeenCalledWith(expect.stringMatching(/lat|lng|check_in_code\b/));
     expect(screen.getByLabelText('Event name')).toHaveDisplayValue('Saturday rooftop');
-    // VC-37: the saved state is selected and the area box shows the area.
-    expect(screen.getByRole('radio', { name: 'DC' })).toBeSelected();
+    // VC-37: the State box shows the saved state, the list is closed, and
+    // the area box shows the area (enabled).
+    expect(screen.getByLabelText('State')).toHaveDisplayValue('DC');
+    expect(screen.queryByLabelText('State suggestions')).toBeNull();
+    expect(screen.getByLabelText('Area')).not.toBeDisabled();
     expect(screen.getByLabelText('Area')).toHaveDisplayValue('Shaw, DC');
     expect(screen.getByLabelText('Start date')).toHaveDisplayValue('10 / 24 / 2026');
     expect(screen.getByLabelText('Start time')).toHaveDisplayValue('10 PM');
@@ -160,6 +169,49 @@ describe('EditEventScreen', () => {
       screen.getByText("People have checked in, so the test flag can't change."),
     ).toBeOnTheScreen();
     expect(mockBack).not.toHaveBeenCalled();
+  });
+
+  it('opens with a saved Maryland state filled in and Area enabled', async () => {
+    eventsReadReturns({
+      data: { ...storedEvent(), state: 'MD', area_label: 'Bethesda, MD' },
+      error: null,
+    });
+    await render(<EditEventScreen />);
+    expect(screen.getByLabelText('State')).toHaveDisplayValue('Maryland');
+    expect(screen.getByLabelText('Area')).toHaveDisplayValue('Bethesda, MD');
+    expect(screen.getByLabelText('Area')).not.toBeDisabled();
+  });
+
+  it('an older event with no state but a listed area gets the state filled in', async () => {
+    eventsReadReturns({ data: { ...storedEvent(), state: null }, error: null });
+    await render(<EditEventScreen />);
+    expect(screen.getByLabelText('State')).toHaveDisplayValue('DC');
+    await fireEvent.press(screen.getByRole('button', { name: SAVE_LABEL }));
+    expect(rpc).toHaveBeenCalledWith('update_event', { p_event_id: 'event-1', p_state: 'DC' });
+  });
+
+  it('an older event with no state and a typed area needs a state pick on save', async () => {
+    eventsReadReturns({
+      data: { ...storedEvent(), state: null, area_label: 'Ivy City' },
+      error: null,
+    });
+    await render(<EditEventScreen />);
+    // State empty; Area shows the saved text, greyed, with a hint.
+    expect(screen.getByLabelText('State')).toHaveDisplayValue('');
+    expect(screen.getByLabelText('Area')).toHaveDisplayValue('Ivy City');
+    expect(screen.getByLabelText('Area')).toBeDisabled();
+    expect(screen.getByText(PICK_STATE_TO_CHANGE_AREA)).toBeOnTheScreen();
+
+    await fireEvent.press(screen.getByRole('button', { name: SAVE_LABEL }));
+    expect(screen.getByText(STATE_REQUIRED)).toBeOnTheScreen();
+    expect(rpc).not.toHaveBeenCalled();
+
+    // Picking a state keeps the typed area and saves the state.
+    await fireEvent.changeText(screen.getByLabelText('State'), 'district');
+    await fireEvent.press(screen.getByRole('button', { name: 'District of Columbia (DC)' }));
+    expect(screen.getByLabelText('Area')).toHaveDisplayValue('Ivy City');
+    await fireEvent.press(screen.getByRole('button', { name: SAVE_LABEL }));
+    expect(rpc).toHaveBeenCalledWith('update_event', { p_event_id: 'event-1', p_state: 'DC' });
   });
 
   it('shows "Event not found" when the event is gone', async () => {
