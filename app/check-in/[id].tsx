@@ -19,8 +19,11 @@
  * Privacy: the reading is passed straight from step 2's reader to the
  * server call. It is never put in screen state, shown, or logged.
  *
- * Not here on purpose: "Rate the night" (task VC-B08) and the party-code
- * entry itself (task VC-B07; "Enter the party code" opens its placeholder).
+ * The party code (task VC-B07): "GPS not working? Enter the party code"
+ * under the main button, and "Enter the party code" on the weak-signal and
+ * permission screens, open the code screen (app/join/[id].tsx).
+ *
+ * Not here on purpose: "Rate the night" (task VC-B08).
  */
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
@@ -47,6 +50,7 @@ export const PRIVACY_NOTE =
   'Quick location check, just once. We never track you or save where you are.';
 export const IM_HERE = "Yep, I'm here";
 export const NOT_THIS_ONE = 'Not this one';
+export const GPS_NOT_WORKING = 'GPS not working? Enter the party code';
 export const CHECKING = 'Checking...';
 export const NOT_FOUND_TITLE = 'Event not found';
 
@@ -210,6 +214,14 @@ export default function CheckInScreen() {
             busy={phase.checking}
             busyLabel={CHECKING}
             onPress={() => void runCheckIn(phase.event)}
+          />
+          {/* The indoor fallback, offered up front as well as after a weak signal. */}
+          <Button
+            label={GPS_NOT_WORKING}
+            variant="text"
+            size="small"
+            onPress={() => onAction('code', phase.event)}
+            disabled={phase.checking}
           />
           <Button label={NOT_THIS_ONE} variant="text" onPress={goBack} disabled={phase.checking} />
         </Sheet>

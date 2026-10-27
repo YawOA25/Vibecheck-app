@@ -11,7 +11,7 @@
  *   - the permission screens: denied ("Allow location" asks again, "Not
  *     now" goes back), blocked and approximate (open Settings), location
  *     switched off; phone-side problems never call the server;
- *   - "Enter the party code" opens the VC-B07 placeholder;
+ *   - "Enter the party code" opens the party-code screen (VC-B07);
  *   - errors: a network failure offers "Try again"; an event that vanished
  *     shows "Event not found";
  *   - the reading is never shown on screen or written to the console.
@@ -177,11 +177,20 @@ describe('result screens from the server', () => {
     await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
   });
 
-  it('weak signal: offers the party code, which opens the VC-B07 placeholder', async () => {
+  it('weak signal: offers the party code, which opens the party-code screen (VC-B07)', async () => {
     await checkInWith({ ok: true, result: { status: 'weak_signal' } });
     expect(await screen.findByRole('header', { name: 'Weak signal.' })).toBeOnTheScreen();
     await fireEvent.press(screen.getByRole('button', { name: 'Enter the party code' }));
     expect(mockPush).toHaveBeenCalledWith({ pathname: '/join/[id]', params: { id: 'e1' } });
+  });
+
+  it('"GPS not working?" on the first sheet opens the party-code screen without reading GPS', async () => {
+    await render(<CheckInScreen />);
+    await fireEvent.press(
+      await screen.findByRole('button', { name: 'GPS not working? Enter the party code' }),
+    );
+    expect(mockPush).toHaveBeenCalledWith({ pathname: '/join/[id]', params: { id: 'e1' } });
+    expect(read).not.toHaveBeenCalled();
   });
 
   it('too early: says when check-in opens, in New York time', async () => {

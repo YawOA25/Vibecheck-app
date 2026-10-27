@@ -2,6 +2,8 @@
  * The one-box-per-digit code entry from the v3 design (spec section 2.2).
  * The design shows 6 boxes; the screen passes the real code length (8 for
  * our hosted project), so the number of boxes always matches the email.
+ * The party-code screen (VC-B07) uses it too, with `characters="letters"`
+ * for the 6-character party code (capital letters and digits).
  *
  * How it works: there is ONE real text box, made invisible and laid over the
  * digit boxes. The boxes only *show* the digits typed into it. One real box
@@ -31,6 +33,14 @@ export interface CodeInputProps {
   error?: string | null;
   /** True while the code is being checked: typing is locked. */
   locked?: boolean;
+  /**
+   * What goes in the boxes: 'digits' (default, the emailed sign-in code) or
+   * 'letters' (the party code, VC-B07: capital letters and digits, typed on
+   * the normal keyboard, with no "fill in from email").
+   */
+  characters?: 'digits' | 'letters';
+  /** The label above the boxes and for screen readers (default "N-digit code"). */
+  label?: string;
 }
 
 /**
@@ -38,8 +48,35 @@ export interface CodeInputProps {
  *
  * @returns the code entry view.
  */
-export function CodeInput({ value, onChangeText, length, error, locked }: CodeInputProps) {
+export function CodeInput({
+  value,
+  onChangeText,
+  length,
+  error,
+  locked,
+  characters = 'digits',
+  label,
+}: CodeInputProps) {
   const [focused, setFocused] = useState(false);
+  const fieldLabel = label ?? `${length}-digit code`;
+  // Party codes use the letter keyboard in capitals, with autocorrect and
+  // autofill off (a party code is never in an email or text message).
+  const keyboard =
+    characters === 'letters'
+      ? ({
+          keyboardType: 'default',
+          autoCapitalize: 'characters',
+          autoCorrect: false,
+          spellCheck: false,
+          textContentType: 'none',
+          autoComplete: 'off',
+        } as const)
+      : ({
+          keyboardType: 'number-pad',
+          // Lets iPhone and Android offer the code from the email.
+          textContentType: 'oneTimeCode',
+          autoComplete: 'one-time-code',
+        } as const);
   // One entry per box: the digit typed there, or '' if not typed yet.
   const digits = Array.from({ length }, (_, i) => value[i] ?? '');
 
@@ -50,7 +87,7 @@ export function CodeInput({ value, onChangeText, length, error, locked }: CodeIn
         accessibilityElementsHidden
         importantForAccessibility="no-hide-descendants"
       >
-        {`${length}-digit code`}
+        {fieldLabel}
       </Text>
       {/* More than 6 boxes get a smaller gap so each box stays wide enough
           for its digit on a small phone. */}
@@ -76,16 +113,13 @@ export function CodeInput({ value, onChangeText, length, error, locked }: CodeIn
           </View>
         ))}
         <TextInput
-          accessibilityLabel={`${length}-digit code`}
+          accessibilityLabel={fieldLabel}
           accessibilityHint={error ?? undefined}
           value={value}
           onChangeText={onChangeText}
           editable={!locked}
-          keyboardType="number-pad"
           maxLength={length}
-          // Lets iPhone and Android offer the code from the email.
-          textContentType="oneTimeCode"
-          autoComplete="one-time-code"
+          {...keyboard}
           autoFocus
           caretHidden
           onFocus={() => setFocused(true)}

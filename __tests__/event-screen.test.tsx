@@ -1,6 +1,6 @@
 /**
- * Tests for the event page (app/event/[id].tsx), task VC-B05, and the
- * party-code placeholder (app/join/[id].tsx) that VC-B06 links to.
+ * Tests for the event page (app/event/[id].tsx), task VC-B05. (The
+ * party-code screen it leads to is tested in join-screen.test.tsx, VC-B07.)
  *
  * The router and the event read are replaced with fakes, and the phone's
  * "open this link" function is watched. We check:
@@ -11,14 +11,12 @@
  *     that opens the ticket page in the browser, and "Not affiliated with
  *     Eventbrite.";
  *   - a host party never shows a ticket link, even if one is stored;
- *   - "I'm here" opens the check-in screen (tested in check-in-screen.test.tsx);
- *   - the "Party code coming soon" placeholder goes back.
+ *   - "I'm here" opens the check-in screen (tested in check-in-screen.test.tsx).
  */
 import { fireEvent, render, screen } from '@testing-library/react-native';
 import { Linking } from 'react-native';
 
 import EventScreen, { NOT_FOUND_TITLE } from '../app/event/[id]';
-import PartyCodeComingSoonScreen, { CODE_SOON_TITLE } from '../app/join/[id]';
 import { EARLY_READING_TITLE } from '@/components/LiveVibeCard';
 import { NOT_AFFILIATED } from '@/components/TicketLink';
 import { getEvent } from '@/lib/events-read';
@@ -168,14 +166,5 @@ describe('EventScreen staff picks (VC-29)', () => {
     await render(<EventScreen />);
     await screen.findByText('Staff pick');
     expect(screen.queryByRole('link', { name: 'Get tickets' })).toBeNull();
-  });
-});
-
-describe('PartyCodeComingSoonScreen (VC-B07 placeholder)', () => {
-  it('says the party code is coming soon and goes back', async () => {
-    await render(<PartyCodeComingSoonScreen />);
-    expect(screen.getByRole('header', { name: CODE_SOON_TITLE })).toBeOnTheScreen();
-    await fireEvent.press(screen.getByRole('button', { name: 'Back to check-in' }));
-    expect(mockBack).toHaveBeenCalled();
   });
 });
