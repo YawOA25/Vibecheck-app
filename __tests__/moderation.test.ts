@@ -1,6 +1,7 @@
 /**
  * Tests for the moderation rules and words (src/lib/moderation.ts) and the
- * server calls (src/lib/moderation-api.ts), proposals VC-47 and VC-58.
+ * server calls (src/lib/moderation-api.ts), proposals VC-47, VC-58 and
+ * VC-65 (report reasons).
  *
  * Supabase is a fake. We check:
  *   - the reason lists follow the written rule (three removal reasons, two
@@ -8,13 +9,17 @@
  *   - the 48-hour waiting words, and "how long ago";
  *   - each call sends the right arguments (a blank note becomes null) and
  *     reads the server's answer; errors become plain sentences;
- *   - malformed rows from the server are skipped, not shown.
+ *   - malformed rows from the server are skipped, not shown;
+ *   - VC-65: the five report reasons and their words, the reason sent with
+ *     a report, the queue's reason counts and how they are worded.
  */
 import {
   REMOVAL_REASONS,
+  REPORT_REASONS,
   RESTORE_REASONS,
   actionLabel,
   agoText,
+  reasonCountsText,
   reasonLabel,
   reasonsFor,
   waitingText,
@@ -81,9 +86,24 @@ describe('moderation calls (src/lib/moderation-api.ts)', () => {
   it('reports a tag and reads the three answers', async () => {
     for (const status of ['reported', 'already', 'too_many']) {
       rpc.mockResolvedValueOnce({ data: { status }, error: null });
-      expect(await reportHeadsUpTag('e1', 'packed')).toEqual({ ok: true, status });
+      expect(await reportHeadsUpTag('e1', 'packed', 'spam')).toEqual({ ok: true, status });
     }
-    expect(rpc).toHaveBeenCalledWith('report_heads_up_tag', { p_event_id: 'e1', p_tag: 'packed' });
+    expect(rpc).toHaveBeenCalledWith('report_heads_up_tag', {
+      p_event_id: 'e1',
+      p_tag: 'packed',
+      p_reason: 'spam',
+    });
+  });
+
+  it("shows the server's sentence for a missing reason (VCRPT, VC-65)", async () => {
+    rpc.mockResolvedValueOnce({
+      data: null,
+      error: { code: 'VCRPT', message: 'Pick a reason for the report.' },
+    });
+    expect(await reportHeadsUpTag('e1', 'packed', 'other')).toEqual({
+      ok: false,
+      message: 'Pick a reason for the report.',
+    });
   });
 
   it('turns errors into sentences and never throws', async () => {
@@ -100,12 +120,12 @@ describe('moderation calls (src/lib/moderation-api.ts)', () => {
       await keepTag({ eventId: 'e1', hidden: false, reason: 'no_rule_broken' }, 'packed'),
     ).toEqual({ ok: false, message: 'Pick why: no rule broken, or it was a mistake.' });
     rpc.mockRejectedValueOnce(new Error('Network request failed'));
-    expect(await reportHeadsUpTag('e1', 'packed')).toEqual({
+    expect(await reportHeadsUpTag('e1', 'packed', 'not_true')).toEqual({
       ok: false,
       message: "We couldn't reach the server. Check your connection and try again.",
     });
     rpc.mockResolvedValueOnce({ data: { status: 'weird' }, error: null });
-    expect((await reportHeadsUpTag('e1', 'packed')).ok).toBe(false);
+    expect((await reportHeadsUpTag('e1', 'packed', 'not_true')).ok).toBe(false);
   });
 
   it('sends each admin action with its reason; a blank note is sent as null', async () => {
@@ -166,6 +186,8 @@ describe('moderation calls (src/lib/moderation-api.ts)', () => {
           event_starts_at: '2026-10-27T02:00:00Z',
           tag: 'overpriced',
           reports: 2,
+          // A bad count (0, text) is dropped; the rest are kept.
+          reasons: { not_true: 1, spam: 1, offensive: 0, other: 'x' },
           hours_waiting: 50,
           overdue: true,
           votes: 3,
@@ -181,6 +203,7 @@ describe('moderation calls (src/lib/moderation-api.ts)', () => {
         eventStartsAt: '2026-10-27T02:00:00Z',
         tag: 'overpriced',
         reports: 2,
+        reasons: { not_true: 1, spam: 1 },
         hoursWaiting: 50,
         overdue: true,
         votes: 3,
@@ -188,6 +211,12 @@ describe('moderation calls (src/lib/moderation-api.ts)', () => {
       },
     ]);
     expect(parseTagReports('nope')).toEqual([]);
+    // An older server with no "reasons": an empty count, not a dropped row.
+    expect(
+      parseTagReports([
+        { event_id: 'e1', event_title: 'R', tag: 'packed', reports: 1, hours_waiting: 0 },
+      ])[0].reasons,
+    ).toEqual({});
   });
 
   it('reads the moderation list, including people with no rating', async () => {
@@ -249,5 +278,28 @@ describe('moderation calls (src/lib/moderation-api.ts)', () => {
     });
     expect(moderation.log[0]).toMatchObject({ action: 'hide_rating', adminName: 'Yaw' });
     expect(parseEventModeration(null)).toEqual({ people: [], log: [] });
+  });
+});
+
+describe('report reasons (VC-65)', () => {
+  it('lists the five reasons in order, with their words', () => {
+    expect(REPORT_REASONS).toEqual([
+      { key: 'not_true', label: 'Not true' },
+      { key: 'spam', label: 'Spam or fake' },
+      { key: 'targets_person', label: 'Targets a person' },
+      { key: 'offensive', label: 'Offensive' },
+      { key: 'other', label: 'Other' },
+    ]);
+  });
+
+  it('words the counts in list order, then "No reason", then unknown keys', () => {
+    expect(reasonCountsText({ other: 1, not_true: 2, spam: 1 })).toBe(
+      'Not true 2 · Spam or fake 1 · Other 1',
+    );
+    expect(reasonCountsText({ zzz_new: 1, not_given: 3, offensive: 1 })).toBe(
+      'Offensive 1 · No reason 3 · zzz_new 1',
+    );
+    expect(reasonCountsText({ targets_person: 0 })).toBe('');
+    expect(reasonCountsText({})).toBe('');
   });
 });

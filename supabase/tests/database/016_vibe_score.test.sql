@@ -260,7 +260,7 @@ select is((private.event_vibe('eeeeeeee-0000-4000-8000-0000000000f5', now() - in
 -- Back to all five visible ratings fresh, for the app checks below. Since
 -- VC-51 (migration 20261027140200) the app functions show the last PUBLISHED
 -- snapshot, and these ratings were written straight into the table, so
--- publish one now (submit_rating would do this after 2 new raters).
+-- publish one now (submit_rating would do this after 3 new raters, VC-64).
 update public.ratings set updated_at = now()
 where event_id = 'eeeeeeee-0000-4000-8000-0000000000f5';
 select private.publish_event_vibe('eeeeeeee-0000-4000-8000-0000000000f5', now());

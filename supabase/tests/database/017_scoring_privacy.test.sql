@@ -5,8 +5,8 @@
 --   VC-55 "N here" counts the last 3 hours while on, the whole night after
 --         the end; VC-46 heads-up counts only the last 3 hours
 --         (20261027140100_live_windows.sql);
---   VC-51 a new score is published only after 2+ new raters
---         (20261027140200_vibe_publish_gate.sql);
+--   VC-51 a new score is published only after 3+ new raters (2 until VC-64,
+--         20261027140200_vibe_publish_gate.sql + 20261027180000_gate3_report_reasons.sql);
 --   VC-48 the server side of the quiet GPS check for party-code guests:
 --         check_in judges them by distance and never changes their method.
 --
@@ -20,7 +20,8 @@
 --     hours still counts zero.
 --   * VC-51, the privacy cases: one new rating changes NOTHING the app can
 --     see (not the score, the count or the reaction tally), even though the
---     fresh score would have moved; the second new rater publishes; one
+--     fresh score would have moved; two new raters publish nothing and the
+--     third publishes (VC-64); one
 --     person rating twice (a first rating and an update an hour later)
 --     counts once; a hidden guest's save doesn't count; a published snapshot
 --     goes stale after 90 minutes with its night average.
@@ -41,7 +42,7 @@
 begin;
 create extension if not exists pgtap with schema extensions;
 
-select plan(48);
+select plan(49);
 
 -- ---- Setup (as owner) -------------------------------------------------------
 -- A test-only helper (pg_temp: gone when the session ends; inside this
@@ -65,15 +66,15 @@ as $$
    where event_id = p_event_id;
 $$;
 
--- Users: …01 to …08 guests, …09 a guest whose rating is hidden.
+-- Users: …01 to …08 and …10 guests, …09 a guest whose rating is hidden.
 insert into auth.users (id, email)
 select ('17171717-9999-4999-8999-0000000000' || lpad(n::text, 2, '0'))::uuid,
        'scoring-' || n || '@test.vibecheck.invalid'
-from generate_series(1, 9) n;
+from generate_series(1, 10) n;
 insert into public.profiles (id, display_name, birthdate, is_tester, role)
 select ('17171717-9999-4999-8999-0000000000' || lpad(n::text, 2, '0'))::uuid,
        'Scoring ' || n, current_date - interval '30 years', false, 'user'
-from generate_series(1, 9) n;
+from generate_series(1, 10) n;
 
 -- Events: …a1 to …a3 for the VC-50 maths, …b1 the publish gate, …c1 on now
 -- and …c2 ended 30 minutes ago (VC-55), …d1 heads-ups and the code guest.
@@ -114,7 +115,7 @@ from generate_series(1, 6) n;
 insert into public.check_ins (user_id, event_id, method, first_at, last_verified_at)
 select ('17171717-9999-4999-8999-0000000000' || lpad(n::text, 2, '0'))::uuid,
        '17171717-0000-4000-8000-0000000000b1', 'gps', now(), now()
-from generate_series(1, 9) n;
+from generate_series(1, 10) n;
 insert into public.ratings (user_id, event_id, crowd, music, energy, created_at, updated_at, hidden_at) values
   ('17171717-9999-4999-8999-000000000009', '17171717-0000-4000-8000-0000000000b1', 1, 1, 1,
    now() - interval '2 hours', now() - interval '2 hours', now() - interval '1 hour');
@@ -196,7 +197,7 @@ select is(private.vibe_score_at('17171717-0000-4000-8000-0000000000a2', now()), 
 select is(private.vibe_score_at('17171717-0000-4000-8000-0000000000a3', now()), 0.0,
   'VC-50: the floor never brings back a rating older than 3 hours');
 
--- ---- 3. VC-51: the publish gate (23) ----------------------------------------
+-- ---- 3. VC-51 + VC-64: the publish gate (24) ------------------------------
 set local role authenticated;
 -- Guest 1 rates: the first new rater. Nothing is published yet.
 select set_config('request.jwt.claims', '{"sub":"17171717-9999-4999-8999-000000000001","role":"authenticated"}', true);
@@ -207,33 +208,36 @@ select is(public.get_event_vibe('17171717-0000-4000-8000-0000000000b1') - 'here'
     'night_average', null, 'minutes_since_last', null, 'reactions', '[]'::jsonb),
   'privacy: ONE new rating publishes nothing (still none, 0 raters)');
 
--- Guest 2 rates a minute later: the second new rater publishes.
+-- Guest 2 rates a minute later: only 2 new raters, below the gate of 3
+-- (VC-64), so still nothing is published.
 reset role;
 select pg_temp.rewind('17171717-0000-4000-8000-0000000000b1', 1);
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"17171717-9999-4999-8999-000000000002","role":"authenticated"}', true);
 select is(public.submit_rating('17171717-0000-4000-8000-0000000000b1', 3, 3, 3, 'fire') ->> 'status', 'saved',
   'gate: guest 2 rates');
-select is(public.get_event_vibe('17171717-0000-4000-8000-0000000000b1') - 'here',
-  jsonb_build_object('state', 'early', 'raters', 2, 'score', null, 'label', null,
-    'night_average', null, 'minutes_since_last', 0, 'reactions', '[]'::jsonb),
-  'the second new rater publishes: early, 2 raters (no number under 5)');
+select is((public.get_event_vibe('17171717-0000-4000-8000-0000000000b1') ->> 'raters')::int, 0,
+  'privacy (VC-64): TWO new ratings publish nothing either (still 0 raters)');
 
--- Guests 3, 4 and 5, a minute apart. Only every second one publishes.
+-- Guest 3, a minute later: the third new rater publishes.
 reset role;
 select pg_temp.rewind('17171717-0000-4000-8000-0000000000b1', 1);
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"17171717-9999-4999-8999-000000000003","role":"authenticated"}', true);
 select public.submit_rating('17171717-0000-4000-8000-0000000000b1', 3, 3, 2, 'dancing');
-select is((public.get_event_vibe('17171717-0000-4000-8000-0000000000b1') ->> 'raters')::int, 2,
-  'privacy: guest 3 alone changes nothing (still 2 raters)');
+select is(public.get_event_vibe('17171717-0000-4000-8000-0000000000b1') - 'here',
+  jsonb_build_object('state', 'early', 'raters', 3, 'score', null, 'label', null,
+    'night_average', null, 'minutes_since_last', 0, 'reactions', '[]'::jsonb),
+  'the third new rater publishes: early, 3 raters (no number under 5)');
+
+-- Guests 4 and 5, a minute apart: 1 and then 2 new raters, so nothing moves.
 reset role;
 select pg_temp.rewind('17171717-0000-4000-8000-0000000000b1', 1);
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"17171717-9999-4999-8999-000000000004","role":"authenticated"}', true);
 select public.submit_rating('17171717-0000-4000-8000-0000000000b1', 2, 2, 2);
-select is((public.get_event_vibe('17171717-0000-4000-8000-0000000000b1') ->> 'raters')::int, 4,
-  'guest 4 is the second new rater: 4 raters published');
+select is((public.get_event_vibe('17171717-0000-4000-8000-0000000000b1') ->> 'raters')::int, 3,
+  'privacy: guest 4 alone changes nothing (still 3 raters)');
 reset role;
 select pg_temp.rewind('17171717-0000-4000-8000-0000000000b1', 1);
 set local role authenticated;
@@ -241,9 +245,9 @@ select set_config('request.jwt.claims', '{"sub":"17171717-9999-4999-8999-0000000
 select is(public.submit_rating('17171717-0000-4000-8000-0000000000b1', 3, 2, 2, 'fire') ->> 'raters', '5',
   'the rater still hears the live count in their own answer ("You and 4 others")');
 select is(public.get_event_vibe('17171717-0000-4000-8000-0000000000b1') ->> 'state', 'early',
-  'privacy: the 5th rating alone doesn''t turn on the number (still early, 4 raters)');
+  'privacy: the 5th rating doesn''t turn on the number (still early: 2 new raters, below the gate)');
 
--- Guest 6: publishes the first number.
+-- Guest 6: the third new rater (with 4 and 5) publishes the first number.
 reset role;
 select pg_temp.rewind('17171717-0000-4000-8000-0000000000b1', 1);
 set local role authenticated;
@@ -300,14 +304,23 @@ select is(public.submit_rating('17171717-0000-4000-8000-0000000000b1', 3, 3, 3) 
 select is((public.get_event_vibe('17171717-0000-4000-8000-0000000000b1') ->> 'raters')::int, 6,
   'a hidden guest''s save is not a new rater (nothing published)');
 
--- Guest 8: the second visible new rater (with guest 7) publishes.
+-- Guest 8: the second visible new rater (with guest 7). Below the gate.
 reset role;
 select pg_temp.rewind('17171717-0000-4000-8000-0000000000b1', 1);
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"17171717-9999-4999-8999-000000000008","role":"authenticated"}', true);
 select public.submit_rating('17171717-0000-4000-8000-0000000000b1', 2, 2, 2);
-select is((public.get_event_vibe('17171717-0000-4000-8000-0000000000b1') ->> 'raters')::int, 8,
-  'guest 8 publishes: 8 raters (the hidden one still left out)');
+select is((public.get_event_vibe('17171717-0000-4000-8000-0000000000b1') ->> 'raters')::int, 6,
+  'privacy (VC-64): 2 visible new raters (7 and 8; the hidden one doesn''t count) publish nothing');
+
+-- Guest 10: the third visible new rater publishes.
+reset role;
+select pg_temp.rewind('17171717-0000-4000-8000-0000000000b1', 1);
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"17171717-9999-4999-8999-000000000010","role":"authenticated"}', true);
+select public.submit_rating('17171717-0000-4000-8000-0000000000b1', 3, 2, 2);
+select is((public.get_event_vibe('17171717-0000-4000-8000-0000000000b1') ->> 'raters')::int, 9,
+  'guest 10 publishes: 9 raters (the hidden one still left out)');
 select is(
   (select item - 'event_id' from jsonb_array_elements(
      public.get_events_vibe(array['17171717-0000-4000-8000-0000000000b1'::uuid])) item),
@@ -320,7 +333,7 @@ select ok(public.get_event_vibe('17171717-0000-4000-8000-0000000000b1')::text !~
 reset role;
 select pg_temp.rewind('17171717-0000-4000-8000-0000000000b1', 90);
 select is(private.published_vibe('17171717-0000-4000-8000-0000000000b1', now()) - 'reactions' - 'here' - 'score' - 'label',
-  jsonb_build_object('state', 'stale', 'raters', 8, 'minutes_since_last', 90,
+  jsonb_build_object('state', 'stale', 'raters', 9, 'minutes_since_last', 90,
     'night_average', (select round(avg(r.score), 1) from public.ratings r
                       where r.event_id = '17171717-0000-4000-8000-0000000000b1' and r.hidden_at is null)),
   'a snapshot 90 minutes old is stale, with the night average of its ratings');

@@ -25,12 +25,23 @@
  *   - VC-63 date filter: the four radio chips, each filter's load, title
  *     and empty state, the "Show this week" way back, the date boxes and
  *     wheel labels, and that refresh and the vibes call follow the filter;
+ *   - VC-66 paging: no "Load more events" without more; the button and
+ *     scrolling to the end load the next page after the last card with the
+ *     first page's window and filter, the vibes call covers the new started
+ *     cards, a failure is shown with the button kept, and a page answer for
+ *     an old filter, or for the list before a refresh landed, is dropped;
  *   - the developer-only "send a Sentry test error" long-press (VC-26).
  */
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { Alert } from 'react-native';
 
-import HomeScreen, { EMPTY_BODY, EMPTY_TITLE, LIST_TITLE, SHOW_WEEK_LABEL } from '../app/index';
+import HomeScreen, {
+  EMPTY_BODY,
+  EMPTY_TITLE,
+  LIST_TITLE,
+  LOAD_MORE_LABEL,
+  SHOW_WEEK_LABEL,
+} from '../app/index';
 import { RANGE_NOTE } from '@/components/DateFilterBar';
 import { useAuth } from '@/lib/auth-context';
 import { listHomeEvents } from '@/lib/events-read';
@@ -507,5 +518,134 @@ describe('HomeScreen date filter (VC-63)', () => {
       await scroll.props.refreshControl.props.onRefresh();
     });
     expect(lastFilter()).toEqual({ kind: 'weekend' });
+  });
+});
+
+describe('HomeScreen paging (VC-66)', () => {
+  /** Page one: a started party and a later one; more follow. */
+  const pageOne = () => ({
+    ok: true,
+    events: [
+      makeEvent({ id: 'e1', title: 'Started party' }, -1),
+      makeEvent({ id: 'e2', title: 'Later party' }, 2),
+    ],
+    hasMore: true,
+  });
+  /** Page two: one more started party; nothing after it. */
+  const pageTwo = () => ({
+    ok: true,
+    events: [makeEvent({ id: 'e3', title: 'Third party' }, -0.5)],
+    hasMore: false,
+  });
+
+  it('has no "Load more events" when everything fits on one page', async () => {
+    list.mockResolvedValue({ ok: true, events: [makeEvent({})], hasMore: false });
+    await render(<HomeScreen />);
+    await screen.findByText('Saturday rooftop');
+    expect(screen.queryByRole('button', { name: LOAD_MORE_LABEL })).toBeNull();
+  });
+
+  it('the button loads the next page after the last card, in the same window', async () => {
+    list.mockResolvedValueOnce(pageOne());
+    list.mockResolvedValueOnce(pageTwo());
+    await render(<HomeScreen />);
+    await screen.findByText('Later party');
+    const [firstNow, firstFilter, firstAfter] = list.mock.calls[0];
+    expect(firstAfter).toBeUndefined();
+
+    await fireEvent.press(screen.getByRole('button', { name: LOAD_MORE_LABEL }));
+    expect(await screen.findByText('Third party')).toBeOnTheScreen();
+    // The same moment and filter as the first page, after the last card (e2).
+    const [now, filter, after] = list.mock.calls[1];
+    expect(now).toBe(firstNow);
+    expect(filter).toEqual(firstFilter);
+    expect(after).toMatchObject({ id: 'e2' });
+    // Both pages stay, and nothing follows now.
+    expect(screen.getByText('Started party')).toBeOnTheScreen();
+    expect(screen.queryByRole('button', { name: LOAD_MORE_LABEL })).toBeNull();
+    // The vibes call now covers the started cards of both pages.
+    expect(vibesFor).toHaveBeenLastCalledWith(['e1', 'e3']);
+  });
+
+  it('scrolling near the end loads more too; a failure is shown and the button stays', async () => {
+    list.mockResolvedValueOnce(pageOne());
+    list.mockResolvedValueOnce({
+      ok: false,
+      message: "We couldn't load events. Please try again.",
+    });
+    list.mockResolvedValueOnce(pageTwo());
+    await render(<HomeScreen />);
+    await screen.findByText('Later party');
+
+    const scroll = screen.getByTestId('tonight-list');
+    await act(async () => {
+      await scroll.props.onEndReached();
+    });
+    expect(await screen.findByText("We couldn't load events. Please try again.")).toBeOnTheScreen();
+    expect(screen.getByRole('button', { name: LOAD_MORE_LABEL })).toBeOnTheScreen();
+
+    await fireEvent.press(screen.getByRole('button', { name: LOAD_MORE_LABEL }));
+    expect(await screen.findByText('Third party')).toBeOnTheScreen();
+    expect(list).toHaveBeenCalledTimes(3);
+  });
+
+  it('drops a page that arrives after the filter changed', async () => {
+    list.mockResolvedValueOnce(pageOne());
+    // The next page is slow: we answer it by hand, after the filter changes.
+    let answerPage: (value: unknown) => void = () => {};
+    list.mockReturnValueOnce(new Promise((resolve) => (answerPage = resolve)));
+    list.mockResolvedValueOnce({
+      ok: true,
+      events: [makeEvent({ id: 'w1', title: 'Weekend party' }, 3)],
+      hasMore: false,
+    });
+    await render(<HomeScreen />);
+    await screen.findByText('Later party');
+
+    await fireEvent.press(screen.getByRole('button', { name: LOAD_MORE_LABEL }));
+    await fireEvent.press(screen.getByRole('radio', { name: 'This weekend' }));
+    expect(await screen.findByText('Weekend party')).toBeOnTheScreen();
+
+    await act(async () => {
+      answerPage(pageTwo());
+    });
+    // The old week's page never lands on the weekend list.
+    expect(screen.queryByText('Third party')).toBeNull();
+    expect(screen.getByText('Weekend party')).toBeOnTheScreen();
+  });
+
+  it('drops a page asked for the old list when a refresh landed first (cto fix)', async () => {
+    list.mockResolvedValueOnce(pageOne());
+    // The refresh and the next page are both slow: we answer them by hand.
+    let answerRefresh: (value: unknown) => void = () => {};
+    let answerPage: (value: unknown) => void = () => {};
+    list.mockReturnValueOnce(new Promise((resolve) => (answerRefresh = resolve)));
+    list.mockReturnValueOnce(new Promise((resolve) => (answerPage = resolve)));
+    await render(<HomeScreen />);
+    await screen.findByText('Later party');
+
+    // 1. A pull to refresh starts. 2. "Load more" starts, still on the old list.
+    const scroll = screen.getByTestId('tonight-list');
+    let refreshDone: Promise<void> = Promise.resolve();
+    await act(async () => {
+      refreshDone = scroll.props.refreshControl.props.onRefresh();
+    });
+    await fireEvent.press(screen.getByRole('button', { name: LOAD_MORE_LABEL }));
+    // 3. The refresh lands with a new list. 4. The old list's page arrives.
+    await act(async () => {
+      answerRefresh({
+        ok: true,
+        events: [makeEvent({ id: 'n1', title: 'Fresh party' }, 3)],
+        hasMore: false,
+      });
+      await refreshDone;
+    });
+    expect(await screen.findByText('Fresh party')).toBeOnTheScreen();
+    await act(async () => {
+      answerPage(pageTwo());
+    });
+    // The old list's page is not glued onto the refreshed list.
+    expect(screen.queryByText('Third party')).toBeNull();
+    expect(screen.getByText('Fresh party')).toBeOnTheScreen();
   });
 });

@@ -6,7 +6,9 @@
  *   - answers are checked and tidied (the list becomes a lookup by event id,
  *     and broken items are skipped);
  *   - errors and network trouble become a plain message, never a crash;
- *   - an empty list doesn't call the server, and at most 100 ids are sent.
+ *   - an empty list doesn't call the server; more than 100 ids are split
+ *     into calls of at most 100 and the answers merged (VC-66), and one
+ *     failed call fails the whole answer.
  */
 import { supabase } from '@/lib/supabase';
 import { getEventVibe, getEventsVibe } from '@/lib/vibe-api';
@@ -64,14 +66,33 @@ describe('getEventsVibe', () => {
     expect(outcome.vibes.e2).toMatchObject({ state: 'live', score: 7.2, label: 'Hot', here: 9 });
   });
 
-  it("doesn't call the server for an empty list, and sends at most 100 ids", async () => {
+  it("doesn't call the server for an empty list, and sends at most 100 ids per call", async () => {
     await expect(getEventsVibe([])).resolves.toEqual({ ok: true, vibes: {} });
     expect(rpc).not.toHaveBeenCalled();
 
-    rpc.mockResolvedValue({ data: [], error: null });
-    const ids = Array.from({ length: 120 }, (_, i) => `e${i}`);
-    await getEventsVibe(ids);
-    expect(rpc.mock.calls[0][1].p_event_ids).toHaveLength(100);
+    // Each call answers with an "early" vibe for the ids it was given.
+    rpc.mockImplementation((_name: string, args: { p_event_ids: string[] }) =>
+      Promise.resolve({
+        data: args.p_event_ids.map((id) => ({ ...EARLY, event_id: id })),
+        error: null,
+      }),
+    );
+    const ids = Array.from({ length: 250 }, (_, i) => `e${i}`);
+    const outcome = await getEventsVibe(ids);
+    // VC-66: 250 ids go out as 100 + 100 + 50, in order, and come back merged.
+    expect(rpc.mock.calls.map((c) => c[1].p_event_ids.length)).toEqual([100, 100, 50]);
+    expect(rpc.mock.calls[1][1].p_event_ids[0]).toBe('e100');
+    if (!outcome.ok) throw new Error('expected ok');
+    expect(Object.keys(outcome.vibes)).toHaveLength(250);
+    expect(outcome.vibes.e249).toMatchObject({ state: 'early' });
+  });
+
+  it('fails the whole answer when one of the split calls fails (VC-66)', async () => {
+    rpc.mockResolvedValueOnce({ data: [], error: null });
+    rpc.mockResolvedValueOnce({ data: null, error: { message: 'Network request failed' } });
+    const ids = Array.from({ length: 150 }, (_, i) => `e${i}`);
+    const outcome = await getEventsVibe(ids);
+    expect(outcome.ok).toBe(false);
   });
 
   it('turns an error into a message', async () => {
