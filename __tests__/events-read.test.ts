@@ -1,15 +1,17 @@
 /**
- * Tests for the public event reads (src/lib/events-read.ts), VC-B05.
+ * Tests for the public event reads (src/lib/events-read.ts), VC-B05, with
+ * the week view (VC-61) and the date filter (VC-63).
  *
  * Supabase is replaced with a fake "query builder" that records each step
- * (from, select, gt, lt, order, limit, eq, maybeSingle). We check:
+ * (from, select, gt, gte, lt, order, limit, eq, maybeSingle). We check:
  *   - the list asks only for public columns (no location can be requested);
- *   - the list filters to "not over yet" and "starts before the end of
- *     tomorrow", soonest first;
+ *   - the list filters to "not over yet" and "starts before the morning
+ *     after the 7th night", soonest first; a filter that starts on a later
+ *     night (next weekend) also asks for "starts from that night";
  *   - errors become plain sentences;
  *   - one event by id: found, not found, and a broken id (treated as not found).
  */
-import { getEvent, listTonightEvents, PUBLIC_EVENT_COLUMNS } from '@/lib/events-read';
+import { getEvent, listHomeEvents, PUBLIC_EVENT_COLUMNS } from '@/lib/events-read';
 import { supabase } from '@/lib/supabase';
 
 jest.mock('@/lib/supabase', () => ({ isSupabaseConfigured: true, supabase: { from: jest.fn() } }));
@@ -26,7 +28,7 @@ const from = supabase.from as unknown as jest.Mock;
 function fakeQuery(result: { data: unknown; error: unknown }) {
   const calls: [string, unknown[]][] = [];
   const query: Record<string, unknown> = {};
-  for (const step of ['select', 'gt', 'lt', 'order', 'limit', 'eq']) {
+  for (const step of ['select', 'gt', 'gte', 'lt', 'order', 'limit', 'eq']) {
     query[step] = (...args: unknown[]) => {
       calls.push([step, args]);
       return query;
@@ -49,22 +51,42 @@ describe('PUBLIC_EVENT_COLUMNS', () => {
   });
 });
 
-describe('listTonightEvents', () => {
-  it('reads public columns for events not yet over, starting before the end of tomorrow', async () => {
+describe('listHomeEvents', () => {
+  it('reads public columns for events not yet over, starting within the week', async () => {
     const { query, calls } = fakeQuery({ data: [{ id: 'e1' }], error: null });
     from.mockReturnValue(query);
     // Saturday 31 Oct 2026, 8 PM New York (EDT) = 1 Nov 00:00 UTC.
     const now = new Date('2026-11-01T00:00:00Z');
 
-    const outcome = await listTonightEvents(now);
+    const outcome = await listHomeEvents(now);
 
     expect(outcome).toEqual({ ok: true, events: [{ id: 'e1' }] });
     expect(from).toHaveBeenCalledWith('events');
     expect(calls).toEqual([
       ['select', [PUBLIC_EVENT_COLUMNS]],
       ['gt', ['ends_at', now.toISOString()]],
-      // Until Monday 5 AM New York (EST, after the clocks go back) = 10:00 UTC.
-      ['lt', ['starts_at', '2026-11-02T10:00:00.000Z']],
+      // Saturday to Friday night: until Saturday 7 Nov, 5 AM New York (EST,
+      // after the clocks go back) = 10:00 UTC. No "starts from": tonight first.
+      ['lt', ['starts_at', '2026-11-07T10:00:00.000Z']],
+      ['order', ['starts_at', { ascending: true }]],
+      ['limit', [100]],
+    ]);
+  });
+
+  it('asks for the coming weekend only, from Friday 5 AM to Monday 5 AM (VC-63)', async () => {
+    const { query, calls } = fakeQuery({ data: [], error: null });
+    from.mockReturnValue(query);
+    // Tuesday 3 Nov 2026, 8 PM New York (EST) = 4 Nov 01:00 UTC.
+    const now = new Date('2026-11-04T01:00:00Z');
+
+    await listHomeEvents(now, { kind: 'weekend' });
+
+    expect(calls).toEqual([
+      ['select', [PUBLIC_EVENT_COLUMNS]],
+      ['gt', ['ends_at', now.toISOString()]],
+      // Friday 6 Nov, 5 AM EST = 10:00 UTC, up to Monday 9 Nov, 5 AM EST.
+      ['gte', ['starts_at', '2026-11-06T10:00:00.000Z']],
+      ['lt', ['starts_at', '2026-11-09T10:00:00.000Z']],
       ['order', ['starts_at', { ascending: true }]],
       ['limit', [100]],
     ]);
@@ -73,7 +95,7 @@ describe('listTonightEvents', () => {
   it('turns a network failure into a plain sentence', async () => {
     const { query } = fakeQuery({ data: null, error: { message: 'Network request failed' } });
     from.mockReturnValue(query);
-    expect(await listTonightEvents()).toEqual({
+    expect(await listHomeEvents()).toEqual({
       ok: false,
       message: "We couldn't reach the server. Check your connection and try again.",
     });
@@ -83,7 +105,7 @@ describe('listTonightEvents', () => {
     from.mockImplementation(() => {
       throw new Error('boom');
     });
-    expect(await listTonightEvents()).toEqual({
+    expect(await listHomeEvents()).toEqual({
       ok: false,
       message: "We couldn't load events. Please try again.",
     });

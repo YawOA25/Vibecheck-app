@@ -1,5 +1,5 @@
 /**
- * One event on the Tonight list (VC-B05), in the v3 compact card look: the
+ * One event on the home list (VC-B05, week view VC-61), in the v3 compact card look: the
  * name and a "where · when" line on the left, the vibe on the right.
  *
  * What it shows: title, neighbourhood label (never an address), when it is
@@ -15,12 +15,16 @@
  * rather than guessing. The "where · when" line also gets the headcount,
  * "74 here", when anyone has checked in (VC-42: a number only).
  *
+ * Before the event starts (VC-61) the card shows the details only: no vibe
+ * badge and no headcount, even if a vibe was passed in. Reviews only mean
+ * something once the night is on, so nothing about ratings can show early.
+ *
  * The whole card is one button: tapping anywhere opens the event page.
  */
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Tag } from '@/components/Tag';
-import { isStaffPick, whenLine } from '@/lib/tonight';
+import { hasStarted, isStaffPick, whenLine } from '@/lib/tonight';
 import type { PublicEvent } from '@/lib/tonight';
 import { cardVibeSpoken, formatScore, hereText } from '@/lib/vibe';
 import type { Vibe } from '@/lib/vibe';
@@ -29,11 +33,11 @@ import { colors, fonts, minTapTarget, radius, spacing, typography } from '@/them
 /** What an EventCard needs. */
 export interface EventCardProps {
   event: PublicEvent;
-  /** The current moment, for the "Today · 10 PM" line. */
+  /** The current moment, for the "Today · 10 PM" line and the has-it-started check. */
   now: Date;
   /** What happens on tap (open the event page). */
   onPress: () => void;
-  /** The event's vibe, or undefined while it hasn't loaded. */
+  /** The event's vibe, or undefined while it hasn't loaded. Ignored before the start. */
   vibe?: Vibe;
 }
 
@@ -48,8 +52,11 @@ export const NO_VIBE_LABEL = 'No vibe yet';
  *   "Saturday rooftop, Shaw, DC, Today · 10 PM, Staff pick, 74 here, vibe
  *   8.0 out of 10, Hot".
  */
-export function EventCard({ event, now, onPress, vibe }: EventCardProps) {
+export function EventCard({ event, now, onPress, vibe: given }: EventCardProps) {
   const when = whenLine(event, now);
+  // VC-61: before the start, act as if there were no vibe at all, so no
+  // score, chip or "here" count can leak onto a not-started card.
+  const vibe = hasStarted(event, now) ? given : undefined;
   const staffPick = isStaffPick(event);
   // "74 here" (VC-42). The list only shows events that haven't ended.
   const here = vibe ? hereText(vibe.here, false) : null;

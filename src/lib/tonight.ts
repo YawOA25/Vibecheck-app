@@ -1,11 +1,14 @@
 /**
- * Date and time helpers for the Tonight list and the event page (VC-B05).
+ * Date and time helpers for the home list and the event page (VC-B05,
+ * week view VC-61).
  *
- * What it does: works out which events belong on the Tonight list (tonight's
- * and tomorrow night's), writes times the way people say them ("9 PM",
- * "10:30 PM"), labels each event's night ("On now", "Today", "Tomorrow"),
- * splits the list into a "Today" and a "Tomorrow" section, and makes the
- * "SATURDAY NIGHT" line.
+ * What it does: works out which events belong on the home list (every
+ * event from now through the next 7 nights, VC-61), writes times the way
+ * people say them ("9 PM", "10:30 PM"), labels each event's night ("On
+ * now", "Today", "Tomorrow", "Friday"), splits the list into one section
+ * per night ("Tonight", "Tomorrow", then weekday names), says whether an
+ * event has started (the live vibe, headcount and heads-ups only show from
+ * then, VC-61), and makes the "SATURDAY NIGHT" line.
  *
  * Two rules shape everything here:
  *   1. New York time, not the phone's. VibeCheck is a DC-area app and the
@@ -31,6 +34,13 @@ export const EVENT_TIME_ZONE = GATE_TIME_ZONE;
  * here and everything else follows.
  */
 export const NIGHT_ENDS_HOUR = 5;
+
+/**
+ * How many nights the home list covers, tonight included (VC-61: "all
+ * events for the week"). 7 means tonight plus the next 6 nights, so each
+ * weekday heading appears once (a Saturday list runs through Friday night).
+ */
+export const WEEK_NIGHTS = 7;
 
 /** The public facts about an event, as the app reads them (never a location). */
 export interface PublicEvent {
@@ -60,9 +70,9 @@ export interface PublicEvent {
   is_test: boolean;
 }
 
-/** A section of the Tonight list: a heading plus its events. */
+/** A section of the home list: one night's heading plus its events. */
 export interface EventSection {
-  /** 'Today' or 'Tomorrow'. */
+  /** 'Tonight', 'Tomorrow', or a weekday name such as 'Friday'. */
   title: string;
   data: PublicEvent[];
 }
@@ -82,6 +92,9 @@ interface ZonedParts extends CivilDate {
 
 /** Weekday names, Sunday first (the order JavaScript's getUTCDay uses). */
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+/** Short month names, January first, for dates like "Nov 8". */
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 /**
  * Reads the New York date and clock time of a moment.
@@ -135,7 +148,7 @@ function zonedParts(date: Date): ZonedParts {
  * @returns the new date. Date.UTC rolls "October 32" over to November 1, and
  *   UTC has no daylight-saving jumps, so this is plain calendar counting.
  */
-function addDays(date: CivilDate, days: number): CivilDate {
+export function addDays(date: CivilDate, days: number): CivilDate {
   const moved = new Date(Date.UTC(date.year, date.month - 1, date.day + days));
   return { year: moved.getUTCFullYear(), month: moved.getUTCMonth() + 1, day: moved.getUTCDate() };
 }
@@ -180,7 +193,7 @@ export function zonedMoment(date: CivilDate, hour: number, minute = 0): Date {
  * @returns New York's date, except between midnight and NIGHT_ENDS_HOUR,
  *   when it's the day before (1 AM Sunday belongs to Saturday night).
  */
-function nightOf(date: Date): CivilDate {
+export function nightOf(date: Date): CivilDate {
   const p = zonedParts(date);
   const day = { year: p.year, month: p.month, day: p.day };
   return p.hour < NIGHT_ENDS_HOUR ? addDays(day, -1) : day;
@@ -201,8 +214,50 @@ function sameDate(a: CivilDate, b: CivilDate): boolean {
  * @param date - the date.
  * @returns for example "Saturday".
  */
-function weekdayName(date: CivilDate): string {
+export function weekdayName(date: CivilDate): string {
   return WEEKDAYS[new Date(Date.UTC(date.year, date.month - 1, date.day)).getUTCDay()];
+}
+
+/**
+ * A date written short with its month, for example "Nov 8" (VC-63).
+ *
+ * @param date - the calendar date.
+ * @returns month name (3 letters) and day.
+ */
+export function monthDay(date: CivilDate): string {
+  return `${MONTHS[date.month - 1]} ${date.day}`;
+}
+
+/**
+ * A date written short with its weekday, for example "Sat, Nov 8" (VC-63).
+ *
+ * @param date - the calendar date.
+ * @returns the weekday's first 3 letters, then {@link monthDay}.
+ */
+export function shortDate(date: CivilDate): string {
+  return `${weekdayName(date).slice(0, 3)}, ${monthDay(date)}`;
+}
+
+/**
+ * The New York calendar date of a moment (no night rule: 1 AM Sunday is
+ * Sunday). Used to read what a date picker picked (VC-63).
+ *
+ * @param date - the moment.
+ * @returns its year, month and day in New York.
+ */
+export function newYorkDate(date: Date): CivilDate {
+  const p = zonedParts(date);
+  return { year: p.year, month: p.month, day: p.day };
+}
+
+/**
+ * When the night of a given date begins: 5 AM New York on that date.
+ *
+ * @param date - the night's date (the evening's calendar date).
+ * @returns that moment (always exists, also on daylight-saving days).
+ */
+export function nightBegins(date: CivilDate): Date {
+  return zonedMoment(date, NIGHT_ENDS_HOUR);
 }
 
 /**
@@ -213,7 +268,7 @@ function weekdayName(date: CivilDate): string {
  * @returns that moment.
  */
 export function nightStart(now: Date, nights = 0): Date {
-  return zonedMoment(addDays(nightOf(now), nights), NIGHT_ENDS_HOUR);
+  return nightBegins(addDays(nightOf(now), nights));
 }
 
 /**
@@ -228,17 +283,63 @@ export function tonightKicker(now: Date): string {
 }
 
 /**
- * The time range the Tonight list asks the server for.
+ * The small line above the home list's "This week" title (VC-61), for
+ * example "SATURDAY TO FRIDAY".
+ *
+ * @param now - the current moment.
+ * @returns the first and last nights the list covers, in capitals. At 1 AM
+ *   on Sunday it still starts at SATURDAY (the night runs until 5 AM).
+ */
+export function weekKicker(now: Date): string {
+  const first = nightOf(now);
+  const last = addDays(first, WEEK_NIGHTS - 1);
+  return `${weekdayName(first)} to ${weekdayName(last)}`.toUpperCase();
+}
+
+/**
+ * Counts whole calendar days from one date to another.
+ *
+ * @param from - the earlier date.
+ * @param to - the later date.
+ * @returns the number of days (negative if `to` is earlier). Both dates
+ *   are turned into midnight UTC, which has no daylight-saving jumps, so
+ *   the difference is always an exact number of 24-hour days.
+ */
+export function daysBetween(from: CivilDate, to: CivilDate): number {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const fromMs = Date.UTC(from.year, from.month - 1, from.day);
+  const toMs = Date.UTC(to.year, to.month - 1, to.day);
+  return Math.round((toMs - fromMs) / DAY_MS);
+}
+
+/**
+ * The time range the home list asks the server for (VC-61: the week).
  *
  * @param now - the current moment.
  * @returns `endsAfter` (now: events already over are left out) and
- *   `startsBefore` (when the night after tomorrow begins, 5 AM New York;
- *   later events are left out).
+ *   `startsBefore` (5 AM New York on the morning after the last of the
+ *   WEEK_NIGHTS nights; later events are left out). Seen on a Saturday,
+ *   that is 5 AM the next Saturday, so Friday night's 1 AM parties still
+ *   count.
  * Why "ends after now" and not "starts after now": a party that started at
  * 10 PM is still worth showing at 11 PM, while it's going on.
  */
-export function tonightWindow(now: Date): { endsAfter: Date; startsBefore: Date } {
-  return { endsAfter: now, startsBefore: nightStart(now, 2) };
+export function weekWindow(now: Date): { endsAfter: Date; startsBefore: Date } {
+  return { endsAfter: now, startsBefore: nightStart(now, WEEK_NIGHTS) };
+}
+
+/**
+ * Whether an event has started (VC-61).
+ *
+ * @param event - needs starts_at.
+ * @param now - the current moment.
+ * @returns true from the start time on (also after it ends). Before that,
+ *   cards and the event page show the details only: no vibe, no "here"
+ *   count, no heads-ups and no "Rate the night" button. Reviews only mean
+ *   something once the night is on (founder, 2026-10-27).
+ */
+export function hasStarted(event: Pick<PublicEvent, 'starts_at'>, now: Date): boolean {
+  return Date.parse(event.starts_at) <= now.getTime();
 }
 
 /**
@@ -307,26 +408,48 @@ export function timeRange(event: Pick<PublicEvent, 'starts_at' | 'ends_at'>, now
 }
 
 /**
- * Splits the list into "Today" and "Tomorrow" sections, keeping the order.
+ * Splits the list into one section per night, in night order (VC-61).
  *
  * @param events - events from the server, sorted by start time.
  * @param now - the current moment.
- * @returns up to two sections; an empty section is left out. Anything that
- *   starts before tomorrow night begins (5 AM New York) goes in "Today",
- *   including a party still going from earlier.
+ * @returns sections titled "Tonight", "Tomorrow", then the weekday name
+ *   ("Monday"...), and from a week away the short date ("Sat, Nov 14",
+ *   VC-63 custom ranges), so no heading repeats. Nights with no events are
+ *   left out. A night runs until
+ *   5 AM New York, so a 1 AM start goes under the evening before. A party
+ *   still going from an earlier night (rare: it started before 5 AM today)
+ *   goes under "Tonight", since it's on now.
  */
 export function groupByDay(events: PublicEvent[], now: Date): EventSection[] {
-  const tomorrow = nightStart(now, 1);
-  const today: PublicEvent[] = [];
-  const next: PublicEvent[] = [];
+  const tonight = nightOf(now);
+  // Nights by how far away they are (0 = tonight), each with its events.
+  const byNight = new Map<number, PublicEvent[]>();
   for (const event of events) {
-    if (new Date(event.starts_at) < tomorrow) today.push(event);
-    else next.push(event);
+    // Math.max: anything from an earlier night counts as tonight.
+    const offset = Math.max(0, daysBetween(tonight, nightOf(new Date(event.starts_at))));
+    const bucket = byNight.get(offset);
+    if (bucket) bucket.push(event);
+    else byNight.set(offset, [event]);
   }
-  const sections: EventSection[] = [];
-  if (today.length > 0) sections.push({ title: 'Today', data: today });
-  if (next.length > 0) sections.push({ title: 'Tomorrow', data: next });
-  return sections;
+  return [...byNight.keys()]
+    .sort((a, b) => a - b)
+    .map((offset) => ({ title: nightTitle(tonight, offset), data: byNight.get(offset) ?? [] }));
+}
+
+/**
+ * The heading for a night in the home list.
+ *
+ * @param tonight - tonight's date.
+ * @param offset - how many nights from tonight (0 = tonight).
+ * @returns "Tonight", "Tomorrow", the weekday name within the week (e.g.
+ *   "Friday"), else the short date (e.g. "Sat, Nov 14"), because a weekday
+ *   name alone would repeat in a range longer than a week.
+ */
+function nightTitle(tonight: CivilDate, offset: number): string {
+  if (offset === 0) return 'Tonight';
+  if (offset === 1) return 'Tomorrow';
+  const night = addDays(tonight, offset);
+  return offset < WEEK_NIGHTS ? weekdayName(night) : shortDate(night);
 }
 
 /**

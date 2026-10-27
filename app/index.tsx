@@ -1,18 +1,30 @@
 /**
- * Tonight screen (task VC-B05): the list of today's and tomorrow's events,
- * in the v3 look (design/v3/Tonight.dc.html, spec v3-ui-spec.md 2.5).
+ * Home screen (task VC-B05, week view VC-61): every event from now through
+ * the next 7 nights, in the v3 look (design/v3/Tonight.dc.html, spec
+ * v3-ui-spec.md 2.5).
  *
  * This is the first screen people see once signed in. It shows:
- *   - a header with the night in New York time ("SATURDAY NIGHT", still
- *     Saturday at 1 AM Sunday; see src/lib/tonight.ts), the "Tonight" title, a
+ *   - a header with the nights covered in New York time ("SATURDAY TO
+ *     FRIDAY", still starting Saturday at 1 AM Sunday; see
+ *     src/lib/tonight.ts), the "This week" title, a
  *     "Sign out" pill (VC-B03; it moves to settings in VC-B13), and for
  *     admins only a "New event" pill (VC-B04);
- *   - the events, in a "Today" and a "Tomorrow" section, each as a card
- *     (src/components/EventCard.tsx). Tapping a card opens the event page;
- *   - on each card, the live vibe and the headcount (task VC-B09, VC-42),
- *     fetched for the whole list in one call when the list loads, when the
- *     screen comes back into view, on pull to refresh, and every minute
- *     while it's on screen;
+ *   - the events, one section per night ("Tonight", "Tomorrow", then
+ *     weekday names, VC-61), each as a card (src/components/EventCard.tsx).
+ *     Tapping a card opens the event page;
+ *   - on each card that has started, the live vibe and the headcount (task
+ *     VC-B09, VC-42), fetched in one call for the started events only, when
+ *     the list loads, when the screen comes back into view, on pull to
+ *     refresh, and every minute while it's on screen. Cards for events that
+ *     haven't started show the details only (VC-61); an event that starts
+ *     while the list is open gets its vibe at the next minute's refresh;
+ *   - a date filter under the title (VC-63): "This week" (the default),
+ *     "This weekend", "Pick a date" or "Custom" (src/components/
+ *     DateFilterBar.tsx). The title shows the filter ("This weekend", "Sat,
+ *     Nov 7", "Nov 6 – Nov 15"); the list, pull to refresh and the minute
+ *     vibe refresh all follow it; each filter has its own empty state with
+ *     a "Show this week" button. The filter isn't saved anywhere: it is
+ *     back to "This week" when the app restarts;
  *   - pull down to refresh;
  *   - a loading state, an error state with "Try again", and an empty state.
  *
@@ -23,7 +35,7 @@
  * layout only allows it for signed-in people who passed the 18+ gate.
  */
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -37,29 +49,42 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Button } from '@/components/Button';
+import { DateFilterBar } from '@/components/DateFilterBar';
 import { EventCard } from '@/components/EventCard';
 import { FormMessage } from '@/components/FormMessage';
 import { useAuth } from '@/lib/auth-context';
-import { listTonightEvents } from '@/lib/events-read';
+import {
+  FILTER_LABELS,
+  THIS_WEEK,
+  filterEmptyText,
+  filterKicker,
+  filterTitle,
+} from '@/lib/date-filter';
+import type { DateFilter } from '@/lib/date-filter';
+import { listHomeEvents } from '@/lib/events-read';
 import { sendTestError } from '@/lib/sentry';
-import { groupByDay, tonightKicker } from '@/lib/tonight';
+import { groupByDay, hasStarted } from '@/lib/tonight';
 import type { PublicEvent } from '@/lib/tonight';
 import { LIST_VIBE_REFRESH_MS } from '@/lib/vibe';
 import { getEventsVibe } from '@/lib/vibe-api';
 import type { Vibe } from '@/lib/vibe';
 import { colors, radius, spacing, typography } from '@/theme';
 
-/** Text for the empty state (exported so tests use the same words). */
-export const EMPTY_TITLE = 'Nothing on yet';
-export const EMPTY_BODY =
-  'No events for tonight or tomorrow yet. Pull down to refresh, or check back later.';
+/** "This week"'s empty-state words (exported so tests use the same words). */
+const WEEK_EMPTY = filterEmptyText(THIS_WEEK, new Date());
+export const EMPTY_TITLE = WEEK_EMPTY.title;
+export const EMPTY_BODY = WEEK_EMPTY.body;
+/** The screen's title with the default filter (VC-61: the week, not just tonight). */
+export const LIST_TITLE = FILTER_LABELS.week;
+/** The empty state's way back to the default filter (VC-63). */
+export const SHOW_WEEK_LABEL = 'Show this week';
 
 /**
  * What the list is showing right now:
  *   loading - first load, nothing to show yet (spinner);
  *   error   - the first load failed (message plus "Try again");
  *   ready   - events loaded (maybe zero: then the empty state shows).
- *             `loadedAt` is the moment used for "Today" / "On now" labels.
+ *             `loadedAt` is the moment used for the night sections.
  */
 type ListState =
   | { kind: 'loading' }
@@ -67,17 +92,23 @@ type ListState =
   | { kind: 'ready'; events: PublicEvent[]; loadedAt: Date };
 
 /**
- * Renders the Tonight screen.
+ * Renders the home screen (the week's events).
  *
  * Returns: the screen's view. It takes no inputs.
  */
-export default function TonightScreen() {
+export default function HomeScreen() {
   const { profile, signOut } = useAuth();
   const router = useRouter();
   // Only admins create events (the server checks this too, VC-B04).
   const isAdmin = profile?.role === 'admin';
 
   const [state, setState] = useState<ListState>({ kind: 'loading' });
+  // The date filter (VC-63). Kept in memory only, so it resets on restart.
+  const [filter, setFilter] = useState<DateFilter>(THIS_WEEK);
+  // Numbers each list load. Only the newest load's answer is used, so a
+  // slow answer for an old filter (or an old pull to refresh) never
+  // replaces the list for the filter now picked.
+  const loadSeq = useRef(0);
   // True while a pull-to-refresh is running (the small spinner at the top).
   const [refreshing, setRefreshing] = useState(false);
   // A message when a refresh fails but we still have the older list to show.
@@ -89,27 +120,47 @@ export default function TonightScreen() {
   const [vibes, setVibes] = useState<Record<string, Vibe>>({});
   // Bumped by pull to refresh so the scores reload with the list.
   const [vibeTick, setVibeTick] = useState(0);
+  // The moment of the last vibe refresh (every minute). Cards use it to
+  // decide "has it started?" (VC-61), so an event that starts while the
+  // list is open shows its vibe without a pull to refresh.
+  const [clock, setClock] = useState<Date | null>(null);
 
-  // The ids on screen, joined into one string so the effect below only
-  // restarts when the list of events really changes.
-  const idsKey = useMemo(
-    () => (state.kind === 'ready' ? state.events.map((e) => e.id).join(',') : ''),
+  // The events on screen as "id|start time" pairs, joined into one string so
+  // the effect below only restarts when the list of events really changes.
+  const eventsKey = useMemo(
+    () =>
+      state.kind === 'ready' ? state.events.map((e) => `${e.id}|${e.starts_at}`).join(',') : '',
     [state],
   );
 
-  // Load the vibes for the cards: now, then every minute while this screen
-  // is in view and the app is open. Stops when the guest opens an event (the
-  // event page refreshes its own) and starts again on the way back.
+  // Load the vibes for the started cards: now, then every minute while this
+  // screen is in view and the app is open. Stops when the guest opens an
+  // event (the event page refreshes its own) and starts again on the way back.
   useFocusEffect(
     useCallback(() => {
-      if (!idsKey) return undefined;
+      if (!eventsKey) return undefined;
       let active = true;
-      const ids = idsKey.split(',');
+      const onScreen = eventsKey.split(',').map((pair) => {
+        const [id, starts_at] = pair.split('|');
+        return { id, starts_at };
+      });
 
-      /** Asks for all the scores in one call. */
+      /**
+       * Asks for the scores of the events that have started, in one call
+       * (VC-61: not-started events are never asked about). With none
+       * started there is no call at all.
+       */
       function load() {
-        getEventsVibe(ids).then((outcome) => {
-          if (active && outcome.ok) setVibes(outcome.vibes);
+        const now = new Date();
+        const started = onScreen.filter((e) => hasStarted(e, now)).map((e) => e.id);
+        const call = started.length > 0 ? getEventsVibe(started) : Promise.resolve(null);
+        call.then((outcome) => {
+          if (!active) return;
+          setClock(now);
+          if (outcome === null) setVibes({});
+          // Keep only the ids we asked about: if the server ever answered
+          // for an event that hasn't started, it is dropped here.
+          else if (outcome.ok) setVibes(pickIds(outcome.vibes, started));
         });
       }
 
@@ -124,18 +175,20 @@ export default function TonightScreen() {
       };
       // `vibeTick` isn't read inside; listing it reloads after pull to refresh.
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [idsKey, vibeTick]),
+    }, [eventsKey, vibeTick]),
   );
 
   // Load the list when the screen opens, and again after "Try again".
   // State is only set inside `.then` (when the answer arrives), and
   // `active` ignores a late answer if the screen has closed or a newer
   // load started (lesson from VC-B03: avoid stale answers).
+  // Also runs when the filter changes (VC-63).
   useEffect(() => {
     let active = true;
     const now = new Date();
-    listTonightEvents(now).then((outcome) => {
-      if (!active) return;
+    const seq = ++loadSeq.current;
+    listHomeEvents(now, filter).then((outcome) => {
+      if (!active || seq !== loadSeq.current) return;
       setState(
         outcome.ok
           ? { kind: 'ready', events: outcome.events, loadedAt: now }
@@ -145,7 +198,19 @@ export default function TonightScreen() {
     return () => {
       active = false;
     };
-  }, [attempt]);
+  }, [attempt, filter]);
+
+  /**
+   * A new filter was picked: show the spinner and load its events (the
+   * effect above does the loading).
+   *
+   * @param next - the filter picked.
+   */
+  const chooseFilter = useCallback((next: DateFilter) => {
+    setFilter(next);
+    setState({ kind: 'loading' });
+    setRefreshError(null);
+  }, []);
 
   /** "Try again" after a failed first load: back to the spinner, then reload. */
   const retry = useCallback(() => {
@@ -160,7 +225,13 @@ export default function TonightScreen() {
   const refresh = useCallback(async () => {
     setRefreshing(true);
     const now = new Date();
-    const outcome = await listTonightEvents(now);
+    const seq = ++loadSeq.current;
+    const outcome = await listHomeEvents(now, filter);
+    // The filter changed while this was loading: its own load wins.
+    if (seq !== loadSeq.current) {
+      setRefreshing(false);
+      return;
+    }
     if (outcome.ok) {
       setState({ kind: 'ready', events: outcome.events, loadedAt: now });
       setRefreshError(null);
@@ -170,7 +241,7 @@ export default function TonightScreen() {
       setRefreshError(outcome.message);
     }
     setRefreshing(false);
-  }, []);
+  }, [filter]);
 
   /** Opens an event's page, e.g. /event/1234. */
   const openEvent = useCallback(
@@ -183,7 +254,7 @@ export default function TonightScreen() {
     // The bottom edge is left to the list, so cards can scroll under the home bar.
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <View style={styles.header}>
-        <Text style={styles.kicker}>{tonightKicker(new Date())}</Text>
+        <Text style={styles.kicker}>{filterKicker(filter, new Date())}</Text>
         {/* Title on the left, the header buttons on the right of the same row. */}
         <View style={styles.headerRow}>
           {/* accessibilityRole="header" lets screen readers announce this as a heading.
@@ -194,7 +265,7 @@ export default function TonightScreen() {
             accessibilityRole="header"
             onLongPress={__DEV__ ? confirmTestError : undefined}
           >
-            Tonight
+            {filterTitle(filter, new Date())}
           </Text>
           <View style={styles.headerActions}>
             {isAdmin ? (
@@ -216,6 +287,7 @@ export default function TonightScreen() {
             <Button label="Sign out" variant="outline" size="small" onPress={signOut} />
           </View>
         </View>
+        <DateFilterBar filter={filter} now={new Date()} onChange={chooseFilter} />
       </View>
 
       {state.kind === 'loading' ? <LoadingState /> : null}
@@ -228,7 +300,9 @@ export default function TonightScreen() {
           renderItem={({ item }) => (
             <EventCard
               event={item}
-              now={state.loadedAt}
+              // The later of the list's load time and the last vibe refresh,
+              // so "has it started?" moves on with the minute refresh.
+              now={clock && clock > state.loadedAt ? clock : state.loadedAt}
               vibe={vibes[item.id]}
               onPress={() => openEvent(item.id)}
             />
@@ -248,7 +322,12 @@ export default function TonightScreen() {
               </View>
             ) : undefined
           }
-          ListEmptyComponent={<EmptyState />}
+          ListEmptyComponent={
+            <EmptyState
+              filter={filter}
+              onShowWeek={filter.kind === 'week' ? null : () => chooseFilter(THIS_WEEK)}
+            />
+          }
           contentContainerStyle={styles.listContent}
           // Pull down to refresh. The spinner is gold to match the theme.
           refreshControl={
@@ -283,6 +362,19 @@ function confirmTestError() {
 }
 
 /**
+ * Keeps only some ids' entries from a vibes-by-id answer.
+ *
+ * @param vibes - the server's answer, by event id.
+ * @param ids - the ids to keep (the started events we asked about).
+ * @returns a new object with just those ids that are present.
+ */
+function pickIds(vibes: Record<string, Vibe>, ids: string[]): Record<string, Vibe> {
+  const kept: Record<string, Vibe> = {};
+  for (const id of ids) if (vibes[id]) kept[id] = vibes[id];
+  return kept;
+}
+
+/**
  * The 14 px space between cards (v3 list gap).
  *
  * @returns an empty spacer view.
@@ -298,9 +390,9 @@ function Gap() {
  */
 function LoadingState() {
   return (
-    <View style={styles.centre} accessible accessibilityLabel="Loading tonight's events">
+    <View style={styles.centre} accessible accessibilityLabel="Loading events">
       <ActivityIndicator color={colors.accent} size="large" />
-      <Text style={styles.note}>Loading tonight&apos;s events...</Text>
+      <Text style={styles.note}>Loading events...</Text>
     </View>
   );
 }
@@ -322,17 +414,33 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
 }
 
 /**
- * Shown when there are no events today or tomorrow.
+ * Shown when the filter's nights have no events.
  *
- * @returns a card with a heading and a hint to pull down to refresh.
+ * @param props.filter - the filter in use (VC-63: each has its own words).
+ * @param props.onShowWeek - goes back to "This week", or null when that is
+ *   already the filter (then there is no button).
+ * @returns a card with a heading, a hint to pull down to refresh, and the
+ *   "Show this week" button for the other filters.
  */
-function EmptyState() {
+function EmptyState({
+  filter,
+  onShowWeek,
+}: {
+  filter: DateFilter;
+  onShowWeek: (() => void) | null;
+}) {
+  const text = filterEmptyText(filter, new Date());
   return (
     <View style={styles.card}>
       <Text style={styles.emptyTitle} accessibilityRole="header">
-        {EMPTY_TITLE}
+        {text.title}
       </Text>
-      <Text style={styles.note}>{EMPTY_BODY}</Text>
+      <Text style={styles.note}>{text.body}</Text>
+      {onShowWeek ? (
+        <View style={styles.emptyAction}>
+          <Button label={SHOW_WEEK_LABEL} variant="outline" size="small" onPress={onShowWeek} />
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -394,5 +502,7 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
   },
   emptyTitle: { ...typography.cardTitle, color: colors.text },
+  // The button sits at the start, only as wide as its words.
+  emptyAction: { flexDirection: 'row', paddingTop: spacing.sm },
   note: { ...typography.bodySm, color: colors.muted },
 });

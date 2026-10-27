@@ -8,6 +8,8 @@
  *      helper used the phone's clock, the answers would be wrong.
  *   2. A night runs until 5 AM New York (NIGHT_ENDS_HOUR), so 1 AM Sunday is
  *      still "Saturday night".
+ * VC-61 adds the week: the list covers 7 nights, split into "Tonight",
+ * "Tomorrow" and weekday sections, and hasStarted gates the live parts.
  *
  * Every moment is written in UTC with Date.UTC (months count from 0, so 9
  * is October), with the New York time next to it in a comment. New York is
@@ -19,13 +21,16 @@ import {
   dayLabel,
   formatClock,
   groupByDay,
+  hasStarted,
   isStaffPick,
   NIGHT_ENDS_HOUR,
   nightStart,
   timeRange,
   tonightKicker,
-  tonightWindow,
+  weekKicker,
+  weekWindow,
   whenLine,
+  WEEK_NIGHTS,
 } from '@/lib/tonight';
 import type { PublicEvent } from '@/lib/tonight';
 
@@ -112,22 +117,24 @@ describe('tonightKicker', () => {
   });
 });
 
-describe('nightStart and tonightWindow across daylight-saving changes', () => {
+describe('nightStart and weekWindow across daylight-saving changes', () => {
   it('November (summer time ends): nights start at 5 AM EST', () => {
     // Tonight (Saturday) began Sat 5 AM EDT = 09:00 UTC.
     expect(nightStart(SAT_8PM, 0)).toEqual(utc(2026, 9, 31, 9));
     // Sunday 5 AM EST = 10:00 UTC (the clocks went back at 2 AM).
     expect(nightStart(SAT_8PM, 1)).toEqual(utc(2026, 10, 1, 10));
-    // The list runs until Monday 5 AM EST = Mon 10:00 UTC.
-    expect(tonightWindow(SAT_8PM)).toEqual({
+    // The list runs Saturday to Friday night: until Saturday 7 Nov, 5 AM
+    // EST = 10:00 UTC (a week later, one hour "later" in UTC terms than
+    // tonight's 5 AM EDT start, because the clocks went back).
+    expect(weekWindow(SAT_8PM)).toEqual({
       endsAfter: SAT_8PM,
-      startsBefore: utc(2026, 10, 2, 10),
+      startsBefore: utc(2026, 10, 7, 10),
     });
   });
 
   it('November, at 1 AM Sunday: tonight is still Saturday night', () => {
     expect(nightStart(SUN_1AM, 0)).toEqual(utc(2026, 9, 31, 9));
-    expect(tonightWindow(SUN_1AM).startsBefore).toEqual(utc(2026, 10, 2, 10));
+    expect(weekWindow(SUN_1AM).startsBefore).toEqual(utc(2026, 10, 7, 10));
   });
 
   it('March (summer time starts): nights start at 5 AM EDT', () => {
@@ -137,7 +144,8 @@ describe('nightStart and tonightWindow across daylight-saving changes', () => {
     // Saturday 5 AM EST = 10:00 UTC; Sunday 5 AM EDT = 09:00 UTC.
     expect(nightStart(marchSat, 0)).toEqual(utc(2026, 2, 7, 10));
     expect(nightStart(marchSat, 1)).toEqual(utc(2026, 2, 8, 9));
-    expect(tonightWindow(marchSat).startsBefore).toEqual(utc(2026, 2, 9, 9));
+    // Saturday 14 March, 5 AM EDT = 09:00 UTC.
+    expect(weekWindow(marchSat).startsBefore).toEqual(utc(2026, 2, 14, 9));
   });
 
   it('rolls over the end of the year', () => {
@@ -188,7 +196,7 @@ describe('groupByDay', () => {
     const oneAm = makeEvent('2', utc(2026, 10, 1, 5), utc(2026, 10, 1, 9)); // Sun 1 AM EDT
     const sunday = makeEvent('3', utc(2026, 10, 2, 3), utc(2026, 10, 2, 7)); // Sun 10 PM EST
     const sections = groupByDay([tonight, oneAm, sunday], SAT_8PM);
-    expect(sections.map((s) => s.title)).toEqual(['Today', 'Tomorrow']);
+    expect(sections.map((s) => s.title)).toEqual(['Tonight', 'Tomorrow']);
     expect(sections[0].data.map((e) => e.id)).toEqual(['1', '2']);
     expect(sections[1].data.map((e) => e.id)).toEqual(['3']);
   });
@@ -218,5 +226,76 @@ describe('isStaffPick', () => {
   it('is true only for source staff_pick', () => {
     expect(isStaffPick({ source: 'staff_pick' })).toBe(true);
     expect(isStaffPick({ source: 'host' })).toBe(false);
+  });
+});
+
+describe('the week view (VC-61)', () => {
+  it('covers 7 nights, named from tonight to the last night', () => {
+    expect(WEEK_NIGHTS).toBe(7);
+    expect(weekKicker(SAT_8PM)).toBe('SATURDAY TO FRIDAY');
+    // At 1 AM Sunday it is still Saturday night, so the week still starts Saturday.
+    expect(weekKicker(SUN_1AM)).toBe('SATURDAY TO FRIDAY');
+    // Sunday at 5 AM: a new night, a new week.
+    expect(weekKicker(utc(2026, 10, 1, 10))).toBe('SUNDAY TO SATURDAY');
+  });
+
+  it('groups a whole week by night, with weekday names after Tomorrow', () => {
+    const events = [
+      makeEvent('sat', utc(2026, 10, 1, 2), utc(2026, 10, 1, 6)), // Sat 10 PM EDT
+      makeEvent('sun', utc(2026, 10, 2, 3), utc(2026, 10, 2, 7)), // Sun 10 PM EST
+      makeEvent('tue', utc(2026, 10, 4, 1), utc(2026, 10, 4, 5)), // Tue 8 PM EST
+      makeEvent('fri', utc(2026, 10, 7, 3), utc(2026, 10, 7, 8)), // Fri 10 PM EST
+      makeEvent('fri-late', utc(2026, 10, 7, 9), utc(2026, 10, 7, 9, 59)), // Sat 4 AM EST
+    ];
+    const sections = groupByDay(events, SAT_8PM);
+    expect(sections.map((s) => s.title)).toEqual(['Tonight', 'Tomorrow', 'Tuesday', 'Friday']);
+    // Friday's 4 AM party belongs to Friday night (the night ends at 5 AM).
+    expect(sections[3].data.map((e) => e.id)).toEqual(['fri', 'fri-late']);
+  });
+
+  it('puts 4:59 AM in the night before and 5:00 AM in the next, across the clock change', () => {
+    // Sun 1 Nov: the clocks went back at 2 AM, so 4:59 AM EST = 09:59 UTC.
+    const lateNight = makeEvent('late', utc(2026, 10, 1, 9, 59), utc(2026, 10, 1, 11));
+    const earlyMorning = makeEvent('early', utc(2026, 10, 1, 10), utc(2026, 10, 1, 12));
+    const sections = groupByDay([lateNight, earlyMorning], SAT_8PM);
+    expect(sections).toEqual([
+      { title: 'Tonight', data: [lateNight] },
+      { title: 'Tomorrow', data: [earlyMorning] },
+    ]);
+  });
+
+  it('keeps day sections right across the March change too', () => {
+    // Saturday 7 March 2026, 8 PM EST. Sunday 8 March: clocks go forward.
+    const marchSat = utc(2026, 2, 8, 1);
+    // Sun 8 March 4:30 AM EDT = 08:30 UTC (still Saturday night).
+    const late = makeEvent('late', utc(2026, 2, 8, 8, 30), utc(2026, 2, 8, 9));
+    // Mon 9 March 9 PM EDT = Tue 01:00 UTC.
+    const monday = makeEvent('mon', utc(2026, 2, 10, 1), utc(2026, 2, 10, 4));
+    expect(groupByDay([late, monday], marchSat).map((s) => s.title)).toEqual(['Tonight', 'Monday']);
+  });
+
+  it('files a party still going from an earlier night under Tonight', () => {
+    // Started Saturday 4 AM EDT (Friday night), still on at Saturday 8 PM.
+    const allDay = makeEvent('long', utc(2026, 9, 31, 8), utc(2026, 10, 1, 4));
+    expect(groupByDay([allDay], SAT_8PM).map((s) => s.title)).toEqual(['Tonight']);
+  });
+
+  it('uses the short date from a week away, so no heading repeats (VC-63 ranges)', () => {
+    // Sat 7 Nov 10 PM EST = 8 Nov 03:00 UTC: 7 nights after tonight.
+    const nextSat = makeEvent('n', utc(2026, 10, 8, 3), utc(2026, 10, 8, 6));
+    // Mon 30 Nov 10 PM EST = 1 Dec 03:00 UTC.
+    const later = makeEvent('m', utc(2026, 11, 1, 3), utc(2026, 11, 1, 6));
+    expect(groupByDay([nextSat, later], SAT_8PM).map((s) => s.title)).toEqual([
+      'Sat, Nov 7',
+      'Mon, Nov 30',
+    ]);
+  });
+
+  it('hasStarted is true from the start time on, false before', () => {
+    const party = makeEvent('p', utc(2026, 10, 1, 3), utc(2026, 10, 1, 8)); // Sat 11 PM
+    expect(hasStarted(party, utc(2026, 10, 1, 2, 59))).toBe(false);
+    expect(hasStarted(party, utc(2026, 10, 1, 3))).toBe(true);
+    // Still "started" after it ends (the list drops ended events anyway).
+    expect(hasStarted(party, utc(2026, 10, 1, 9))).toBe(true);
   });
 });

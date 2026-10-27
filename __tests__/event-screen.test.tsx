@@ -19,7 +19,13 @@
  *   - VC-B08: "Rate the night" shows only once the guest is checked in here
  *     (never for admins) and opens the rating screen;
  *   - VC-43: the Heads-up card shows counts, "+1" sends one and reloads,
- *     a refused +1 says why, and admins can't +1.
+ *     a refused +1 says why, and admins can't +1;
+ *   - VC-61: before the event starts, the page shows no live vibe,
+ *     headcount or heads-ups (none of them is even asked for), and they
+ *     appear by themselves at the start time. "Rate the night" is not
+ *     gated by the start: a guest checked in early (the 30-minute window)
+ *     can rate, as the check-in and party-code screens already offer.
+ * Most tests use an event that started an hour ago, so the live parts show.
  */
 import { fireEvent, render, screen } from '@testing-library/react-native';
 import { Linking, Share } from 'react-native';
@@ -29,6 +35,7 @@ import EventScreen, {
   MODERATE_LABEL,
   HIDE_CODE,
   NOT_FOUND_TITLE,
+  NOT_STARTED_NOTE,
   RATE_LABEL,
   SHARE_LABEL,
   SHOW_CODE,
@@ -95,13 +102,15 @@ const TICKET_URL = 'https://www.eventbrite.com/e/rooftop-sundown-123';
 const HOUR = 60 * 60 * 1000;
 
 /**
- * Makes a test event starting in an hour and lasting 4 hours.
+ * Makes a test event that started an hour ago and lasts 4 hours, so it is
+ * on now and the live parts show (VC-61).
  *
  * @param overrides - fields to change from the defaults.
+ * @param startsInMs - when it starts, from now (negative: already started).
  * @returns a PublicEvent.
  */
-function makeEvent(overrides: Partial<PublicEvent> = {}): PublicEvent {
-  const starts = new Date(Date.now() + HOUR);
+function makeEvent(overrides: Partial<PublicEvent> = {}, startsInMs = -HOUR): PublicEvent {
+  const starts = new Date(Date.now() + startsInMs);
   return {
     id: 'e1',
     title: 'Rooftop Sundown',
@@ -179,8 +188,8 @@ describe('EventScreen details', () => {
     await render(<EventScreen />);
 
     expect(await screen.findByRole('header', { name: 'Rooftop Sundown' })).toBeOnTheScreen();
-    // For example "TODAY · 9 PM – 1 AM".
-    expect(screen.getByText(/^(TODAY|TOMORROW) · .+ – .+$/)).toBeOnTheScreen();
+    // For example "ON NOW · 9 PM – 1 AM".
+    expect(screen.getByText(/^ON NOW · .+ – .+$/)).toBeOnTheScreen();
     expect(screen.getByText('Navy Yard, DC')).toBeOnTheScreen();
     expect(screen.getByText('21+')).toBeOnTheScreen();
     expect(screen.getByText('Sunset DJ set on the roof.')).toBeOnTheScreen();
@@ -501,5 +510,53 @@ describe('EventScreen heads-up card (VC-43)', () => {
     expect(chip).toBeDisabled();
     await fireEvent.press(chip);
     expect(plusOne).not.toHaveBeenCalled();
+  });
+});
+
+describe('EventScreen before the event starts (VC-61)', () => {
+  const CHECKED_IN = {
+    ok: true,
+    status: { checkIn: { method: 'gps', lastVerifiedAt: '2026-10-31T02:00:00Z' }, ratedAt: null },
+  };
+
+  it('hides the vibe, headcount and heads-ups, but a checked-in guest can rate', async () => {
+    // Checked in already (check-in opens 30 minutes early).
+    myStatus.mockResolvedValue(CHECKED_IN);
+    get.mockResolvedValue({
+      ok: true,
+      event: makeEvent({ summary: 'Sunset DJ set on the roof.' }, 2 * HOUR),
+    });
+    await render(<EventScreen />);
+
+    expect(await screen.findByRole('header', { name: 'Rooftop Sundown' })).toBeOnTheScreen();
+    expect(screen.getByText(/^(TODAY|TOMORROW) · .+ – .+$/)).toBeOnTheScreen();
+    expect(screen.getByText('Sunset DJ set on the roof.')).toBeOnTheScreen();
+    expect(screen.getByText(NOT_STARTED_NOTE)).toBeOnTheScreen();
+    // "I'm here" stays: check-in rules are unchanged.
+    expect(screen.getByRole('button', { name: "I'm here" })).toBeOnTheScreen();
+    // Rating opens with check-in, not at the start (cto fix).
+    expect(await screen.findByRole('button', { name: RATE_LABEL })).toBeOnTheScreen();
+    expect(screen.queryByText(EARLY_TITLE)).toBeNull();
+    expect(screen.queryByText('4 here')).toBeNull();
+    expect(screen.queryByText(NO_HEADS_UPS)).toBeNull();
+    // Nothing about ratings is even asked for before the start.
+    expect(getEventVibe).not.toHaveBeenCalled();
+    expect(headsUps).not.toHaveBeenCalled();
+  });
+
+  it('shows the live parts by itself once the start time passes', async () => {
+    myStatus.mockResolvedValue(CHECKED_IN);
+    // Starts in 300 ms: the page should wake up at the start time.
+    get.mockResolvedValue({ ok: true, event: makeEvent({}, 300) });
+    await render(<EventScreen />);
+
+    expect(await screen.findByText(NOT_STARTED_NOTE)).toBeOnTheScreen();
+    expect(screen.queryByText(EARLY_TITLE)).toBeNull();
+
+    expect(await screen.findByText(EARLY_TITLE, {}, { timeout: 5000 })).toBeOnTheScreen();
+    expect(screen.queryByText(NOT_STARTED_NOTE)).toBeNull();
+    expect(screen.getByText('4 here')).toBeOnTheScreen();
+    expect(await screen.findByText(NO_HEADS_UPS)).toBeOnTheScreen();
+    expect(screen.getByRole('button', { name: RATE_LABEL })).toBeOnTheScreen();
   });
 });

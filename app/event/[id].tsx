@@ -39,11 +39,20 @@
  * example after "Save changes" on Edit event), so it never shows old
  * details.
  *
+ * Before the event starts (VC-61) the page shows no "Live vibe" card, no
+ * headcount and no "Heads-up" card, just a short note that they appear
+ * once it starts. If the page is open at the start time, they appear then
+ * without a reload. "I'm here" and "Rate the night" follow the server's
+ * check-in window as before (it opens 30 minutes before the start), so a
+ * guest who checked in early can already rate, just as the check-in and
+ * party-code screens offer (cto fix on VC-61). Only the display of the
+ * vibe waits for the start.
+ *
  * Not here on purpose (VC-31): photos, "Now playing", clips, the Live /
  * Last 24h switch.
  */
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { ActivityIndicator, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -62,7 +71,7 @@ import { getEventCode } from '@/lib/events-api';
 import { getEvent } from '@/lib/events-read';
 import { getMyRatingStatus } from '@/lib/ratings-api';
 import { buildShareMessage } from '@/lib/share';
-import { isStaffPick, timeRange } from '@/lib/tonight';
+import { hasStarted, isStaffPick, timeRange } from '@/lib/tonight';
 import type { PublicEvent } from '@/lib/tonight';
 import { colors, radius, spacing, typography } from '@/theme';
 
@@ -75,6 +84,15 @@ export const HIDE_CODE = 'Hide party code';
 export const MODERATE_LABEL = 'Moderate ratings and tags';
 export const SHARE_LABEL = 'Share';
 export const RATE_LABEL = 'Rate the night';
+/** Shown instead of the live parts before the event starts (VC-61). */
+export const NOT_STARTED_NOTE = 'The live vibe and heads-ups show here once it starts.';
+
+/**
+ * The longest wait setTimeout can handle (about 24.8 days). The home list
+ * only covers a week, but a shared link could open an event further away;
+ * then the page simply updates the next time it comes into view.
+ */
+const MAX_TIMER_MS = 2 ** 31 - 1;
 
 /** What the page is showing: loading, a load error, not found, or the event. */
 type PageState =
@@ -144,6 +162,28 @@ export default function EventScreen() {
     }, [id, attempt]),
   );
 
+  // VC-61: the start time of the event on screen, and the start time we've
+  // seen pass while the page was open (set by the timer below).
+  const startsAt = state.kind === 'ready' ? state.event.starts_at : null;
+  const [passedStart, setPassedStart] = useState<string | null>(null);
+
+  // If the event hasn't started yet, wake up at its start time so the live
+  // parts appear without the guest having to leave and come back. State is
+  // only set inside the timer (not in the effect itself).
+  useEffect(() => {
+    if (!startsAt) return undefined;
+    const wait = Date.parse(startsAt) - Date.now();
+    if (wait <= 0 || wait > MAX_TIMER_MS) return undefined;
+    const timer = setTimeout(() => setPassedStart(startsAt), wait);
+    return () => clearTimeout(timer);
+  }, [startsAt]);
+
+  // Started: either it had started when the page loaded, or the timer saw
+  // the start time pass for this same event.
+  const started =
+    state.kind === 'ready' &&
+    (hasStarted(state.event, state.loadedAt) || passedStart === state.event.starts_at);
+
   /** "Try again": back to the spinner, then reload. */
   const retry = useCallback(() => {
     setState({ kind: 'loading' });
@@ -188,10 +228,13 @@ export default function EventScreen() {
         <EventDetails
           event={state.event}
           now={state.loadedAt}
+          started={started}
           onImHere={() =>
             router.push({ pathname: '/check-in/[id]', params: { id: state.event.id } })
           }
           onRate={
+            // Rating opens with check-in (server window: 30 minutes before
+            // the start), not at the start; only the vibe display waits.
             checkedIn && !isAdmin
               ? () => router.push({ pathname: '/rate/[id]', params: { id: state.event.id } })
               : null
@@ -237,6 +280,9 @@ export default function EventScreen() {
  *
  * @param props.event - the event's public facts.
  * @param props.now - the moment used for "Today" / "On now".
+ * @param props.started - whether the event has started (VC-61). Before
+ *   that, the Live vibe and Heads-up cards are left out. The Rate button
+ *   doesn't depend on it: it follows check-in (see onRate).
  * @param props.onImHere - what "I'm here" does (opens check-in).
  * @param props.onRate - what "Rate the night" does, or null to hide it
  *   (not checked in here, or an admin).
@@ -247,6 +293,7 @@ export default function EventScreen() {
 function EventDetails({
   event,
   now,
+  started,
   onImHere,
   onRate,
   headsUp,
@@ -254,6 +301,7 @@ function EventDetails({
 }: {
   event: PublicEvent;
   now: Date;
+  started: boolean;
   onImHere: () => void;
   onRate: (() => void) | null;
   headsUp: ReactNode;
@@ -302,15 +350,22 @@ function EventDetails({
 
         {event.summary ? <Text style={styles.summary}>{event.summary}</Text> : null}
 
-        <LiveVibeCard
-          eventId={event.id}
-          // After the end time the headcount reads "74 were here".
-          ended={now.getTime() > Date.parse(event.ends_at)}
-          // A new load time (each time the page comes into view) reloads it at once.
-          refreshKey={now.getTime()}
-        />
-
-        {headsUp}
+        {/* VC-61: the live parts only once the event has started. Not
+            drawn at all before then, so nothing is even asked for. */}
+        {started ? (
+          <>
+            <LiveVibeCard
+              eventId={event.id}
+              // After the end time the headcount reads "74 were here".
+              ended={now.getTime() > Date.parse(event.ends_at)}
+              // A new load time (each time the page comes into view) reloads it at once.
+              refreshKey={now.getTime()}
+            />
+            {headsUp}
+          </>
+        ) : (
+          <Text style={styles.notStarted}>{NOT_STARTED_NOTE}</Text>
+        )}
 
         {admin}
       </ScrollView>
@@ -414,6 +469,7 @@ const styles = StyleSheet.create({
   // Share sits on its own line, at the start, only as wide as its words.
   shareRow: { flexDirection: 'row' },
   summary: { ...typography.body, color: colors.text },
+  notStarted: { ...typography.bodySm, color: colors.muted },
   adminBox: {
     gap: spacing.sm,
     padding: spacing.md,

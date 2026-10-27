@@ -1,8 +1,10 @@
 /**
- * The app's reads of public event details (task VC-B05): the Tonight list
- * and one event's page.
+ * The app's reads of public event details (task VC-B05, week view VC-61):
+ * the home list and one event's page.
  *
- * What it does: asks Supabase for events in the Tonight time range, or for
+ * What it does: asks Supabase for events in the home list's time range
+ * (now through the next 7 nights by default, or the nights of the date
+ * filter, VC-63), or for
  * one event by id, and turns failures into a short message to show.
  *
  * Privacy (VC-20): we name every column we read, and they are all public
@@ -16,7 +18,8 @@
  */
 import type { ErrorLike } from '@/lib/auth-errors';
 import { supabase } from '@/lib/supabase';
-import { tonightWindow } from '@/lib/tonight';
+import { filterWindow, THIS_WEEK } from '@/lib/date-filter';
+import type { DateFilter } from '@/lib/date-filter';
 import type { PublicEvent } from '@/lib/tonight';
 
 /**
@@ -26,10 +29,10 @@ import type { PublicEvent } from '@/lib/tonight';
 export const PUBLIC_EVENT_COLUMNS =
   'id, title, area_label, starts_at, ends_at, source, ticket_url, summary, is_21_plus, is_test, entry_url, state';
 
-/** The most events the list asks for at once (a busy weekend is far fewer). */
+/** The most events the list asks for at once (a busy week is far fewer). */
 const LIST_LIMIT = 100;
 
-/** The answer from {@link listTonightEvents}. */
+/** The answer from {@link listHomeEvents}. */
 export type EventListOutcome = { ok: true; events: PublicEvent[] } | { ok: false; message: string };
 
 /** The answer from {@link getEvent}. `event` is null when it doesn't exist (or is hidden). */
@@ -50,20 +53,30 @@ export function describeReadError(error: ErrorLike): string {
 }
 
 /**
- * Reads today's and tomorrow's events, soonest first.
+ * Reads the events for the home list, soonest first.
  *
  * @param now - the current moment (a parameter so tests can fix it).
+ * @param filter - the date filter (VC-63); "This week" by default (VC-61:
+ *   tonight through the next 7 nights).
  * @returns the events, or a message to show.
- * The filters: the event hasn't ended yet, and it starts before midnight at
- * the end of tomorrow (see tonightWindow in src/lib/tonight.ts).
+ * The conditions (see filterWindow in src/lib/date-filter.ts): the event
+ * hasn't ended yet, it starts before 5 AM New York after the filter's last
+ * night, and, when the filter starts on a later night, not before that
+ * night begins.
  */
-export async function listTonightEvents(now: Date = new Date()): Promise<EventListOutcome> {
-  const { endsAfter, startsBefore } = tonightWindow(now);
+export async function listHomeEvents(
+  now: Date = new Date(),
+  filter: DateFilter = THIS_WEEK,
+): Promise<EventListOutcome> {
+  const { endsAfter, startsFrom, startsBefore } = filterWindow(filter, now);
   try {
-    const { data, error } = await supabase
+    let query = supabase
       .from('events')
       .select(PUBLIC_EVENT_COLUMNS)
-      .gt('ends_at', endsAfter.toISOString())
+      .gt('ends_at', endsAfter.toISOString());
+    // Only for filters that start on a later night (e.g. next weekend).
+    if (startsFrom) query = query.gte('starts_at', startsFrom.toISOString());
+    const { data, error } = await query
       .lt('starts_at', startsBefore.toISOString())
       .order('starts_at', { ascending: true })
       .limit(LIST_LIMIT);

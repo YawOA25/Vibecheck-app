@@ -4,12 +4,14 @@
  * clarifications of 2026-10-27).
  *
  * What we check:
- *   - the list (src/data/dmv-areas.ts): about 40 areas, each tagged with a
+ *   - the list (src/data/dmv-areas.ts): about 50 areas (Baltimore and
+ *     Richmond added by VC-62), each tagged with a
  *     state that matches its label's ending, 60 characters or fewer, never
  *     starting with a number, no repeats;
  *   - search: "contains" matching, ignoring capitals; only the chosen state;
  *   - the offline pin check: DC, Maryland and Virginia spots around the DMV
- *     (including the tricky ones by the river), and no guess far away;
+ *     (including the tricky ones by the river), Baltimore and Richmond
+ *     (VC-62), and no guess far away;
  *   - the Area box: no suggestions before typing; typing filters (at most
  *     6); picking fills the box and closes the list; with no match, "Use
  *     '<typed>'" fills it with exactly what was typed; with no state yet, it
@@ -78,9 +80,9 @@ function Harness({
 }
 
 describe('the DMV area list and search', () => {
-  it('has about 40 well-formed, unique labels, each tagged with its state', () => {
-    expect(DMV_AREAS.length).toBeGreaterThanOrEqual(35);
-    expect(DMV_AREAS.length).toBeLessThanOrEqual(50);
+  it('has about 50 well-formed, unique labels, each tagged with its state', () => {
+    expect(DMV_AREAS.length).toBeGreaterThanOrEqual(45);
+    expect(DMV_AREAS.length).toBeLessThanOrEqual(60);
     expect(new Set(DMV_AREAS.map((a) => a.label)).size).toBe(DMV_AREAS.length);
     for (const area of DMV_AREAS) {
       expect(area.label).toMatch(/^[A-Za-z][^,]*, (DC|MD|VA)$/);
@@ -113,6 +115,42 @@ describe('the DMV area list and search', () => {
     expect(stateForPin(39.1457, -77.4169)).toBe('MD'); // Poolesville (river bends west)
     expect(stateForPin(39.1157, -77.5636)).toBe('VA'); // Leesburg
     expect(stateForPin(40.7128, -74.006)).toBeNull(); // New York City
+  });
+
+  it('lists Baltimore and Richmond neighbourhoods under the right state (VC-62)', () => {
+    expect(searchAreas('baltimore', 'MD')).toEqual([
+      'Downtown Baltimore, MD',
+      'Mount Vernon (Baltimore), MD',
+    ]);
+    expect(searchAreas('fells', 'MD')).toEqual(['Fells Point, MD']);
+    expect(searchAreas('federal', 'MD')).toEqual(['Federal Hill, MD']);
+    expect(searchAreas('canton', 'MD')).toEqual(['Canton, MD']);
+    expect(searchAreas('richmond', 'VA')).toEqual(['Downtown Richmond, VA']);
+    // The apostrophe is ignored when searching, so "scotts" finds it too.
+    expect(searchAreas('scotts', 'VA')).toEqual(["Scott's Addition, VA"]);
+    // ...and so does a phone's curly apostrophe.
+    expect(searchAreas('scott’s', 'VA')).toEqual(["Scott's Addition, VA"]);
+    expect(searchAreas('shockoe', 'VA')).toEqual(['Shockoe Bottom, VA']);
+    expect(searchAreas('the fan', 'VA')).toEqual(['The Fan, VA']);
+    expect(searchAreas('midlothian', 'VA')).toEqual(['Midlothian, VA']);
+    // Baltimore names stay out of Virginia searches, and the other way round.
+    expect(searchAreas('baltimore', 'VA')).toEqual([]);
+    expect(searchAreas('richmond', 'MD')).toEqual([]);
+    expect(stateOfListedArea('Fells Point, MD')).toBe('MD');
+    expect(stateOfListedArea("Scott's Addition, VA")).toBe('VA');
+  });
+
+  it('guesses Maryland for Baltimore pins and Virginia for Richmond pins (VC-62)', () => {
+    expect(stateForPin(39.2904, -76.6122)).toBe('MD'); // Downtown Baltimore
+    expect(stateForPin(39.2847, -76.5927)).toBe('MD'); // Fells Point
+    expect(stateForPin(39.2779, -76.6115)).toBe('MD'); // Federal Hill
+    expect(stateForPin(39.2794, -76.5753)).toBe('MD'); // Canton
+    expect(stateForPin(39.2976, -76.6156)).toBe('MD'); // Mount Vernon (Baltimore)
+    expect(stateForPin(37.5407, -77.436)).toBe('VA'); // Downtown Richmond
+    expect(stateForPin(37.5669, -77.4693)).toBe('VA'); // Scott's Addition
+    expect(stateForPin(37.5512, -77.4728)).toBe('VA'); // The Fan
+    expect(stateForPin(37.5318, -77.4297)).toBe('VA'); // Shockoe Bottom
+    expect(stateForPin(37.5057, -77.6491)).toBe('VA'); // Midlothian
   });
 });
 

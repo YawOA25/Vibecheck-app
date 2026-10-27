@@ -4,8 +4,8 @@
  * this map pin in?" check (proposal VC-37, approved by the founder
  * 2026-10-27, with the state-first clarification of the same day).
  *
- * What it is: about 40 neighbourhood labels across DC, Maryland and
- * Virginia, written the way guests see them on the Tonight list and event
+ * What it is: about 50 neighbourhood labels across DC, Maryland and
+ * Virginia (the DMV, plus Baltimore and Richmond since VC-62), written the way guests see them on the Tonight list and event
  * page ("Shaw, DC"). The admin picks the state, types, and picks a match;
  * anything missing goes in through "Use '<what they typed>'", which still
  * follows the free-text rules (no house numbers, 60 characters at most).
@@ -17,8 +17,10 @@
  * Sources: the team's own list of DMV nightlife areas (proposal VC-37),
  * cross-checked against common neighbourhood names used by the DC Office of
  * Planning's neighbourhood clusters, Montgomery and Prince George's County
- * place names, and Arlington and Alexandria's named neighbourhoods. These
- * are everyday names, not legal boundaries.
+ * place names, and Arlington and Alexandria's named neighbourhoods. The
+ * Baltimore and Richmond names (VC-62, approved 2026-10-27, for staff
+ * picks there) are their best-known nightlife neighbourhoods. These are
+ * everyday names, not legal boundaries.
  *
  * Rules every label follows (the server checks the last two again):
  *   - "<Neighbourhood>, <DC|MD|VA>", ending with its own state's code;
@@ -89,6 +91,14 @@ export const DMV_AREAS: readonly DmvArea[] = [
     'Silver Spring',
     'Takoma Park',
     'Wheaton',
+    // Baltimore (VC-62). "Downtown Baltimore" and "Mount Vernon (Baltimore)"
+    // name the city so they can't be mixed up with DC's Downtown or
+    // Virginia's Mount Vernon.
+    'Canton',
+    'Downtown Baltimore',
+    'Federal Hill',
+    'Fells Point',
+    'Mount Vernon (Baltimore)',
   ]),
   ...inState('VA', [
     'Ballston',
@@ -103,6 +113,12 @@ export const DMV_AREAS: readonly DmvArea[] = [
     'Rosslyn',
     'Shirlington',
     'Tysons',
+    // Richmond area (VC-62). Midlothian is a suburb just west of Richmond.
+    'Downtown Richmond',
+    'Midlothian',
+    "Scott's Addition",
+    'Shockoe Bottom',
+    'The Fan',
   ]),
 ];
 
@@ -111,13 +127,18 @@ export const DMV_AREAS: readonly DmvArea[] = [
  * that isn't a letter or digit treated as a space.
  *
  * @param text - any text, e.g. "Penn Quarter/Chinatown, DC".
- * @returns e.g. "penn quarter chinatown dc".
+ * @returns e.g. "penn quarter chinatown dc". Apostrophes are dropped (not
+ *   turned into spaces), so "scotts" finds "Scott's Addition, VA" (VC-62).
  */
 function searchForm(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim();
+  return (
+    text
+      .toLowerCase()
+      // Straight (') and curly (’) apostrophes: phone keyboards type either.
+      .replace(/['’]/g, '')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim()
+  );
 }
 
 /**
@@ -162,6 +183,9 @@ export function stateOfListedArea(label: string): AreaState | null {
 //      overlap, the Potomac river divides Maryland (north/east) from
 //      Virginia (south/west), approximated by a few points along it.
 //   3. Anywhere else (e.g. New York): no guess.
+// Baltimore and Richmond (VC-62) already fall inside the big box: Baltimore
+// is east of the river line (Maryland) and Richmond is south of the river's
+// mouth (Virginia), so no change was needed for them.
 
 /** [latitude, longitude] corners of DC's rough outline, in order. */
 const DC_OUTLINE: readonly [number, number][] = [
