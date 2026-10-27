@@ -44,6 +44,16 @@ const config: ExpoConfig = {
     // published to Google Play this ID can never change, so pick the real one
     // before the first Play Store upload (internal APKs are fine meanwhile).
     package: 'com.yawoa25.vibecheck',
+    // Android permissions Expo's template adds that VibeCheck never uses, so
+    // we block them: drawing over other apps (SYSTEM_ALERT_WINDOW) and reading
+    // or writing shared files (the two EXTERNAL_STORAGE ones). Fewer
+    // permissions means fewer scary install warnings and less to explain to
+    // Google Play. The app keeps internet, vibration and location.
+    blockedPermissions: [
+      'android.permission.SYSTEM_ALERT_WINDOW',
+      'android.permission.READ_EXTERNAL_STORAGE',
+      'android.permission.WRITE_EXTERNAL_STORAGE',
+    ],
     adaptiveIcon: {
       backgroundColor: BACKGROUND,
       foregroundImage: './assets/images/android-icon-foreground.png',

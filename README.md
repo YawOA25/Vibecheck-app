@@ -246,7 +246,7 @@ There is no "the venue asked" reason, on purpose: an honest tag stays up whoever
 
 Each profile names an EAS **environment** (`development`, `preview`, `production`). That is where the build gets its `EXPO_PUBLIC_` settings, because `.env` is ignored by git and so never reaches Expo's servers. The `preview` environment holds only three public values: `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_ANON_KEY` and `EXPO_PUBLIC_SENTRY_DSN`. **Never** add `SUPABASE_DB_PASSWORD` or a Supabase service key there. See or change them at expo.dev > vibecheck > **Environment variables**.
 
-**What gets uploaded.** EAS uploads the files git tracks in the whole repo (not just this app), never anything in `.gitignore`. So `.env` stays on your PC.
+**What gets uploaded.** EAS starts from the whole git repo, but `.easignore` in the repo's top folder (`C:\dev\Startup\.easignore`) limits the upload to `apps/vibecheck` only: no `team/` notes, no `.claude/`, no other apps, no `.env`, no `node_modules`. When `.easignore` exists, EAS uses it instead of `.gitignore`, so any new `.gitignore` rule must be copied there too. To see exactly what would go up: `npx eas-cli build:inspect -p android --profile preview --stage archive --output C:\temp\eas-archive` (an empty folder).
 
 **Run a build (PowerShell, from `C:\dev\Startup\apps\vibecheck`, with `EXPO_TOKEN` set):**
 
