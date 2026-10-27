@@ -116,9 +116,11 @@ function RootNavigator({ fontsReady }: { fontsReady: boolean }) {
       <Stack.Protected guard={status === 'ready'}>
         {/* index.tsx is the Tonight screen. */}
         <Stack.Screen name="index" options={{ title: 'Tonight' }} />
-        {/* The event page and the check-in stub (VC-B05). */}
+        {/* The event page (VC-B05), GPS check-in (VC-B06) and the
+            party-code placeholder (VC-B07 will fill it in). */}
         <Stack.Screen name="event/[id]" options={{ title: 'Event' }} />
         <Stack.Screen name="check-in/[id]" options={{ title: 'Check in' }} />
+        <Stack.Screen name="join/[id]" options={{ title: 'Party code' }} />
       </Stack.Protected>
 
       {/* Admins only (VC-B04): the New event screen. This only keeps the

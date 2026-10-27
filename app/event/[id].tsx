@@ -12,8 +12,8 @@
  *   - our own short summary, if there is one;
  *   - the "Live vibe" card, in its "Early reading" state until scores exist
  *     (task VC-B09);
- *   - the "I'm here" button, which leads to check-in. Check-in is task
- *     VC-B06, so for now it opens a "Check-in coming soon" screen;
+ *   - the "I'm here" button, which opens GPS check-in
+ *     (app/check-in/[id].tsx, task VC-B06);
  *   - for staff picks with a ticket link: a plain "Get tickets" text link
  *     and "Not affiliated with Eventbrite." (VC-29 and the legal check).
  *

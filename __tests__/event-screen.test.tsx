@@ -1,6 +1,6 @@
 /**
- * Tests for the event page (app/event/[id].tsx) and the check-in stub
- * (app/check-in/[id].tsx), task VC-B05.
+ * Tests for the event page (app/event/[id].tsx), task VC-B05, and the
+ * party-code placeholder (app/join/[id].tsx) that VC-B06 links to.
  *
  * The router and the event read are replaced with fakes, and the phone's
  * "open this link" function is watched. We check:
@@ -11,13 +11,14 @@
  *     that opens the ticket page in the browser, and "Not affiliated with
  *     Eventbrite.";
  *   - a host party never shows a ticket link, even if one is stored;
- *   - "I'm here" opens the "Check-in coming soon" screen.
+ *   - "I'm here" opens the check-in screen (tested in check-in-screen.test.tsx);
+ *   - the "Party code coming soon" placeholder goes back.
  */
 import { fireEvent, render, screen } from '@testing-library/react-native';
 import { Linking } from 'react-native';
 
 import EventScreen, { NOT_FOUND_TITLE } from '../app/event/[id]';
-import CheckInComingSoonScreen, { COMING_SOON_TITLE } from '../app/check-in/[id]';
+import PartyCodeComingSoonScreen, { CODE_SOON_TITLE } from '../app/join/[id]';
 import { EARLY_READING_TITLE } from '@/components/LiveVibeCard';
 import { NOT_AFFILIATED } from '@/components/TicketLink';
 import { getEvent } from '@/lib/events-read';
@@ -126,7 +127,7 @@ describe('EventScreen details', () => {
     expect(screen.queryByText(NOT_AFFILIATED)).toBeNull();
   });
 
-  it('opens the check-in stub from "I\'m here"', async () => {
+  it('opens check-in from "I\'m here"', async () => {
     get.mockResolvedValue({ ok: true, event: makeEvent() });
     await render(<EventScreen />);
     await fireEvent.press(await screen.findByRole('button', { name: "I'm here" }));
@@ -170,11 +171,11 @@ describe('EventScreen staff picks (VC-29)', () => {
   });
 });
 
-describe('CheckInComingSoonScreen', () => {
-  it('says check-in is coming soon and goes back to the event', async () => {
-    await render(<CheckInComingSoonScreen />);
-    expect(screen.getByRole('header', { name: COMING_SOON_TITLE })).toBeOnTheScreen();
-    await fireEvent.press(screen.getByRole('button', { name: 'Back to the event' }));
+describe('PartyCodeComingSoonScreen (VC-B07 placeholder)', () => {
+  it('says the party code is coming soon and goes back', async () => {
+    await render(<PartyCodeComingSoonScreen />);
+    expect(screen.getByRole('header', { name: CODE_SOON_TITLE })).toBeOnTheScreen();
+    await fireEvent.press(screen.getByRole('button', { name: 'Back to check-in' }));
     expect(mockBack).toHaveBeenCalled();
   });
 });
