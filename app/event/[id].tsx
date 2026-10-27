@@ -29,7 +29,8 @@
  *   - a "Share" button (VC-41) that opens the phone's share sheet with the
  *     event's name, area and time. Never the party code or the pin;
  *   - for admins only, an "Admin" box: "Edit event" (opens
- *     app/admin/edit-event/[id].tsx, VC-34) and "Show party code", which
+ *     app/admin/edit-event/[id].tsx, VC-34), "Moderate ratings and tags"
+ *     (opens app/admin/moderate/[id].tsx, VC-47) and "Show party code", which
  *     asks the server for the current code and shows it after the tap
  *     (VC-35). Guests never see this box, and the server refuses both to
  *     non-admins anyway.
@@ -71,6 +72,7 @@ export const NOT_FOUND_BODY = 'It may have been removed, or the link is wrong.';
 export const EDIT_EVENT = 'Edit event';
 export const SHOW_CODE = 'Show party code';
 export const HIDE_CODE = 'Hide party code';
+export const MODERATE_LABEL = 'Moderate ratings and tags';
 export const SHARE_LABEL = 'Share';
 export const RATE_LABEL = 'Rate the night';
 
@@ -215,6 +217,12 @@ export default function EventScreen() {
                     params: { id: state.event.id },
                   })
                 }
+                onModerate={() =>
+                  router.push({
+                    pathname: '/admin/moderate/[id]',
+                    params: { id: state.event.id, title: state.event.title },
+                  })
+                }
               />
             ) : null
           }
@@ -329,18 +337,27 @@ type CodeState =
   | { kind: 'error'; message: string };
 
 /**
- * The Admin box on the event page (admins only): "Edit event" and
- * "Show party code".
+ * The Admin box on the event page (admins only): "Edit event",
+ * "Moderate ratings and tags" (VC-47) and "Show party code".
  *
  * @param props.eventId - the event's id.
  * @param props.onEdit - opens the Edit event screen.
+ * @param props.onModerate - opens the Moderate screen.
  * @returns the box view.
  * Why the code is behind a tap: it shouldn't sit on screen where a guest
  * looking over the host's shoulder could read it. It's fetched fresh from
  * the server on every tap (so it's the newest code after a rotation), kept
  * only in this box's memory, and never logged.
  */
-function AdminTools({ eventId, onEdit }: { eventId: string; onEdit: () => void }) {
+function AdminTools({
+  eventId,
+  onEdit,
+  onModerate,
+}: {
+  eventId: string;
+  onEdit: () => void;
+  onModerate: () => void;
+}) {
   const [codeState, setCodeState] = useState<CodeState>({ kind: 'hidden' });
 
   /** Asks the server for the current code and shows it. Returns nothing. */
@@ -358,6 +375,7 @@ function AdminTools({ eventId, onEdit }: { eventId: string; onEdit: () => void }
     <View style={styles.adminBox}>
       <Text style={styles.kicker}>ADMIN</Text>
       <Button label={EDIT_EVENT} variant="outline" size="small" onPress={onEdit} />
+      <Button label={MODERATE_LABEL} variant="outline" size="small" onPress={onModerate} />
       {codeState.kind === 'shown' ? (
         <>
           <PartyCodeCard code={codeState.code} />

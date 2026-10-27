@@ -173,7 +173,7 @@ To remove admin rights later, run the same query with `set role = 'user'`.
 - the window is the same as check-in: from 30 minutes before the start to 1 hour after the end;
 - there's one rating per person per event. Saving again updates it, but only 60 minutes or more after the last save. A guest can still rate every event they go to in a night;
 - admins can't rate or add heads-ups (staff rule). Use a separate guest account to test rating;
-- hidden ratings (an admin can set `hidden_at` by hand for now) count nowhere, and that guest's heads-ups don't count either.
+- hidden ratings count nowhere, and that guest's heads-ups don't count either. Admins hide them on the **Moderate** screen (see "Moderation" below).
 
 **Heads-ups (VC-43).** The six tags are fixed (no free text, so nothing to moderate): Lines are long, Music is fire, Packed, Overpriced, Good crowd, Sound is bad. The event page shows a **Heads-up** card with each tag's count. A checked-in guest can tap a tag to **+1** it, once per tag, and can't take it back. Nobody can see who added a tag. Counts cover the last 3 hours only (VC-46, `20261027140100_live_windows.sql`), so a tag fades out unless people keep confirming it; a guest whose own +1 is older than 3 hours can add it again.
 
@@ -185,10 +185,35 @@ To remove admin rights later, run the same query with `set role = 'user'`.
 
 - one rating's score is (crowd + music + energy - 3) / 6 x 10. The live score is a weighted average of the ratings saved in the last 3 hours, where a rating counts half as much every 30 minutes but never less than a quarter (VC-50: weight = max(0.25, 0.5 ^ (age in minutes / 30))), rounded to 1 decimal. Without that floor, one new rating after a quiet spell could outweigh 16 older ones;
 - fewer than 5 ratings shows "Early reading: N people so far" with no number. A number is never made from fewer than 5 ratings: if the last 3 hours hold fewer than 5, the score is the plain (unweighted) average of the 5 newest instead, so one fresh rating can't outweigh the others. No new rating for 90 minutes shows the last score in grey with "Quiet for ..." and the night's average (the average is only sent in this quiet state);
-- hidden ratings count nowhere. Since VC-51, hiding takes effect at the next published score; to update at once, run `select private.publish_event_vibe('<event id>', now());` in the SQL Editor after hiding. Accepted limit: that republish changes the score by exactly the hidden rating, so someone watching can work out roughly what the hidden (abusive) rating was. A manual publish never replaces a newer one, and it takes the same per-event lock as rating (`20261027150000_vibe_publish_fixes.sql`);
+- hidden ratings count nowhere. Hiding or unhiding on the **Moderate** screen (VC-47) republishes the score at once, under the same per-event lock as rating. If exactly one new rating is waiting for the 2-rater gate at that moment, the snapshot is re-made as of its own earlier time instead, so that one rating isn't released alone. Edge case of that rule: if the waiting "rating" is an UPDATE by someone already in the snapshot, the re-made snapshot leaves that person out until the next publish (their row now carries the newer time), so the change can hint at their old rating. It's one person, once, and only when an admin hides at that exact moment (documented after cto review). Accepted limit: that republish changes the score by exactly the hidden rating, so someone watching can work out roughly what the hidden (abusive) rating was. A manual publish never replaces a newer one, and it takes the same per-event lock as rating (`20261027150000_vibe_publish_fixes.sql`);
 - the quiet state's night average is shown only when it can't single anyone out: when the score leaves out none of the night's ratings, or 5 or more of them. Otherwise (for example 6 raters with the score made from the 5 newest, where 6 x average - 5 x score would be the oldest person's rating) it is left out and the card just says "Quiet for ...";
 - **the score is published, not live (VC-51, `20261027140200_vibe_publish_gate.sql`).** The meter, the rater count and the reaction tally only change once 2 or more different people have rated since the last update. In between, every refresh gets exactly the same answer, so watching the meter can't reveal what one person gave. One person rating and then updating an hour later counts once. Honest limits: 2 is a floor, not real anonymity. A guest who rates right after exactly one other person can work out roughly what that person gave (they know their own rating), at most once an hour per event. The person who just rated still sees the live count in "You and 4 others". The first rating at an event shows nothing until a second person rates;
 - the app only ever gets totals (`get_event_vibe` for one event, `get_events_vibe` for the list), never names, ids or the exact time of a rating, and it can't pick the clock the score is worked out at. Before VC-51, someone who kept refreshing could see the score and the count change when one new rating arrived; the publish gate above closes that, within its limits. The earlier privacy fixes are in `supabase/migrations/20261027130100_vibe_score_privacy.sql` and `20261027130200_vibe_score_floor_plain_average.sql`.
+
+## Moderation (VC-47, VC-58)
+
+**For admins.** Two screens, both admin-only (the app hides them from everyone else, and every `admin_` server function refuses non-admins):
+
+- **Reports** (button on Tonight, `app/admin/reports.tsx`): every open "Report this tag", grouped per event and tag, oldest first, with how many reports and +1s, and how long it has waited. Reports should be decided within **48 hours**; older ones say **Overdue** in red. Tap one to open its event's Moderate screen.
+- **Moderate** (from Reports, or **Moderate ratings and tags** in an event's Admin box, `app/admin/moderate/[id].tsx`): the event's tags (hide, unhide, or **Keep tag** to close reports and leave it up), everyone who rated or +1'd (with account age and check-in method, to spot brigading), and the latest decisions. **Hide rating** / **Unhide rating** and **Remove +1s** / **Restore +1s** work on one guest, including someone who only +1'd and never rated. Removing covers that guest for the whole event: +1s they add later, on any tag, don't count either until you restore them (`20261027170000_heads_up_bans.sql`).
+
+**The written removal rule** (legal review, `team/projects/vibecheck/legal/phase0-consents-2026-10-27.md`, section 5). Every action asks for a reason, and the server only accepts these:
+
+| Removing (hide a rating, remove +1s, hide a tag) | Restoring or keeping |
+| ------------------------------------------------ | -------------------- |
+| Weren't really there (`not_checked_in`)          | No rule broken       |
+| Coordinated or brigading (`coordinated`)         | Undo a mistake       |
+| Broke the tester rules (`broke_tester_rules`)    |                      |
+
+There is no "the venue asked" reason, on purpose: an honest tag stays up whoever complains (FTC fake-review rule). Each decision is saved with its reason, the admin and an optional note in a private log (`private.moderation_log`).
+
+**Reporting (any guest).** The Heads-up card has a **Report this tag** link for anyone who isn't an admin, checked in or not (so hosts can use it). Limits: one report per person per tag per event, and 10 per person per 24 hours. Who reported is stored for abuse handling but never shown to anyone, not even admins. Code: `supabase/migrations/20261027160000_admin_moderation.sql` and `20261027160100_tag_reports.sql`.
+
+**Venue contact email.** `VENUE_CONTACT_EMAIL` in `src/lib/contact.ts` is empty until you choose an address. Once set, the Heads-up card shows "Venue or host? Email ..." under the report link.
+
+**Tester rules** (draft for the B14 tester terms, lawyer to review):
+
+- Only pick tags about what you saw yourself tonight. Don't use tags to target a person or business. False or coordinated tags are removed and can end your access.
 
 ## Crash reports with Sentry (VC-26)
 
@@ -253,4 +278,4 @@ It takes about 10-20 minutes. The build page on expo.dev shows progress and, whe
 | `supabase/`       | Database tables and security rules (`migrations/`) and their pgTAP tests (`tests/database/`).                |
 | `scripts/`        | Helper scripts, such as `test-db.js`, which runs the database tests or explains why they were skipped.       |
 
-Screens so far: `app/(auth)/sign-in.tsx` (email code), `app/(auth)/age-gate.tsx` (name and date of birth), `app/index.tsx` (Tonight: today's and tomorrow's events, pull down to refresh), `app/event/[id].tsx` (one event's page, with the live vibe meter, "I'm here" and, for staff picks, "Get tickets"), `app/check-in/[id].tsx` (GPS check-in, task VC-B06), `app/join/[id].tsx` (party-code check-in, task VC-B07), `app/rate/[id].tsx` (the 3-tap rating, task VC-B08) and `app/admin/new-event.tsx` (admins only). A folder or file name in square brackets, like `[id]`, is a changing part of the address (the event's id). A folder name in brackets, like `(auth)`, groups screens without adding to their address.
+Screens so far: `app/(auth)/sign-in.tsx` (email code), `app/(auth)/age-gate.tsx` (name and date of birth), `app/index.tsx` (Tonight: today's and tomorrow's events, pull down to refresh), `app/event/[id].tsx` (one event's page, with the live vibe meter, "I'm here" and, for staff picks, "Get tickets"), `app/check-in/[id].tsx` (GPS check-in, task VC-B06), `app/join/[id].tsx` (party-code check-in, task VC-B07), `app/rate/[id].tsx` (the 3-tap rating, task VC-B08) `app/admin/new-event.tsx`, `app/admin/edit-event/[id].tsx`, `app/admin/reports.tsx` (tag report queue, VC-58) and `app/admin/moderate/[id].tsx` (hide ratings, +1s and tags, VC-47) (admins only). A folder or file name in square brackets, like `[id]`, is a changing part of the address (the event's id). A folder name in brackets, like `(auth)`, groups screens without adding to their address.

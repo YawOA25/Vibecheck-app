@@ -31,6 +31,12 @@ export interface ButtonProps {
   busy?: boolean;
   /** Words next to the spinner while busy, for example "Sending...". Defaults to `label`. */
   busyLabel?: string;
+  /**
+   * What screen readers say instead of `label`, when the visible words alone
+   * are ambiguous (e.g. many "Hide rating" buttons: "Hide rating, Ava").
+   * Defaults to `label`.
+   */
+  accessibilityLabel?: string;
 }
 
 /**
@@ -46,6 +52,7 @@ export function Button({
   disabled,
   busy,
   busyLabel,
+  accessibilityLabel,
 }: ButtonProps) {
   // Shows a 2 px gold ring when a keyboard or switch-control user moves onto
   // the button (spec section 3, fix 6). Touch users never see it.
@@ -64,7 +71,7 @@ export function Button({
       // Screen readers announce this as a button, with its label and state.
       // The label stays the same while busy; the "busy" state is announced instead.
       accessibilityRole="button"
-      accessibilityLabel={label}
+      accessibilityLabel={accessibilityLabel ?? label}
       accessibilityState={{ disabled: inactive, busy: Boolean(busy) }}
       style={({ pressed }) => [
         styles.base,
