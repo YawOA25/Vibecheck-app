@@ -9,10 +9,13 @@
  *     5): remove only when the people weren't really there, the picks look
  *     coordinated, or someone broke the tester rules. There is deliberately
  *     no "the venue asked" reason, so the rule is the same whoever complains;
- *   - the 48-hour review promise, and how the queue words a report's wait.
+ *   - the 48-hour review promise, and how the queue words a report's wait;
+ *   - the reasons a guest picks when reporting a tag (VC-65), and how the
+ *     queue words their counts.
  *
- * The server (supabase/migrations/20261027160000_admin_moderation.sql) has
- * the same lists and is the one that counts; these copies only drive the
+ * The server (supabase/migrations/20261027160000_admin_moderation.sql, and
+ * 20261027180000_gate3_report_reasons.sql for report reasons) has the same
+ * lists and is the one that counts; these copies only drive the
  * buttons. Keep the two in sync.
  */
 
@@ -76,6 +79,50 @@ export function waitingText(hours: number): string {
   if (hours >= REVIEW_HOURS) return `Overdue: waiting ${hours} h`;
   if (hours < 1) return 'Waiting under an hour';
   return `Waiting ${hours} h, ${REVIEW_HOURS - hours} h left`;
+}
+
+/** Why a guest reports a tag (VC-65). The server accepts only these keys. */
+export type ReportReason = 'not_true' | 'spam' | 'targets_person' | 'offensive' | 'other';
+
+/** The report reasons, in the order the guest sees them, with their words. */
+export const REPORT_REASONS: readonly { key: ReportReason; label: string }[] = [
+  { key: 'not_true', label: 'Not true' },
+  { key: 'spam', label: 'Spam or fake' },
+  { key: 'targets_person', label: 'Targets a person' },
+  { key: 'offensive', label: 'Offensive' },
+  { key: 'other', label: 'Other' },
+];
+
+/**
+ * Words for the reason counts on one queue row (VC-65).
+ *
+ * @param reasons - how many open reports gave each reason, by server key.
+ *   "not_given" counts reports made before reasons existed.
+ * @returns e.g. "Not true 2 · Spam or fake 1", in the guest's list order,
+ *   with "No reason" last and any key this app doesn't know after that (by
+ *   its key). An empty string when there are no counts.
+ */
+export function reasonCountsText(reasons: Record<string, number>): string {
+  const known = REPORT_REASONS.map((r) => r.key as string);
+  // Known reasons first (in list order), then the old "no reason" ones, then
+  // anything newer than this app, so nothing the server sends is hidden.
+  const order = [
+    ...known,
+    'not_given',
+    ...Object.keys(reasons)
+      .filter((k) => !known.includes(k) && k !== 'not_given')
+      .sort(),
+  ];
+  return order
+    .filter((key) => (reasons[key] ?? 0) > 0)
+    .map((key) => {
+      const label =
+        key === 'not_given'
+          ? 'No reason'
+          : (REPORT_REASONS.find((r) => r.key === key)?.label ?? key);
+      return `${label} ${reasons[key]}`;
+    })
+    .join(' · ');
 }
 
 /** The decision-log words for each action. */

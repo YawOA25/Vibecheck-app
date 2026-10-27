@@ -2,7 +2,8 @@
  * The app's calls to the server for moderation (proposals VC-47 and VC-58).
  *
  * What it does:
- *   - {@link reportHeadsUpTag}: the "Report this tag" button (any guest);
+ *   - {@link reportHeadsUpTag}: the "Report this tag" button (any guest),
+ *     with the reason they picked (VC-65);
  *   - {@link getTagReports}: the admin report queue;
  *   - {@link getEventModeration} and {@link getEventTags}: what the admin
  *     screen lists for one event;
@@ -15,10 +16,11 @@
  * Why the server decides: who is an admin, the reason rule, the report rate
  * limit and the score republish all live in the database
  * (supabase/migrations/20261027160000_admin_moderation.sql and
- * 20261027160100_tag_reports.sql), so a changed app can't skip them.
+ * 20261027160100_tag_reports.sql, 20261027180000_gate3_report_reasons.sql),
+ * so a changed app can't skip them.
  */
 import type { ErrorLike } from '@/lib/auth-errors';
-import type { ModerationReason } from '@/lib/moderation';
+import type { ModerationReason, ReportReason } from '@/lib/moderation';
 import { supabase } from '@/lib/supabase';
 
 /** A failed call: a short sentence to show. */
@@ -36,6 +38,12 @@ export interface TagReportGroup {
   tag: string;
   /** How many open reports. */
   reports: number;
+  /**
+   * How many open reports gave each reason (VC-65), by server key, e.g.
+   * { not_true: 2, spam: 1 }. "not_given" counts reports made before
+   * reasons existed. Never says who reported.
+   */
+  reasons: Record<string, number>;
   /** Whole hours since the oldest open report. */
   hoursWaiting: number;
   /** 48 hours or more. */
@@ -120,6 +128,7 @@ export function describeModerationError(error: ErrorLike): string {
       return "That isn't there any more. Pull down to refresh.";
     case 'VCTAG':
     case 'VCRSN':
+    case 'VCRPT':
       // The server's own sentence is written for people, so show it as it is.
       return error.message || GENERIC_MESSAGE;
     default:
@@ -169,6 +178,23 @@ function record(value: unknown): Record<string, unknown> | null {
 }
 
 /**
+ * Reads the per-reason counts of one queue row (VC-65).
+ *
+ * @param value - the row's "reasons" object from the server.
+ * @returns the counts that are whole numbers above zero; {} for anything
+ *   else (for example an older server that sends no reasons).
+ */
+function parseReasonCounts(value: unknown): Record<string, number> {
+  const v = record(value);
+  const counts: Record<string, number> = {};
+  if (!v) return counts;
+  for (const [key, n] of Object.entries(v)) {
+    if (typeof n === 'number' && Number.isInteger(n) && n > 0) counts[key] = n;
+  }
+  return counts;
+}
+
+/**
  * Reads admin_get_tag_reports' list, skipping anything malformed.
  *
  * @param data - whatever the server returned.
@@ -195,6 +221,7 @@ export function parseTagReports(data: unknown): TagReportGroup[] {
       eventStartsAt: typeof v.event_starts_at === 'string' ? v.event_starts_at : '',
       tag: v.tag,
       reports: v.reports,
+      reasons: parseReasonCounts(v.reasons),
       hoursWaiting: v.hours_waiting,
       overdue: v.overdue === true,
       votes: typeof v.votes === 'number' ? v.votes : 0,
@@ -286,17 +313,25 @@ export function parseEventTags(data: unknown): EventTagState[] {
 }
 
 /**
- * Files the caller's report about one tag at one event.
+ * Files the caller's report about one tag at one event, with the reason
+ * they picked (VC-65).
  *
  * @param eventId - the event's id.
  * @param tag - the tag's key.
+ * @param reason - why they report it (see REPORT_REASONS in
+ *   src/lib/moderation.ts).
  * @returns the status, or a failure with a sentence. Never throws.
  */
 export async function reportHeadsUpTag(
   eventId: string,
   tag: string,
+  reason: ReportReason,
 ): Promise<{ ok: true; status: ReportStatus } | ModerationFailure> {
-  const outcome = await call('report_heads_up_tag', { p_event_id: eventId, p_tag: tag });
+  const outcome = await call('report_heads_up_tag', {
+    p_event_id: eventId,
+    p_tag: tag,
+    p_reason: reason,
+  });
   if (!outcome.ok) return outcome;
   const status = statusOf(outcome.data, ['reported', 'already', 'too_many'] as const);
   return status ? { ok: true, status } : { ok: false, message: GENERIC_MESSAGE };

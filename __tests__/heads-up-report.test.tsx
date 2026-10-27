@@ -5,7 +5,9 @@
  * The server calls are fakes. We check:
  *   - guests see "Report this tag" once there are tags; admins don't (they
  *     moderate on their own screen), and nobody does when there are no tags;
- *   - picking a tag sends the report and shows the thank-you;
+ *   - picking a tag shows the five reasons (VC-65); tapping a reason sends
+ *     the report with it and shows the thank-you; "Never mind" backs out
+ *     without sending;
  *   - 'already' and 'too_many' are worded, and a failure is shown as an error;
  *   - the venue contact line appears only once an address is set, and the
  *     address constant ships empty (founder sets it).
@@ -18,6 +20,7 @@ import {
   REPORT_LINK,
   REPORT_MESSAGES,
   REPORT_PICK,
+  reportWhy,
   venueContactLine,
 } from '@/components/HeadsUpCard';
 import { VENUE_CONTACT_EMAIL } from '@/lib/contact';
@@ -56,17 +59,38 @@ async function renderCard(canVote = true, contactEmail = '') {
 }
 
 describe('HeadsUpCard: Report this tag (VC-58)', () => {
-  it('lets a guest pick a shown tag and report it', async () => {
+  it('lets a guest pick a shown tag, then a reason, and report it', async () => {
     report.mockResolvedValue({ ok: true, status: 'reported' });
     await renderCard();
     await fireEvent.press(screen.getByRole('button', { name: REPORT_LINK }));
     expect(screen.getByText(REPORT_PICK)).toBeOnTheScreen();
 
+    // Picking the tag sends nothing yet: the reasons show (VC-65).
     await fireEvent.press(screen.getByRole('button', { name: 'Overpriced' }));
-    expect(report).toHaveBeenCalledWith('e1', 'overpriced');
+    expect(report).not.toHaveBeenCalled();
+    expect(screen.getByText(reportWhy('Overpriced'))).toBeOnTheScreen();
+    for (const name of ['Not true', 'Spam or fake', 'Targets a person', 'Offensive', 'Other']) {
+      expect(screen.getByRole('button', { name })).toBeOnTheScreen();
+    }
+
+    await fireEvent.press(screen.getByRole('button', { name: 'Spam or fake' }));
+    expect(report).toHaveBeenCalledWith('e1', 'overpriced', 'spam');
     expect(await screen.findByText(REPORT_MESSAGES.reported)).toBeOnTheScreen();
-    // The list closes after a report.
+    // Everything closes after a report.
     expect(screen.queryByText(REPORT_PICK)).toBeNull();
+    expect(screen.queryByText(reportWhy('Overpriced'))).toBeNull();
+  });
+
+  it('"Never mind" at the reasons sends nothing, and the next report starts from the tags', async () => {
+    await renderCard();
+    await fireEvent.press(screen.getByRole('button', { name: REPORT_LINK }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Packed' }));
+    await fireEvent.press(screen.getByRole('button', { name: REPORT_CANCEL }));
+    expect(report).not.toHaveBeenCalled();
+    expect(screen.queryByText(reportWhy('Packed'))).toBeNull();
+
+    await fireEvent.press(screen.getByRole('button', { name: REPORT_LINK }));
+    expect(screen.getByText(REPORT_PICK)).toBeOnTheScreen();
   });
 
   it('words a repeat report and the daily limit', async () => {
@@ -75,22 +99,25 @@ describe('HeadsUpCard: Report this tag (VC-58)', () => {
     await renderCard();
     await fireEvent.press(screen.getByRole('button', { name: REPORT_LINK }));
     await fireEvent.press(screen.getByRole('button', { name: 'Packed' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Not true' }));
     expect(await screen.findByText(REPORT_MESSAGES.already)).toBeOnTheScreen();
 
     await fireEvent.press(screen.getByRole('button', { name: REPORT_LINK }));
     await fireEvent.press(screen.getByRole('button', { name: 'Packed' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Other' }));
     expect(await screen.findByText(REPORT_MESSAGES.too_many)).toBeOnTheScreen();
   });
 
-  it('shows a failure and keeps the list open to try again', async () => {
+  it('shows a failure and keeps the reasons open to try again', async () => {
     report.mockResolvedValue({ ok: false, message: "We couldn't reach the server." });
     await renderCard();
     await fireEvent.press(screen.getByRole('button', { name: REPORT_LINK }));
     await fireEvent.press(screen.getByRole('button', { name: 'Packed' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Offensive' }));
     expect(await screen.findByText("We couldn't reach the server.")).toBeOnTheScreen();
-    expect(screen.getByText(REPORT_PICK)).toBeOnTheScreen();
+    expect(screen.getByText(reportWhy('Packed'))).toBeOnTheScreen();
     await fireEvent.press(screen.getByRole('button', { name: REPORT_CANCEL }));
-    expect(screen.queryByText(REPORT_PICK)).toBeNull();
+    expect(screen.queryByText(reportWhy('Packed'))).toBeNull();
   });
 
   it('has no report link for admins', async () => {

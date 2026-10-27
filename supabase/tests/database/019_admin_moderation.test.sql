@@ -12,8 +12,9 @@
 --   * Hiding a rating republishes the score snapshot at once (the score and
 --     the rater count change), unhiding brings it back, and each decision is
 --     logged with its reason.
---   * When exactly one new rating is waiting, the republish does NOT release
---     it (VC-51): the snapshot keeps its own moment.
+--   * While 1 or 2 new ratings are waiting (below the 3-rater gate, VC-64),
+--     the republish does NOT release them: the snapshot keeps its own
+--     moment. With 3 waiting, it publishes as of now.
 --   * +1s from someone who never rated can be removed and restored. Removal
 --     covers the person for the whole event: a re-tap or a NEW tag added
 --     afterwards doesn't count either, until restored.
@@ -24,7 +25,7 @@
 begin;
 create extension if not exists pgtap with schema extensions;
 
-select plan(33);
+select plan(34);
 
 -- ---- Setup (as owner) -------------------------------------------------------
 -- Guests …01 to …08, an admin …a1, and …b1 signed in without a profile.
@@ -42,11 +43,12 @@ from generate_series(1, 8) n;
 insert into public.profiles (id, display_name, birthdate, is_tester, role) values
   ('19191919-9999-4999-8999-0000000000a1', 'Mod admin', current_date - interval '40 years', false, 'admin');
 
--- Events, both on now: …e1 for hide/unhide, …e2 for the "one waiting" case.
+-- Events, all on now: …e1 for hide/unhide, …e2 for the "two waiting" case,
+-- …e3 for the "three waiting" case (VC-64).
 insert into public.events (id, title, area_label, starts_at, ends_at, is_test)
 select ('19191919-0000-4000-8000-0000000000e' || n)::uuid, 'Mod ' || n, 'Shaw, DC',
        now() - interval '2 hours', now() + interval '3 hours', false
-from generate_series(1, 2) n;
+from generate_series(1, 3) n;
 
 -- A test-only helper to add ratings (as owner): guests from..to give
 -- value (3 = a 10, 1 = a 0) at now() minus `ago`.
@@ -67,11 +69,18 @@ select pg_temp.seed('19191919-0000-4000-8000-0000000000e1', 1, 1, 1, interval '1
 select pg_temp.seed('19191919-0000-4000-8000-0000000000e1', 2, 6, 3, interval '10 minutes');
 select private.publish_event_vibe('19191919-0000-4000-8000-0000000000e1', now());
 -- e2: guest 1 a 0 and guests 2-6 10s an hour ago, published 30 minutes ago;
--- then guest 7 rated 5 minutes ago (one rating waiting for the gate).
+-- then guests 7 and 8 rated 5 minutes ago (two ratings waiting, below the
+-- gate of 3, VC-64).
 select pg_temp.seed('19191919-0000-4000-8000-0000000000e2', 1, 1, 1, interval '1 hour');
 select pg_temp.seed('19191919-0000-4000-8000-0000000000e2', 2, 6, 3, interval '1 hour');
 select private.publish_event_vibe('19191919-0000-4000-8000-0000000000e2', now() - interval '30 minutes');
-select pg_temp.seed('19191919-0000-4000-8000-0000000000e2', 7, 7, 3, interval '5 minutes');
+select pg_temp.seed('19191919-0000-4000-8000-0000000000e2', 7, 8, 3, interval '5 minutes');
+-- e3: guest 1 a 0 and guests 2-5 10s an hour ago, published 30 minutes ago;
+-- then guests 6, 7 and 8 rated 5 minutes ago (three waiting: the gate's number).
+select pg_temp.seed('19191919-0000-4000-8000-0000000000e3', 1, 1, 1, interval '1 hour');
+select pg_temp.seed('19191919-0000-4000-8000-0000000000e3', 2, 5, 3, interval '1 hour');
+select private.publish_event_vibe('19191919-0000-4000-8000-0000000000e3', now() - interval '30 minutes');
+select pg_temp.seed('19191919-0000-4000-8000-0000000000e3', 6, 8, 3, interval '5 minutes');
 
 -- Guest 8 never rated e1 but +1'd "packed" there just now (checked in by code).
 insert into public.check_ins (user_id, event_id, method, first_at, last_verified_at) values
@@ -179,7 +188,7 @@ select is((select row(score, raters, (select count(*) from private.moderation_lo
            from private.vibe_snapshots where event_id = '19191919-0000-4000-8000-0000000000e1'),
   row(8.3, 6, 2)::text, 'the snapshot is back to 8.3 from 6, and only 2 decisions were logged');
 
--- ---- 5. One waiting rating stays waiting (2) --------------------------------
+-- ---- 5. Waiting ratings below the gate stay waiting (3) -------------------
 set local role authenticated;
 select set_config('request.jwt.claims',
   '{"sub":"19191919-9999-4999-8999-0000000000a1","role":"authenticated"}', true);
@@ -189,9 +198,20 @@ reset role;
 select is((select row(published_at, raters, score)::text from private.vibe_snapshots
            where event_id = '19191919-0000-4000-8000-0000000000e2'),
   row(now() - interval '30 minutes', 5, 10.0)::text,
-  'with one new rating waiting, the snapshot is re-made at its own moment: the hidden 0 drops out, guest 7 is not released');
+  'with two new ratings waiting (VC-64), the snapshot is re-made at its own moment: the hidden 0 drops out, guests 7 and 8 are not released');
 select is((select raters from private.vibe_snapshots where event_id = '19191919-0000-4000-8000-0000000000e2')
-          + 0, 5, 'still 5 raters, not 6');
+          + 0, 5, 'still 5 raters, not 7');
+-- e3: three are waiting, which the gate would publish anyway: publish now.
+set local role authenticated;
+select set_config('request.jwt.claims',
+  '{"sub":"19191919-9999-4999-8999-0000000000a1","role":"authenticated"}', true);
+select public.admin_set_rating_hidden('19191919-0000-4000-8000-0000000000e3',
+  '19191919-9999-4999-8999-000000000001', true, 'not_checked_in');
+reset role;
+select is((select row(published_at, raters, score)::text from private.vibe_snapshots
+           where event_id = '19191919-0000-4000-8000-0000000000e3'),
+  row(now(), 7, 10.0)::text,
+  'with three new ratings waiting, the republish is as of now: 7 raters, the hidden 0 left out');
 
 -- ---- 6. +1s from someone who never rated (9) --------------------------------
 -- "Remove +1s" applies to the person for the whole event (cto fix,

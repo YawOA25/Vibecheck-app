@@ -16,8 +16,9 @@
  * and its privacy follow-up 20261027130100_vibe_score_privacy.sql).
  *
  * Since 2026-10-27 (proposals VC-50, VC-51, VC-55, migrations
- * 20261027140000 to 20261027140200) the server sends a PUBLISHED snapshot:
- * the score, rater count and reactions only change once 2 or more new
+ * 20261027140000 to 20261027140200; 3 raters since VC-64, 20261027180000)
+ * the server sends a PUBLISHED snapshot:
+ * the score, rater count and reactions only change once 3 or more new
  * people have rated, so watching the meter can't reveal one person's
  * rating. The JSON shape is unchanged, so nothing here had to change; only
  * the meaning of two fields did (see `here` and `minutesSinceLast` below).
@@ -45,7 +46,7 @@ export interface Vibe {
   state: VibeState;
   /**
    * How many people's ratings count (hidden ones never do), as of the last
-   * published score (VC-51), so it can lag one rating behind.
+   * published score (VC-51), so it can lag up to two ratings behind (VC-64).
    */
   raters: number;
   /**

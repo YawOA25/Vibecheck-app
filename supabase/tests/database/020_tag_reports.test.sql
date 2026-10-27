@@ -50,12 +50,13 @@ insert into public.heads_up_votes (user_id, event_id, tag, created_at) values
   ('20202020-9999-4999-8999-000000000002', '20202020-0000-4000-8000-0000000000e1', 'overpriced', now()),
   ('20202020-9999-4999-8999-000000000001', '20202020-0000-4000-8000-0000000000e1', 'packed', now());
 
--- An old open report at e2 (guest 2, 50 hours ago): overdue.
+-- An old open report at e2 (guest 2, 50 hours ago): overdue. Made before
+-- VC-65, so it has no reason.
 insert into private.tag_reports (event_id, tag, reporter_id, created_at) values
   ('20202020-0000-4000-8000-0000000000e2', 'sound_bad', '20202020-9999-4999-8999-000000000002', now() - interval '50 hours');
 
 -- ---- 1. Locked down (7) -----------------------------------------------------
-select ok(not has_function_privilege('anon', 'public.report_heads_up_tag(uuid, text)', 'execute')
+select ok(not has_function_privilege('anon', 'public.report_heads_up_tag(uuid, text, text)', 'execute')
           and not has_function_privilege('anon', 'public.admin_get_tag_reports()', 'execute')
           and not has_function_privilege('anon', 'public.admin_get_event_tags(uuid)', 'execute')
           and not has_function_privilege('anon', 'public.admin_set_tag_hidden(uuid, text, boolean, text, text)', 'execute')
@@ -63,7 +64,7 @@ select ok(not has_function_privilege('anon', 'public.report_heads_up_tag(uuid, t
   'anon can''t call any of the report functions');
 select ok((select bool_and(prosecdef and proconfig @> array['search_path=""'])
            from pg_proc where oid in (
-             'public.report_heads_up_tag(uuid, text)'::regprocedure,
+             'public.report_heads_up_tag(uuid, text, text)'::regprocedure,
              'public.admin_get_tag_reports()'::regprocedure,
              'public.admin_get_event_tags(uuid)'::regprocedure,
              'public.admin_set_tag_hidden(uuid, text, boolean, text, text)'::regprocedure,
@@ -93,17 +94,17 @@ select throws_ok($$ select public.admin_get_event_tags('20202020-0000-4000-8000-
 
 -- ---- 2. Reporting (8) -------------------------------------------------------
 -- Guest 3 never checked in anywhere: reporting still works (hosts, venues).
-select is(public.report_heads_up_tag('20202020-0000-4000-8000-0000000000e1', 'overpriced'),
+select is(public.report_heads_up_tag('20202020-0000-4000-8000-0000000000e1', 'overpriced', 'not_true'),
   '{"status": "reported"}'::jsonb, 'any adult can report a tag, checked in or not');
-select is(public.report_heads_up_tag('20202020-0000-4000-8000-0000000000e1', 'overpriced'),
+select is(public.report_heads_up_tag('20202020-0000-4000-8000-0000000000e1', 'overpriced', 'not_true'),
   '{"status": "already"}'::jsonb, 'the same tag again: already');
-select throws_ok($$ select public.report_heads_up_tag('20202020-0000-4000-8000-0000000000e1', 'liar') $$,
+select throws_ok($$ select public.report_heads_up_tag('20202020-0000-4000-8000-0000000000e1', 'liar', 'not_true') $$,
   'VCTAG', null, 'an unknown tag is refused');
-select throws_ok($$ select public.report_heads_up_tag('20202020-0000-4000-8000-0000000000ef', 'packed') $$,
+select throws_ok($$ select public.report_heads_up_tag('20202020-0000-4000-8000-0000000000ef', 'packed', 'not_true') $$,
   'VCNFD', null, 'a test event doesn''t exist for a non-tester');
 -- Nine more reports (events e1..e9, different tags) reach 10 in 24 hours.
-select public.report_heads_up_tag('20202020-0000-4000-8000-0000000000e1', 'packed');
-select public.report_heads_up_tag(('20202020-0000-4000-8000-0000000000e' || n)::uuid, 'packed')
+select public.report_heads_up_tag('20202020-0000-4000-8000-0000000000e1', 'packed', 'not_true');
+select public.report_heads_up_tag(('20202020-0000-4000-8000-0000000000e' || n)::uuid, 'packed', 'not_true')
 from generate_series(2, 9) n;
 reset role;
 select is((select count(*)::int from private.tag_reports
@@ -112,7 +113,7 @@ select is((select count(*)::int from private.tag_reports
 set local role authenticated;
 select set_config('request.jwt.claims',
   '{"sub":"20202020-9999-4999-8999-000000000003","role":"authenticated"}', true);
-select is(public.report_heads_up_tag('20202020-0000-4000-8000-0000000000e2', 'lines_long'),
+select is(public.report_heads_up_tag('20202020-0000-4000-8000-0000000000e2', 'lines_long', 'not_true'),
   '{"status": "too_many"}'::jsonb, 'the 11th within 24 hours: too_many');
 reset role;
 select is((select count(*)::int from private.tag_reports
@@ -121,7 +122,7 @@ select is((select count(*)::int from private.tag_reports
 set local role authenticated;
 select set_config('request.jwt.claims',
   '{"sub":"20202020-9999-4999-8999-000000000001","role":"authenticated"}', true);
-select is(public.report_heads_up_tag('20202020-0000-4000-8000-0000000000e1', 'overpriced'),
+select is(public.report_heads_up_tag('20202020-0000-4000-8000-0000000000e1', 'overpriced', 'spam'),
   '{"status": "reported"}'::jsonb, 'a second person reports the same tag');
 
 -- ---- 3. The queue (4) -------------------------------------------------------
@@ -129,14 +130,14 @@ select set_config('request.jwt.claims',
   '{"sub":"20202020-9999-4999-8999-0000000000a1","role":"authenticated"}', true);
 select is((public.admin_get_tag_reports() -> 0) - 'event_starts_at' - 'first_reported_at',
   jsonb_build_object('event_id', '20202020-0000-4000-8000-0000000000e2', 'event_title', 'Report 2',
-    'tag', 'sound_bad', 'reports', 1, 'hours_waiting', 50, 'overdue', true, 'votes', 0, 'hidden', false),
-  'oldest first: the 50-hour-old report is marked overdue');
+    'tag', 'sound_bad', 'reports', 1, 'reasons', jsonb_build_object('not_given', 1), 'hours_waiting', 50, 'overdue', true, 'votes', 0, 'hidden', false),
+  'oldest first: the 50-hour-old report is marked overdue (made before reasons: "not_given")');
 select is((select q - 'event_starts_at' - 'first_reported_at'
            from jsonb_array_elements(public.admin_get_tag_reports()) q
            where q ->> 'event_id' = '20202020-0000-4000-8000-0000000000e1' and q ->> 'tag' = 'overpriced'),
   jsonb_build_object('event_id', '20202020-0000-4000-8000-0000000000e1', 'event_title', 'Report 1',
-    'tag', 'overpriced', 'reports', 2, 'hours_waiting', 0, 'overdue', false, 'votes', 2, 'hidden', false),
-  'two reports about one tag are one queue row, with its 2 votes; fresh, not overdue');
+    'tag', 'overpriced', 'reports', 2, 'reasons', jsonb_build_object('not_true', 1, 'spam', 1), 'hours_waiting', 0, 'overdue', false, 'votes', 2, 'hidden', false),
+  'two reports about one tag are one queue row, with its reasons counted (VC-65) and its 2 votes; fresh, not overdue');
 select ok(public.admin_get_tag_reports()::text !~ '20202020-9999-4999-8999-00000000000[123]'
           and public.admin_get_event_moderation('20202020-0000-4000-8000-0000000000e1')::text
               !~ '20202020-9999-4999-8999-000000000003',

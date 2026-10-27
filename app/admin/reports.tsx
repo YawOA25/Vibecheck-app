@@ -3,6 +3,7 @@
  *
  * What it shows: every open "Report this tag", grouped per event and tag,
  * oldest first. Each row says the event, the tag, how many reports and +1s,
+ * how many reports gave each reason ("Not true 2 · Spam or fake 1", VC-65),
  * and how long it has waited against the 48-hour review promise ("Overdue"
  * at 48 hours, in the error colour). Tapping a row opens that event's
  * Moderate screen (app/admin/moderate/[id].tsx), where the admin hides or
@@ -30,7 +31,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { BackButton } from '@/components/BackButton';
 import { FormMessage } from '@/components/FormMessage';
 import { Tag } from '@/components/Tag';
-import { waitingText } from '@/lib/moderation';
+import { reasonCountsText, waitingText } from '@/lib/moderation';
 import { getTagReports } from '@/lib/moderation-api';
 import type { TagReportGroup } from '@/lib/moderation-api';
 import { headsUpLabel } from '@/lib/rating';
@@ -130,11 +131,15 @@ export default function ReportsScreen() {
                 group.votes
               } ${group.votes === 1 ? '+1' : '+1s'}`;
               const waiting = waitingText(group.hoursWaiting);
+              // VC-65: counts per reason, e.g. "Not true 2 · Spam or fake 1".
+              const reasons = reasonCountsText(group.reasons);
               return (
                 <Pressable
                   key={`${group.eventId}-${group.tag}`}
                   accessibilityRole="button"
-                  accessibilityLabel={`${tag} at ${group.eventTitle}, ${counts}, ${waiting}`}
+                  accessibilityLabel={`${tag} at ${group.eventTitle}, ${counts}${
+                    reasons ? `, ${reasons}` : ''
+                  }, ${waiting}`}
                   onPress={() =>
                     router.push({
                       pathname: '/admin/moderate/[id]',
@@ -149,6 +154,7 @@ export default function ReportsScreen() {
                   </View>
                   <Text style={styles.body}>{group.eventTitle}</Text>
                   <Text style={styles.muted}>{counts}</Text>
+                  {reasons ? <Text style={styles.body}>{reasons}</Text> : null}
                   <Text style={group.overdue ? styles.overdue : styles.muted}>{waiting}</Text>
                 </Pressable>
               );

@@ -77,6 +77,7 @@ describe('Reports queue (VC-58)', () => {
           eventStartsAt: '',
           tag: 'sound_bad',
           reports: 1,
+          reasons: { not_given: 1 },
           hoursWaiting: 50,
           overdue: true,
           votes: 0,
@@ -88,6 +89,7 @@ describe('Reports queue (VC-58)', () => {
           eventStartsAt: '',
           tag: 'overpriced',
           reports: 2,
+          reasons: { spam: 1, not_true: 1 },
           hoursWaiting: 3,
           overdue: false,
           votes: 4,
@@ -100,6 +102,9 @@ describe('Reports queue (VC-58)', () => {
     expect(screen.getByText('Waiting 3 h, 45 h left')).toBeOnTheScreen();
     expect(screen.getByText('2 reports · 4 +1s')).toBeOnTheScreen();
     expect(screen.getByText('Hidden')).toBeOnTheScreen();
+    // VC-65: the reason counts, in the guest's list order.
+    expect(screen.getByText('Not true 1 · Spam or fake 1')).toBeOnTheScreen();
+    expect(screen.getByText('No reason 1')).toBeOnTheScreen();
     // No reporter is ever shown: the row only has counts.
     await fireEvent.press(screen.getByRole('button', { name: /Overpriced at Rooftop/ }));
     expect(mockPush).toHaveBeenCalledWith({

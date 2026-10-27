@@ -25,6 +25,12 @@
  *     vibe refresh all follow it; each filter has its own empty state with
  *     a "Show this week" button. The filter isn't saved anywhere: it is
  *     back to "This week" when the app restarts;
+ *   - paging (VC-66): the list loads 100 events at a time. When there are
+ *     more, scrolling near the end loads the next 100, and a "Load more
+ *     events" button under the last card does the same (it also says when
+ *     loading more failed). Pages always use the date window of the first
+ *     page, and an answer for an older filter or an older refresh is
+ *     ignored. Pull to refresh starts again from the first page;
  *   - pull down to refresh;
  *   - a loading state, an error state with "Try again", and an empty state.
  *
@@ -78,18 +84,22 @@ export const EMPTY_BODY = WEEK_EMPTY.body;
 export const LIST_TITLE = FILTER_LABELS.week;
 /** The empty state's way back to the default filter (VC-63). */
 export const SHOW_WEEK_LABEL = 'Show this week';
+/** The button under the last card when more events follow (VC-66). */
+export const LOAD_MORE_LABEL = 'Load more events';
 
 /**
  * What the list is showing right now:
  *   loading - first load, nothing to show yet (spinner);
  *   error   - the first load failed (message plus "Try again");
  *   ready   - events loaded (maybe zero: then the empty state shows).
- *             `loadedAt` is the moment used for the night sections.
+ *             `loadedAt` is the moment used for the night sections and
+ *             for the date window of every later page. `hasMore` is true
+ *             when more events follow the ones loaded (VC-66).
  */
 type ListState =
   | { kind: 'loading' }
   | { kind: 'error'; message: string }
-  | { kind: 'ready'; events: PublicEvent[]; loadedAt: Date };
+  | { kind: 'ready'; events: PublicEvent[]; loadedAt: Date; hasMore: boolean };
 
 /**
  * Renders the home screen (the week's events).
@@ -113,6 +123,12 @@ export default function HomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
   // A message when a refresh fails but we still have the older list to show.
   const [refreshError, setRefreshError] = useState<string | null>(null);
+  // VC-66: true while the next page is loading (a ref too, so a scroll and
+  // a button tap at the same moment can't load the same page twice), and a
+  // message when loading more failed.
+  const [loadingMore, setLoadingMore] = useState(false);
+  const loadingMoreRef = useRef(false);
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
   // Bumped by "Try again" to run the first load again.
   const [attempt, setAttempt] = useState(0);
   // Each event's vibe by id (VC-B09). Empty until the first answer; a failed
@@ -191,9 +207,15 @@ export default function HomeScreen() {
       if (!active || seq !== loadSeq.current) return;
       setState(
         outcome.ok
-          ? { kind: 'ready', events: outcome.events, loadedAt: now }
+          ? {
+              kind: 'ready',
+              events: outcome.events,
+              loadedAt: now,
+              hasMore: outcome.hasMore === true,
+            }
           : { kind: 'error', message: outcome.message },
       );
+      setLoadMoreError(null);
     });
     return () => {
       active = false;
@@ -233,8 +255,14 @@ export default function HomeScreen() {
       return;
     }
     if (outcome.ok) {
-      setState({ kind: 'ready', events: outcome.events, loadedAt: now });
+      setState({
+        kind: 'ready',
+        events: outcome.events,
+        loadedAt: now,
+        hasMore: outcome.hasMore === true,
+      });
       setRefreshError(null);
+      setLoadMoreError(null);
       // Fresh scores too, even if the same events came back.
       setVibeTick((n) => n + 1);
     } else {
@@ -242,6 +270,55 @@ export default function HomeScreen() {
     }
     setRefreshing(false);
   }, [filter]);
+
+  /**
+   * Loads the next page of events (VC-66), after the last one shown, with
+   * the same date window as the first page. Runs from scrolling near the
+   * end and from the "Load more events" button.
+   *
+   * Stale answers: it remembers the load number it started under. If the
+   * filter changed, "Try again" ran or a pull to refresh started meanwhile,
+   * that number moved on and this answer is dropped, so a page for an old
+   * list is never glued onto a new one. A second guard sits where the page
+   * is added (cto review): the list on screen must still be the one the page
+   * was asked for, i.e. the same load moment and the same last card. That
+   * catches a refresh that started BEFORE this request and landed after it.
+   */
+  const loadMore = useCallback(async () => {
+    if (state.kind !== 'ready' || !state.hasMore || state.events.length === 0) return;
+    if (loadingMoreRef.current) return;
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+    setLoadMoreError(null);
+    const seq = loadSeq.current;
+    const last = state.events[state.events.length - 1];
+    // The list this page belongs to: its load moment (and, below, its last card).
+    const askedLoadedAt = state.loadedAt;
+    const outcome = await listHomeEvents(askedLoadedAt, filter, last);
+    loadingMoreRef.current = false;
+    setLoadingMore(false);
+    if (seq !== loadSeq.current) return;
+    if (!outcome.ok) {
+      setLoadMoreError(outcome.message);
+      return;
+    }
+    setState((current) => {
+      if (current.kind !== 'ready') return current;
+      // The list was replaced meanwhile (a refresh landed, or another page
+      // was added): this page doesn't follow it, so drop it.
+      const currentLast = current.events[current.events.length - 1];
+      if (current.loadedAt !== askedLoadedAt || currentLast?.id !== last.id) return current;
+      // Skip any event already in the list (it can't normally happen, but a
+      // duplicate card would break the list's keys).
+      const seen = new Set(current.events.map((e) => e.id));
+      const added = outcome.events.filter((e) => !seen.has(e.id));
+      return {
+        ...current,
+        events: [...current.events, ...added],
+        hasMore: outcome.hasMore === true,
+      };
+    });
+  }, [state, filter]);
 
   /** Opens an event's page, e.g. /event/1234. */
   const openEvent = useCallback(
@@ -319,6 +396,24 @@ export default function HomeScreen() {
             refreshError ? (
               <View style={styles.refreshError}>
                 <FormMessage message={refreshError} />
+              </View>
+            ) : undefined
+          }
+          // VC-66: near the end of the list, load the next page (if any).
+          onEndReached={state.hasMore ? () => void loadMore() : undefined}
+          onEndReachedThreshold={0.5}
+          ListFooterComponent={
+            state.hasMore ? (
+              <View style={styles.loadMore}>
+                {loadMoreError ? <FormMessage message={loadMoreError} /> : null}
+                <Button
+                  label={LOAD_MORE_LABEL}
+                  variant="outline"
+                  size="small"
+                  busy={loadingMore}
+                  busyLabel="Loading..."
+                  onPress={() => void loadMore()}
+                />
               </View>
             ) : undefined
           }
@@ -485,6 +580,8 @@ const styles = StyleSheet.create({
   },
   gap: { height: 14 },
   refreshError: { paddingTop: spacing.sm },
+  // The "Load more events" button (and any error) under the last card.
+  loadMore: { paddingTop: spacing.md, gap: spacing.sm, alignItems: 'flex-start' },
   centre: {
     flex: 1,
     justifyContent: 'center',

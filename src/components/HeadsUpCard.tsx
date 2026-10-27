@@ -15,8 +15,10 @@
  *     own +1 older than that can be added again.
  *
  *   - "Report this tag" (proposal VC-58): anyone who isn't an admin
- *     (checked in or not, so hosts too) can pick one of the shown tags and
- *     report it. Reports go to the admin queue (app/admin/reports.tsx) and
+ *     (checked in or not, so hosts too) can pick one of the shown tags,
+ *     then a short reason ("Not true", "Spam or fake", "Targets a person",
+ *     "Offensive" or "Other", VC-65), and report it. Tapping the reason
+ *     sends the report. Reports go to the admin queue (app/admin/reports.tsx) and
  *     are reviewed within 48 hours. The server limits how many reports one
  *     person can send. Nobody else ever sees who reported. Once the founder
  *     sets VENUE_CONTACT_EMAIL (src/lib/contact.ts), venues and hosts also
@@ -32,6 +34,8 @@ import { ChoiceChip } from '@/components/ChoiceChip';
 import { Button } from '@/components/Button';
 import { FormMessage } from '@/components/FormMessage';
 import { VENUE_CONTACT_EMAIL } from '@/lib/contact';
+import { REPORT_REASONS } from '@/lib/moderation';
+import type { ReportReason } from '@/lib/moderation';
 import { reportHeadsUpTag } from '@/lib/moderation-api';
 import type { ReportStatus } from '@/lib/moderation-api';
 import { headsUpLabel } from '@/lib/rating';
@@ -50,6 +54,16 @@ export const REPORT_LINK = 'Report this tag';
 export const REPORT_PICK =
   'Which tag is wrong? Our team reviews reports within 48 hours. Nobody else sees who reported.';
 export const REPORT_CANCEL = 'Never mind';
+
+/**
+ * The question above the reasons, once a tag is picked (VC-65).
+ *
+ * @param label - the picked tag's words, e.g. "Overpriced".
+ * @returns e.g. 'Why report "Overpriced"? Tap a reason to send.'
+ */
+export function reportWhy(label: string): string {
+  return `Why report "${label}"? Tap a reason to send.`;
+}
 
 /** What the guest sees after reporting, per server answer (VC-58). */
 export const REPORT_MESSAGES: Record<ReportStatus, string> = {
@@ -106,10 +120,12 @@ export function HeadsUpCard({
   const [sending, setSending] = useState<HeadsUpTag | null>(null);
   // A sentence after a refused or failed +1.
   const [message, setMessage] = useState<string | null>(null);
-  // VC-58: whether the "which tag?" list is open, the tag being reported,
-  // and the answer to show after a report (error tone when it failed).
+  // VC-58: whether the "which tag?" list is open, the tag picked to report
+  // (then the reasons show, VC-65), the reason being sent right now, and
+  // the answer to show after a report (error tone when it failed).
   const [reportOpen, setReportOpen] = useState(false);
-  const [reporting, setReporting] = useState<HeadsUpTag | null>(null);
+  const [reportTag, setReportTag] = useState<HeadsUpTag | null>(null);
+  const [reporting, setReporting] = useState<ReportReason | null>(null);
   const [reportMessage, setReportMessage] = useState<{ text: string; ok: boolean } | null>(null);
 
   // Load the counts. State is only set when the answer arrives, and a late
@@ -148,18 +164,21 @@ export function HeadsUpCard({
   );
 
   /**
-   * Reports one tag (VC-58), then closes the list and says what happened.
+   * Reports one tag with a reason (VC-58, VC-65), then closes the list and
+   * says what happened. On a failure the reasons stay open to try again.
    *
    * @param tag - the tag the guest says is wrong.
+   * @param reason - the reason they tapped.
    */
   const report = useCallback(
-    async (tag: HeadsUpTag) => {
-      setReporting(tag);
+    async (tag: HeadsUpTag, reason: ReportReason) => {
+      setReporting(reason);
       setReportMessage(null);
-      const outcome = await reportHeadsUpTag(eventId, tag);
+      const outcome = await reportHeadsUpTag(eventId, tag, reason);
       setReporting(null);
       if (outcome.ok) {
         setReportOpen(false);
+        setReportTag(null);
         setReportMessage({
           text: REPORT_MESSAGES[outcome.status],
           ok: outcome.status !== 'too_many',
@@ -230,6 +249,7 @@ export function HeadsUpCard({
             size="small"
             onPress={() => {
               setReportMessage(null);
+              setReportTag(null);
               setReportOpen(true);
             }}
           />
@@ -237,30 +257,51 @@ export function HeadsUpCard({
       ) : null}
       {canVote && reportOpen ? (
         <View style={styles.reportBox}>
-          <Text style={styles.caption}>{REPORT_PICK}</Text>
-          <View style={styles.chips}>
-            {shownTags.map((item) => {
-              const label = headsUpLabel(item.tag) ?? item.tag;
-              return (
-                <Button
-                  key={item.tag}
-                  label={label}
-                  variant="outline"
-                  size="small"
-                  busy={reporting === item.tag}
-                  busyLabel="Sending..."
-                  disabled={reporting !== null}
-                  onPress={() => void report(item.tag)}
-                />
-              );
-            })}
-          </View>
+          {reportTag === null ? (
+            <>
+              {/* Step 1: which tag. Picking one shows the reasons. */}
+              <Text style={styles.caption}>{REPORT_PICK}</Text>
+              <View style={styles.chips}>
+                {shownTags.map((item) => (
+                  <Button
+                    key={item.tag}
+                    label={headsUpLabel(item.tag) ?? item.tag}
+                    variant="outline"
+                    size="small"
+                    onPress={() => setReportTag(item.tag)}
+                  />
+                ))}
+              </View>
+            </>
+          ) : (
+            <>
+              {/* Step 2 (VC-65): why. Tapping a reason sends the report. */}
+              <Text style={styles.caption}>{reportWhy(headsUpLabel(reportTag) ?? reportTag)}</Text>
+              <View style={styles.chips}>
+                {REPORT_REASONS.map((reason) => (
+                  <Button
+                    key={reason.key}
+                    label={reason.label}
+                    variant="outline"
+                    size="small"
+                    busy={reporting === reason.key}
+                    busyLabel="Sending..."
+                    disabled={reporting !== null}
+                    onPress={() => void report(reportTag, reason.key)}
+                  />
+                ))}
+              </View>
+            </>
+          )}
           <Button
             label={REPORT_CANCEL}
             variant="text"
             size="small"
             disabled={reporting !== null}
-            onPress={() => setReportOpen(false)}
+            onPress={() => {
+              setReportOpen(false);
+              setReportTag(null);
+            }}
           />
         </View>
       ) : null}

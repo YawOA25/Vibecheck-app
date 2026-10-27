@@ -53,17 +53,39 @@ export async function getEventVibe(eventId: string): Promise<VibeOutcome> {
 /**
  * Reads the vibes of several events at once (the Tonight list).
  *
- * @param eventIds - the events' ids. Only the first 100 are sent (the list
- *   never shows more).
+ * @param eventIds - the events' ids (the list only sends the started ones).
+ *   The server takes at most 100 per call, so a longer list (possible with
+ *   paging, VC-66) is split into calls of 100, sent together.
  * @returns each event's vibe by id (events the server left out, or whose
- *   answer didn't make sense, are simply missing), or a message. Never throws.
+ *   answer didn't make sense, are simply missing), or a message if any of
+ *   the calls failed. Never throws.
  */
 export async function getEventsVibe(eventIds: string[]): Promise<VibesOutcome> {
   if (eventIds.length === 0) return { ok: true, vibes: {} };
+  const chunks: string[][] = [];
+  for (let i = 0; i < eventIds.length; i += MAX_EVENTS_PER_CALL) {
+    chunks.push(eventIds.slice(i, i + MAX_EVENTS_PER_CALL));
+  }
+  const answers = await Promise.all(chunks.map(getVibeChunk));
+  const vibes: Record<string, Vibe> = {};
+  for (const answer of answers) {
+    // One failed call fails the whole answer, so the list keeps its last
+    // good scores instead of showing some cards without theirs.
+    if (!answer.ok) return answer;
+    Object.assign(vibes, answer.vibes);
+  }
+  return { ok: true, vibes };
+}
+
+/**
+ * One get_events_vibe call for up to 100 ids.
+ *
+ * @param ids - at most {@link MAX_EVENTS_PER_CALL} event ids.
+ * @returns their vibes by id, or a message. Never throws.
+ */
+async function getVibeChunk(ids: string[]): Promise<VibesOutcome> {
   try {
-    const { data, error } = await supabase.rpc('get_events_vibe', {
-      p_event_ids: eventIds.slice(0, MAX_EVENTS_PER_CALL),
-    });
+    const { data, error } = await supabase.rpc('get_events_vibe', { p_event_ids: ids });
     if (error) return { ok: false, message: describeVibeError(error) };
     const vibes: Record<string, Vibe> = {};
     if (Array.isArray(data)) {
@@ -76,6 +98,7 @@ export async function getEventsVibe(eventIds: string[]): Promise<VibesOutcome> {
     }
     return { ok: true, vibes };
   } catch (thrown) {
+    // supabase-js normally returns errors, but a dropped connection can throw.
     return { ok: false, message: describeVibeError(thrown as ErrorLike) };
   }
 }
