@@ -258,9 +258,21 @@ export default function JoinScreen() {
           <Text style={styles.body} accessibilityLiveRegion="polite">
             {phase.screen.body}
           </Text>
-          {/* Every join result offers a single way back. */}
-          {phase.screen.actions.map((button) => (
-            <Button key={button.action} label={button.label} onPress={goBack} />
+          {/* "Rate the night" (after a successful check-in, VC-B08) replaces
+              this screen with the rating screen; every other button goes
+              back. The first button is the main (gold) one, the rest are
+              quiet text links. */}
+          {phase.screen.actions.map((button, index) => (
+            <Button
+              key={button.action}
+              label={button.label}
+              variant={index === 0 ? 'primary' : 'text'}
+              onPress={() =>
+                button.action === 'rate'
+                  ? router.replace({ pathname: '/rate/[id]', params: { id: phase.event.id } })
+                  : goBack()
+              }
+            />
           ))}
         </ScrollView>
       ) : null}

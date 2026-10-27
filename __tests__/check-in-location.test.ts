@@ -17,7 +17,11 @@
 import * as Location from 'expo-location';
 import type { LocationPermissionResponse } from 'expo-location';
 
-import { classifyPermission, readLocationForCheckIn } from '@/lib/check-in-location';
+import {
+  classifyPermission,
+  readLocationForCheckIn,
+  readLocationQuietly,
+} from '@/lib/check-in-location';
 
 jest.mock('expo-location', () => ({
   getForegroundPermissionsAsync: jest.fn(),
@@ -176,5 +180,42 @@ describe('readLocationForCheckIn', () => {
     getPerm.mockResolvedValue(perm('granted'));
     getPosition.mockRejectedValue(new Error('Location request failed'));
     await expect(readLocationForCheckIn()).resolves.toEqual({ kind: 'noFix' });
+  });
+});
+
+describe('readLocationQuietly (the re-check before a rating, VC-B08)', () => {
+  it('returns one reading when precise location is already allowed', async () => {
+    getPerm.mockResolvedValue(perm('granted'));
+    await expect(readLocationQuietly()).resolves.toEqual({
+      lat: 38.91234,
+      lng: -77.04321,
+      accuracyM: 18,
+    });
+    // Quiet: it never shows the phone's permission question.
+    expect(askPerm).not.toHaveBeenCalled();
+  });
+
+  it('never asks for permission: not allowed yet means no reading', async () => {
+    getPerm.mockResolvedValue(perm('undetermined'));
+    await expect(readLocationQuietly()).resolves.toBeNull();
+    getPerm.mockResolvedValue(perm('denied'));
+    await expect(readLocationQuietly()).resolves.toBeNull();
+    expect(askPerm).not.toHaveBeenCalled();
+    expect(getPosition).not.toHaveBeenCalled();
+  });
+
+  it('approximate-only, location off, no fix in time or an error all give no reading', async () => {
+    getPerm.mockResolvedValue(perm('granted', { android: { accuracy: 'coarse' } }));
+    await expect(readLocationQuietly()).resolves.toBeNull();
+
+    getPerm.mockResolvedValue(perm('granted'));
+    servicesOn.mockResolvedValueOnce(false);
+    await expect(readLocationQuietly()).resolves.toBeNull();
+
+    getPosition.mockReturnValueOnce(new Promise(() => {}));
+    await expect(readLocationQuietly(10)).resolves.toBeNull();
+
+    getPosition.mockRejectedValueOnce(new Error('Location request failed'));
+    await expect(readLocationQuietly()).resolves.toBeNull();
   });
 });

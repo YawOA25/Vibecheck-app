@@ -12,8 +12,13 @@
  *   - our own short summary, if there is one;
  *   - the "Live vibe" card, in its "Early reading" state until scores exist
  *     (task VC-B09);
+ *   - the "Heads-up" card (VC-43, with VC-B08): quick tags from guests
+ *     who are there, with counts and a "+1" (src/components/HeadsUpCard.tsx);
  *   - the "I'm here" button, which opens GPS check-in
  *     (app/check-in/[id].tsx, task VC-B06);
+ *   - once the guest is checked in here, "Rate the night" above it, which
+ *     opens the rating screen (app/rate/[id].tsx, task VC-B08). Admins
+ *     never see it (staff can't rate, VC-05);
  *   - for staff picks with a ticket link: a plain "Get tickets" text link
  *     and "Not affiliated with Eventbrite." (VC-29 and the legal check);
  *   - for host events with a "How to get in" link (VC-40): a plain "How to
@@ -44,6 +49,7 @@ import { BackButton } from '@/components/BackButton';
 import { Button } from '@/components/Button';
 import { EntryLink } from '@/components/EntryLink';
 import { FormMessage } from '@/components/FormMessage';
+import { HeadsUpCard } from '@/components/HeadsUpCard';
 import { LiveVibeCard } from '@/components/LiveVibeCard';
 import { PartyCodeCard } from '@/components/PartyCodeCard';
 import { Tag } from '@/components/Tag';
@@ -51,6 +57,7 @@ import { TicketLink } from '@/components/TicketLink';
 import { useAuth } from '@/lib/auth-context';
 import { getEventCode } from '@/lib/events-api';
 import { getEvent } from '@/lib/events-read';
+import { getMyRatingStatus } from '@/lib/ratings-api';
 import { buildShareMessage } from '@/lib/share';
 import { isStaffPick, timeRange } from '@/lib/tonight';
 import type { PublicEvent } from '@/lib/tonight';
@@ -63,6 +70,7 @@ export const EDIT_EVENT = 'Edit event';
 export const SHOW_CODE = 'Show party code';
 export const HIDE_CODE = 'Hide party code';
 export const SHARE_LABEL = 'Share';
+export const RATE_LABEL = 'Rate the night';
 
 /** What the page is showing: loading, a load error, not found, or the event. */
 type PageState =
@@ -88,6 +96,11 @@ export default function EventScreen() {
   const id = Array.isArray(params.id) ? params.id[0] : params.id;
 
   const [state, setState] = useState<PageState>({ kind: 'loading' });
+  // Whether the guest has a check-in here (VC-B08), which shows "Rate the
+  // night". Re-read each time the page comes into view (e.g. after
+  // checking in). If the read fails, the button just stays hidden; the
+  // rating screen itself would explain anything anyway.
+  const [checkedIn, setCheckedIn] = useState(false);
   // Bumped by "Try again" to load once more.
   const [attempt, setAttempt] = useState(0);
 
@@ -112,6 +125,12 @@ export default function EventScreen() {
           return { kind: 'ready', event: outcome.event, loadedAt: now };
         });
       });
+      // The guest's own check-in, read alongside the event.
+      if (id) {
+        getMyRatingStatus(id).then((mine) => {
+          if (active) setCheckedIn(mine.ok && mine.status.checkIn !== null);
+        });
+      }
       return () => {
         active = false;
       };
@@ -168,6 +187,19 @@ export default function EventScreen() {
           onImHere={() =>
             router.push({ pathname: '/check-in/[id]', params: { id: state.event.id } })
           }
+          onRate={
+            checkedIn && !isAdmin
+              ? () => router.push({ pathname: '/rate/[id]', params: { id: state.event.id } })
+              : null
+          }
+          headsUp={
+            <HeadsUpCard
+              eventId={state.event.id}
+              // A new load time (each time the page comes into view) reloads the counts.
+              refreshKey={state.loadedAt.getTime()}
+              canVote={!isAdmin}
+            />
+          }
           admin={
             isAdmin ? (
               <AdminTools
@@ -196,6 +228,9 @@ export default function EventScreen() {
  * @param props.event - the event's public facts.
  * @param props.now - the moment used for "Today" / "On now".
  * @param props.onImHere - what "I'm here" does (opens check-in).
+ * @param props.onRate - what "Rate the night" does, or null to hide it
+ *   (not checked in here, or an admin).
+ * @param props.headsUp - the Heads-up card.
  * @param props.admin - the Admin box, or null for everyone but admins.
  * @returns a scrolling view with the details and the buttons at the bottom.
  */
@@ -203,11 +238,15 @@ function EventDetails({
   event,
   now,
   onImHere,
+  onRate,
+  headsUp,
   admin,
 }: {
   event: PublicEvent;
   now: Date;
   onImHere: () => void;
+  onRate: (() => void) | null;
+  headsUp: ReactNode;
   admin: ReactNode;
 }) {
   const staffPick = isStaffPick(event);
@@ -255,13 +294,18 @@ function EventDetails({
 
         <LiveVibeCard />
 
+        {headsUp}
+
         {admin}
       </ScrollView>
 
       {/* Bottom bar: the main action, plus the ticket link for staff picks
           or the "How to get in" link for host events. */}
       <View style={styles.bottomBar}>
-        <Button label="I'm here" onPress={onImHere} />
+        {/* Checked in: rating is the main action, and "I'm here" stays as an
+            outline button for checking in again later. */}
+        {onRate ? <Button label={RATE_LABEL} onPress={onRate} /> : null}
+        <Button label="I'm here" variant={onRate ? 'outline' : 'primary'} onPress={onImHere} />
         {ticketUrl ? <TicketLink url={ticketUrl} /> : null}
         {entryUrl ? <EntryLink url={entryUrl} /> : null}
       </View>

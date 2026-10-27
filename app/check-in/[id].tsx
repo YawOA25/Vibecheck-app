@@ -24,7 +24,9 @@
  * under the main button, and "Enter the party code" on the weak-signal and
  * permission screens, open the code screen (app/join/[id].tsx).
  *
- * Not here on purpose: "Rate the night" (task VC-B08).
+ * After a successful check-in, "Rate the night" opens the rating screen
+ * (app/rate/[id].tsx, task VC-B08) in place of this one, so Back from the
+ * rating returns to the event page.
  */
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
@@ -148,6 +150,9 @@ export default function CheckInScreen() {
           break;
         case 'code':
           router.push({ pathname: '/join/[id]', params: { id: event.id } });
+          break;
+        case 'rate':
+          router.replace({ pathname: '/rate/[id]', params: { id: event.id } });
           break;
         case 'back':
           goBack();

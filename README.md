@@ -163,6 +163,20 @@ To remove admin rights later, run the same query with `set role = 'user'`.
 
 **Share (VC-41).** The event page has a **Share** button that opens your phone's share sheet with the event's name, area and time. It never includes the party code or the location. There's no web link yet: once there is one, put it in `SHARE_LINK` in `src/lib/share.ts`.
 
+## Rating and heads-ups (VC-B08, VC-43)
+
+**How it works.** After checking in, a guest taps **Rate the night** (on the check-in result, or on the event page) and picks one option in each of three rows: Crowd, Music, Energy. A reaction (one of six emoji) and heads-up tags such as "Lines are long" are optional. The screen is `app/rate/[id].tsx`.
+
+**The rules** live on the server, in `supabase/migrations/20261027120000_ratings_and_heads_ups.sql`, so a changed app can't skip them:
+
+- only checked-in guests can rate, and the check-in must be confirmed in the last 45 minutes. For a GPS check-in, the app quietly takes one more location reading before saving (only if location is already allowed; it never asks), which refreshes that time. Party-code and tester check-ins skip that step;
+- the window is the same as check-in: from 30 minutes before the start to 1 hour after the end;
+- there's one rating per person per event. Saving again updates it, but only 60 minutes or more after the last save. A guest can still rate every event they go to in a night;
+- admins can't rate or add heads-ups (staff rule). Use a separate guest account to test rating;
+- hidden ratings (an admin can set `hidden_at` by hand for now) count nowhere, and that guest's heads-ups don't count either.
+
+**Heads-ups (VC-43).** The six tags are fixed (no free text, so nothing to moderate): Lines are long, Music is fire, Packed, Overpriced, Good crowd, Sound is bad. The event page shows a **Heads-up** card with each tag's count. A checked-in guest can tap a tag to **+1** it, once per tag, and can't take it back. Nobody can see who added a tag.
+
 ## Crash reports with Sentry (VC-26)
 
 **What it does.** When the app hits an error it didn't expect, it sends a short report to [Sentry](https://sentry.io), so we hear about bugs before anyone complains. The code is in `src/lib/sentry.ts`.
@@ -194,4 +208,4 @@ To remove admin rights later, run the same query with `set role = 'user'`.
 | `supabase/`       | Database tables and security rules (`migrations/`) and their pgTAP tests (`tests/database/`).                |
 | `scripts/`        | Helper scripts, such as `test-db.js`, which runs the database tests or explains why they were skipped.       |
 
-Screens so far: `app/(auth)/sign-in.tsx` (email code), `app/(auth)/age-gate.tsx` (name and date of birth), `app/index.tsx` (Tonight: today's and tomorrow's events, pull down to refresh), `app/event/[id].tsx` (one event's page, with "I'm here" and, for staff picks, "Get tickets"), `app/check-in/[id].tsx` (GPS check-in, task VC-B06), `app/join/[id].tsx` ("Party code coming soon" until task VC-B07) and `app/admin/new-event.tsx` (admins only). A folder or file name in square brackets, like `[id]`, is a changing part of the address (the event's id). A folder name in brackets, like `(auth)`, groups screens without adding to their address.
+Screens so far: `app/(auth)/sign-in.tsx` (email code), `app/(auth)/age-gate.tsx` (name and date of birth), `app/index.tsx` (Tonight: today's and tomorrow's events, pull down to refresh), `app/event/[id].tsx` (one event's page, with "I'm here" and, for staff picks, "Get tickets"), `app/check-in/[id].tsx` (GPS check-in, task VC-B06), `app/join/[id].tsx` (party-code check-in, task VC-B07), `app/rate/[id].tsx` (the 3-tap rating, task VC-B08) and `app/admin/new-event.tsx` (admins only). A folder or file name in square brackets, like `[id]`, is a changing part of the address (the event's id). A folder name in brackets, like `(auth)`, groups screens without adding to their address.

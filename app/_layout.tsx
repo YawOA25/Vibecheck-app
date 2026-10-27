@@ -122,6 +122,8 @@ function RootNavigator({ fontsReady }: { fontsReady: boolean }) {
         <Stack.Screen name="event/[id]" options={{ title: 'Event' }} />
         <Stack.Screen name="check-in/[id]" options={{ title: 'Check in' }} />
         <Stack.Screen name="join/[id]" options={{ title: 'Party code' }} />
+        {/* The 3-tap rating (VC-B08). */}
+        <Stack.Screen name="rate/[id]" options={{ title: 'Rate' }} />
       </Stack.Protected>
 
       {/* Admins only (VC-B04, VC-34): the New and Edit event screens. This only keeps the

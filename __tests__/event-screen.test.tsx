@@ -14,7 +14,11 @@
  *   - "I'm here" opens the check-in screen (tested in check-in-screen.test.tsx);
  *   - admins only (VC-34, VC-35): an Admin box with "Edit event" (opens the
  *     edit screen) and "Show party code" (asks the server, shows the code,
- *     and can hide it again); guests and testers never see the box.
+ *     and can hide it again); guests and testers never see the box;
+ *   - VC-B08: "Rate the night" shows only once the guest is checked in here
+ *     (never for admins) and opens the rating screen;
+ *   - VC-43: the Heads-up card shows counts, "+1" sends one and reloads,
+ *     a refused +1 says why, and admins can't +1.
  */
 import { fireEvent, render, screen } from '@testing-library/react-native';
 import { Linking, Share } from 'react-native';
@@ -23,10 +27,13 @@ import EventScreen, {
   EDIT_EVENT,
   HIDE_CODE,
   NOT_FOUND_TITLE,
+  RATE_LABEL,
   SHARE_LABEL,
   SHOW_CODE,
 } from '../app/event/[id]';
 import { ENTRY_DISCLAIMER, ENTRY_LINK_LABEL } from '@/components/EntryLink';
+import { NO_HEADS_UPS } from '@/components/HeadsUpCard';
+import { addHeadsUp, getEventHeadsUps, getMyRatingStatus } from '@/lib/ratings-api';
 import { EARLY_READING_TITLE } from '@/components/LiveVibeCard';
 import { NOT_AFFILIATED } from '@/components/TicketLink';
 import { useAuth } from '@/lib/auth-context';
@@ -37,6 +44,11 @@ import type { PublicEvent } from '@/lib/tonight';
 jest.mock('@/lib/events-read', () => ({ getEvent: jest.fn() }));
 jest.mock('@/lib/events-api', () => ({ getEventCode: jest.fn() }));
 jest.mock('@/lib/auth-context', () => ({ useAuth: jest.fn() }));
+jest.mock('@/lib/ratings-api', () => ({
+  getMyRatingStatus: jest.fn(),
+  getEventHeadsUps: jest.fn(),
+  addHeadsUp: jest.fn(),
+}));
 // The "mock" prefix lets jest.mock (which runs first) use these fakes.
 const mockPush = jest.fn();
 const mockBack = jest.fn();
@@ -58,6 +70,9 @@ jest.mock('expo-router', () => ({
 
 const get = getEvent as jest.Mock;
 const code = getEventCode as jest.Mock;
+const myStatus = getMyRatingStatus as jest.Mock;
+const headsUps = getEventHeadsUps as jest.Mock;
+const plusOne = addHeadsUp as jest.Mock;
 
 /**
  * Pretends the signed-in person has the given role.
@@ -102,6 +117,9 @@ beforeEach(() => {
   jest.clearAllMocks();
   signInAs('user');
   openURL = jest.spyOn(Linking, 'openURL').mockResolvedValue(undefined);
+  // By default: not checked in, and no heads-ups yet.
+  myStatus.mockResolvedValue({ ok: true, status: { checkIn: null, ratedAt: null } });
+  headsUps.mockResolvedValue({ ok: true, tags: [] });
 });
 
 afterEach(() => openURL.mockRestore());
@@ -345,5 +363,103 @@ describe('EventScreen admin tools (VC-34, VC-35)', () => {
       expect(JSON.stringify(spy.mock.calls)).not.toContain('K7MX2Q');
       spy.mockRestore();
     }
+  });
+});
+
+describe('EventScreen rating (VC-B08)', () => {
+  it('hides "Rate the night" until the guest is checked in', async () => {
+    get.mockResolvedValue({ ok: true, event: makeEvent() });
+    await render(<EventScreen />);
+    expect(await screen.findByRole('button', { name: "I'm here" })).toBeOnTheScreen();
+    expect(screen.queryByRole('button', { name: RATE_LABEL })).toBeNull();
+    expect(myStatus).toHaveBeenCalledWith('e1');
+  });
+
+  it('shows "Rate the night" once checked in, and it opens the rating screen', async () => {
+    myStatus.mockResolvedValue({
+      ok: true,
+      status: { checkIn: { method: 'gps', lastVerifiedAt: '2026-10-31T02:00:00Z' }, ratedAt: null },
+    });
+    get.mockResolvedValue({ ok: true, event: makeEvent() });
+    await render(<EventScreen />);
+    await fireEvent.press(await screen.findByRole('button', { name: RATE_LABEL }));
+    expect(mockPush).toHaveBeenCalledWith({ pathname: '/rate/[id]', params: { id: 'e1' } });
+    // "I'm here" stays, for checking in again later.
+    expect(screen.getByRole('button', { name: "I'm here" })).toBeOnTheScreen();
+  });
+
+  it('never shows "Rate the night" to an admin, even when checked in', async () => {
+    signInAs('admin');
+    myStatus.mockResolvedValue({
+      ok: true,
+      status: { checkIn: { method: 'gps', lastVerifiedAt: '2026-10-31T02:00:00Z' }, ratedAt: null },
+    });
+    get.mockResolvedValue({ ok: true, event: makeEvent() });
+    await render(<EventScreen />);
+    expect(await screen.findByRole('button', { name: "I'm here" })).toBeOnTheScreen();
+    expect(screen.queryByRole('button', { name: RATE_LABEL })).toBeNull();
+  });
+});
+
+describe('EventScreen heads-up card (VC-43)', () => {
+  it('says there are no heads-ups yet', async () => {
+    get.mockResolvedValue({ ok: true, event: makeEvent() });
+    await render(<EventScreen />);
+    expect(await screen.findByText(NO_HEADS_UPS)).toBeOnTheScreen();
+    expect(headsUps).toHaveBeenCalledWith('e1');
+  });
+
+  it('shows counts, and a +1 is sent and the counts reload', async () => {
+    headsUps
+      .mockResolvedValueOnce({
+        ok: true,
+        tags: [
+          { tag: 'lines_long', count: 3, mine: false },
+          { tag: 'good_crowd', count: 1, mine: true },
+        ],
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        tags: [
+          { tag: 'lines_long', count: 4, mine: true },
+          { tag: 'good_crowd', count: 1, mine: true },
+        ],
+      });
+    plusOne.mockResolvedValue({ ok: true, result: { status: 'added' } });
+    get.mockResolvedValue({ ok: true, event: makeEvent() });
+    await render(<EventScreen />);
+
+    const lines = await screen.findByRole('button', { name: 'Lines are long, 3 people' });
+    // The guest's own +1 is marked (a check mark, and "selected").
+    expect(
+      screen.getByRole('button', { name: "Good crowd, 1 person, you +1'd this" }),
+    ).toBeSelected();
+    await fireEvent.press(lines);
+    expect(plusOne).toHaveBeenCalledWith('e1', 'lines_long');
+    expect(
+      await screen.findByRole('button', { name: "Lines are long, 4 people, you +1'd this" }),
+    ).toBeOnTheScreen();
+  });
+
+  it('says why when a +1 is refused', async () => {
+    headsUps.mockResolvedValue({ ok: true, tags: [{ tag: 'packed', count: 2, mine: false }] });
+    plusOne.mockResolvedValue({ ok: true, result: { status: 'not_checked_in' } });
+    get.mockResolvedValue({ ok: true, event: makeEvent() });
+    await render(<EventScreen />);
+    await fireEvent.press(await screen.findByRole('button', { name: 'Packed, 2 people' }));
+    expect(
+      await screen.findByText('Check in first: only guests who are here can +1 a heads-up.'),
+    ).toBeOnTheScreen();
+  });
+
+  it('admins see the counts but their chips are switched off', async () => {
+    signInAs('admin');
+    headsUps.mockResolvedValue({ ok: true, tags: [{ tag: 'packed', count: 2, mine: false }] });
+    get.mockResolvedValue({ ok: true, event: makeEvent() });
+    await render(<EventScreen />);
+    const chip = await screen.findByRole('button', { name: 'Packed, 2 people' });
+    expect(chip).toBeDisabled();
+    await fireEvent.press(chip);
+    expect(plusOne).not.toHaveBeenCalled();
   });
 });

@@ -31,7 +31,7 @@ import { submitCheckIn } from '@/lib/check-in-api';
 import type { CheckInOutcome } from '@/lib/check-in-api';
 import { readLocationForCheckIn } from '@/lib/check-in-location';
 import type { ReadingOutcome } from '@/lib/check-in-location';
-import { GPS_LOCKED_BODY } from '@/lib/check-in-screens';
+import { GPS_LOCKED_BODY, RATE_THE_NIGHT } from '@/lib/check-in-screens';
 import { getEvent } from '@/lib/events-read';
 import type { PublicEvent } from '@/lib/tonight';
 
@@ -41,11 +41,12 @@ jest.mock('@/lib/check-in-api', () => ({ submitCheckIn: jest.fn() }));
 // The "mock" prefix lets jest.mock (which runs first) use these fakes.
 const mockPush = jest.fn();
 const mockBack = jest.fn();
+const mockReplace = jest.fn();
 jest.mock('expo-router', () => ({
   useRouter: () => ({
     push: mockPush,
     back: mockBack,
-    replace: jest.fn(),
+    replace: mockReplace,
     canGoBack: () => true,
   }),
   useLocalSearchParams: () => ({ id: 'e1' }),
@@ -318,5 +319,20 @@ describe('permission and phone problems (nothing is sent to the server)', () => 
     expect(await screen.findByRole('header', { name: 'Weak signal.' })).toBeOnTheScreen();
     expect(screen.getByRole('button', { name: 'Enter the party code' })).toBeOnTheScreen();
     expect(submit).not.toHaveBeenCalled();
+  });
+});
+
+describe('after check-in (VC-B08)', () => {
+  it('"Rate the night" replaces check-in with the rating screen', async () => {
+    get.mockResolvedValue({ ok: true, event: EVENT });
+    read.mockResolvedValue(READING);
+    submit.mockResolvedValue({
+      ok: true,
+      result: { status: 'passed', firstAt: '2026-10-31T02:00:00Z', alreadyCheckedIn: false },
+    });
+    await render(<CheckInScreen />);
+    await fireEvent.press(await screen.findByRole('button', { name: IM_HERE }));
+    await fireEvent.press(await screen.findByRole('button', { name: RATE_THE_NIGHT }));
+    expect(mockReplace).toHaveBeenCalledWith({ pathname: '/rate/[id]', params: { id: 'e1' } });
   });
 });

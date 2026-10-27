@@ -43,8 +43,14 @@ jest.mock('@/lib/code-check-in-api', () => ({
 }));
 // The "mock" prefix lets jest.mock (which runs first) use these fakes.
 const mockBack = jest.fn();
+const mockReplace = jest.fn();
 jest.mock('expo-router', () => ({
-  useRouter: () => ({ push: jest.fn(), back: mockBack, replace: jest.fn(), canGoBack: () => true }),
+  useRouter: () => ({
+    push: jest.fn(),
+    back: mockBack,
+    replace: mockReplace,
+    canGoBack: () => true,
+  }),
   useLocalSearchParams: () => ({ id: 'e1' }),
 }));
 
@@ -263,5 +269,16 @@ describe('the tester button', () => {
     await waitFor(() => expect(submitTester).toHaveBeenCalledWith('e1'));
     expect(submitCode).not.toHaveBeenCalled();
     expect(await screen.findByRole('header', { name: "You're in." })).toBeOnTheScreen();
+  });
+});
+
+describe('after a code check-in (VC-B08)', () => {
+  it('"Rate the night" replaces this screen with the rating screen', async () => {
+    await enterCode('K7MX2Q', {
+      ok: true,
+      result: { status: 'passed', firstAt: '2026-10-31T02:00:00Z', alreadyCheckedIn: false },
+    });
+    await fireEvent.press(await screen.findByRole('button', { name: 'Rate the night' }));
+    expect(mockReplace).toHaveBeenCalledWith({ pathname: '/rate/[id]', params: { id: 'e1' } });
   });
 });

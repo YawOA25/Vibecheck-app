@@ -123,29 +123,71 @@ export async function readLocationForCheckIn(
     if (state === 'blocked') return { kind: 'blocked' };
     if (state === 'approximate') return { kind: 'approximate' };
 
-    if (!(await Location.hasServicesEnabledAsync())) return { kind: 'servicesOff' };
-
-    // High accuracy uses GPS, the same thing the admin's pin came from.
-    const position = await withTimeout(
-      Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }),
-      timeoutMs,
-    );
-    // No position in time, or the phone didn't say how accurate it is (the
-    // server needs that to be fair): treat as no usable fix.
-    const accuracy = position?.coords.accuracy;
-    if (!position || accuracy == null || !Number.isFinite(accuracy)) return { kind: 'noFix' };
-
-    return {
-      kind: 'reading',
-      reading: {
-        lat: position.coords.latitude,
-        lng: position.coords.longitude,
-        accuracyM: accuracy,
-      },
-    };
+    return await takeReading(timeoutMs);
   } catch {
     // For example "location request failed" from the phone. Nothing about
     // the error is logged: it could include position details.
     return { kind: 'noFix' };
+  }
+}
+
+/**
+ * Takes ONE high-accuracy reading, once permission is known to be fine.
+ *
+ * @param timeoutMs - how long to wait for a position.
+ * @returns the reading, 'servicesOff' when location is switched off for the
+ *   whole phone, or 'noFix' when there's no usable position in time. May
+ *   throw (the callers catch it).
+ */
+async function takeReading(
+  timeoutMs: number,
+): Promise<Extract<ReadingOutcome, { kind: 'reading' | 'servicesOff' | 'noFix' }>> {
+  if (!(await Location.hasServicesEnabledAsync())) return { kind: 'servicesOff' };
+
+  // High accuracy uses GPS, the same thing the admin's pin came from.
+  const position = await withTimeout(
+    Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }),
+    timeoutMs,
+  );
+  // No position in time, or the phone didn't say how accurate it is (the
+  // server needs that to be fair): treat as no usable fix.
+  const accuracy = position?.coords.accuracy;
+  if (!position || accuracy == null || !Number.isFinite(accuracy)) return { kind: 'noFix' };
+
+  return {
+    kind: 'reading',
+    reading: {
+      lat: position.coords.latitude,
+      lng: position.coords.longitude,
+      accuracyM: accuracy,
+    },
+  };
+}
+
+/**
+ * The quiet re-check before a rating (task VC-B08): one reading, but ONLY
+ * if precise location is already allowed. It never shows the phone's
+ * permission question and never explains a failure to the guest.
+ *
+ * @param timeoutMs - how long to wait for a position.
+ * @returns the reading, or null when there isn't one (permission not
+ *   granted, approximate only, location off, no fix, an error). Never throws.
+ * Why quiet: the guest already proved they were here when they checked in;
+ * this just keeps "here now" true (mvp-plan.md, "Rating rules"). If it
+ * can't get a reading, the server's 45-minute rule still decides.
+ * Privacy: same as {@link readLocationForCheckIn}; the reading goes only to
+ * the server's check_in and is never stored, shown or logged.
+ */
+export async function readLocationQuietly(
+  timeoutMs: number = READING_TIMEOUT_MS,
+): Promise<LocationReading | null> {
+  try {
+    const state = classifyPermission(await Location.getForegroundPermissionsAsync());
+    if (state !== 'granted') return null;
+    const outcome = await takeReading(timeoutMs);
+    return outcome.kind === 'reading' ? outcome.reading : null;
+  } catch {
+    // Nothing about the error is logged: it could include position details.
+    return null;
   }
 }

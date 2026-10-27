@@ -28,8 +28,9 @@ export type CheckInView =
  *   settings  open the phone's Settings for VibeCheck
  *   code      the party-code fallback (task VC-B07)
  *   back      back to the event page
+ *   rate      open the rating screen (task VC-B08), after a check-in
  */
-export type CheckInAction = 'retry' | 'settings' | 'code' | 'back';
+export type CheckInAction = 'retry' | 'settings' | 'code' | 'back' | 'rate';
 
 /** One button: what it does and the words on it. */
 export interface ActionButton {
@@ -62,6 +63,9 @@ const BACK: ActionButton = { action: 'back', label: 'Back to the event' };
 const RETRY: ActionButton = { action: 'retry', label: 'Try again' };
 const CODE: ActionButton = { action: 'code', label: 'Enter the party code' };
 const SETTINGS: ActionButton = { action: 'settings', label: 'Open Settings' };
+/** The label of the button that opens the rating screen (exported for tests). */
+export const RATE_THE_NIGHT = 'Rate the night';
+const RATE: ActionButton = { action: 'rate', label: RATE_THE_NIGHT };
 
 /**
  * Builds the result screen for what happened.
@@ -82,7 +86,8 @@ export function resultScreen(view: CheckInView, eventTitle: string): ResultScree
           ? `You're still checked in to ${eventTitle}.`
           : `You're checked in to ${eventTitle}. Heading somewhere else later? You can check in there too.`,
         success: true,
-        actions: [BACK],
+        // Wireframe S4: "Rate the night" first, then a quiet way back.
+        actions: [RATE, BACK],
       };
     case 'too_far':
       return {
