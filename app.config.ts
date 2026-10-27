@@ -9,6 +9,10 @@
  * later, read values from environment variables (for example, a Supabase URL
  * from `.env`). app.json can do neither.
  *
+ * Builds on Expo's servers (EAS Build, task VC-B10) read this file too, plus
+ * `eas.json` next to it, which holds the build profiles. The README section
+ * "Android test builds with EAS" explains both.
+ *
  * Returns: an `ExpoConfig` object (Expo's type for this settings object).
  */
 import type { ExpoConfig } from 'expo/config';
@@ -35,6 +39,11 @@ const config: ExpoConfig = {
     supportsTablet: false,
   },
   android: {
+    // The app's unique ID on Android (task VC-B10). PROVISIONAL: it is a
+    // placeholder until the founder picks the final app name. Once an app is
+    // published to Google Play this ID can never change, so pick the real one
+    // before the first Play Store upload (internal APKs are fine meanwhile).
+    package: 'com.yawoa25.vibecheck',
     adaptiveIcon: {
       backgroundColor: BACKGROUND,
       foregroundImage: './assets/images/android-icon-foreground.png',
@@ -67,6 +76,16 @@ const config: ExpoConfig = {
       },
     ],
   ],
+  // EAS (Expo Application Services) builds the app on Expo's servers (task
+  // VC-B10). `owner` is the founder's Expo account and `projectId` is the ID
+  // Expo gave this app when we ran `eas project:init`. Neither is a secret;
+  // they only tell EAS which project a build belongs to.
+  owner: 'yawoa25',
+  extra: {
+    eas: {
+      projectId: '27eaa3e9-516c-4a12-91ea-e38cabbed194',
+    },
+  },
   experiments: {
     // Typed routes make TypeScript warn us if we link to a screen that doesn't exist.
     typedRoutes: true,

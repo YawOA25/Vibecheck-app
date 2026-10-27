@@ -207,6 +207,38 @@ To remove admin rights later, run the same query with `set role = 'user'`.
 - Each report is tagged `development` (Expo Go) or `production` (store builds), so test errors don't mix with real ones.
 - In tests, Jest swaps Sentry for a fake (`__mocks__/@sentry/react-native.js`), so tests never send anything.
 
+## Android test builds with EAS (VC-B10)
+
+**What it is.** EAS Build (Expo Application Services) builds a real Android app (an `.apk` file) on Expo's servers, under the founder's Expo account `yawoa25` (project `@yawoa25/vibecheck`). Anyone with the link can install it on an Android phone or emulator. No Google Play account is needed for this. iOS builds are paused for now.
+
+**The build settings live in `eas.json`.** JSON files can't hold comments, so here is what each "profile" (a named set of build settings) means:
+
+| Profile       | What it builds                                                                                                                                                                 |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `development` | A developer build with Expo's dev menu, shared by link (`distribution: internal`). Not used yet: it needs the `expo-dev-client` package first, and Expo Go covers the MVP.     |
+| `preview`     | The test app we hand out: an installable `.apk` shared by link. Uses the EAS "preview" environment for its settings. This is the one we use now.                               |
+| `production`  | The store version (a Play Store `.aab` bundle). Its version number goes up automatically each build (`autoIncrement`), and Expo's servers keep the count (`appVersionSource`). |
+
+Each profile names an EAS **environment** (`development`, `preview`, `production`). That is where the build gets its `EXPO_PUBLIC_` settings, because `.env` is ignored by git and so never reaches Expo's servers. The `preview` environment holds only three public values: `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_ANON_KEY` and `EXPO_PUBLIC_SENTRY_DSN`. **Never** add `SUPABASE_DB_PASSWORD` or a Supabase service key there. See or change them at expo.dev > vibecheck > **Environment variables**.
+
+**What gets uploaded.** EAS uploads the files git tracks in the whole repo (not just this app), never anything in `.gitignore`. So `.env` stays on your PC.
+
+**Run a build (PowerShell, from `C:\dev\Startup\apps\vibecheck`, with `EXPO_TOKEN` set):**
+
+```powershell
+npx eas-cli build -p android --profile preview
+```
+
+It takes about 10-20 minutes. The build page on expo.dev shows progress and, when done, an **Install** button and QR code.
+
+**Install on a phone or emulator.** Open the build page link on the Android device (or scan its QR code), tap **Install**, download the `.apk`, and allow "Install unknown apps" for your browser when Android asks. On the emulator you can also drag the downloaded `.apk` onto the emulator window.
+
+**Signing in on the APK.** This is a release-style build, so `__DEV__` is false and the **Reviewer sign-in** link is hidden. Sign in with the normal email code. Until real email delivery exists (task VC-B11), Supabase's built-in email only sends to members of your Supabase team (so use your own email address) and allows only a few emails per hour. If no email comes, wait an hour before asking for a new code.
+
+**The Android package ID is provisional.** `android.package` in `app.config.ts` is `com.yawoa25.vibecheck` until the app name is chosen. It must be final before the first Google Play upload, because Play never lets it change.
+
+**Signing key.** EAS created and stores the Android signing key (keystore) for this project. Don't delete it in expo.dev: Android only installs updates signed with the same key.
+
 ## Where things live
 
 | Path              | What's there                                                                                                 |
