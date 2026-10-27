@@ -21,16 +21,19 @@ insert into auth.users (id, email) values
   ('44444444-4444-4444-8444-444444444445', 'birthday@test.vibecheck.invalid');
 
 -- The 'no profile' user (…443) deliberately gets no profile row.
--- Birthdates are worked out from today so the test never goes stale.
+-- Birthdates are worked out from today so the test never goes stale. "Today"
+-- is New York's date (private.age_gate_today), the same day the server's
+-- 18+ rule uses; plain current_date is UTC and made this test fail every
+-- evening after 8 PM in New York.
 insert into public.profiles (id, display_name, birthdate, is_tester) values
-  ('44444444-4444-4444-8444-444444444441', 'Adult', current_date - interval '30 years', false),
-  ('44444444-4444-4444-8444-444444444442', 'Tester', current_date - interval '30 years', true),
+  ('44444444-4444-4444-8444-444444444441', 'Adult', private.age_gate_today() - interval '30 years', false),
+  ('44444444-4444-4444-8444-444444444442', 'Tester', private.age_gate_today() - interval '30 years', true),
   -- 17 years and 364 days old: one day short of 18.
   ('44444444-4444-4444-8444-444444444444', 'Minor',
-   (current_date - interval '18 years')::date + 1, false),
+   (private.age_gate_today() - interval '18 years')::date + 1, false),
   -- Exactly 18 today.
   ('44444444-4444-4444-8444-444444444445', 'Birthday',
-   (current_date - interval '18 years')::date, false);
+   (private.age_gate_today() - interval '18 years')::date, false);
 
 insert into public.events (id, title, area_label, starts_at, ends_at, is_test) values
   ('bbbbbbbb-0000-4000-8000-000000000001', 'Real party', 'Shaw, DC',

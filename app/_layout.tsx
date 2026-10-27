@@ -7,7 +7,7 @@
  *   2. decides which screens exist right now, based on that state:
  *        signed out            -> only the sign-in screen
  *        signed in, no profile -> only the age gate
- *        signed in + profile   -> the app itself (Tonight)
+ *        signed in + profile   -> the app itself (Tonight, event pages)
  *        ... and an admin      -> also the New event screen (VC-B04)
  *        refused by the 18+ gate -> only the "sorry" screen (VC-30)
  *      `Stack.Protected` hides screens whose `guard` is false. If someone is on
@@ -110,6 +110,9 @@ function RootNavigator({ fontsReady }: { fontsReady: boolean }) {
       <Stack.Protected guard={status === 'ready'}>
         {/* index.tsx is the Tonight screen. */}
         <Stack.Screen name="index" options={{ title: 'Tonight' }} />
+        {/* The event page and the check-in stub (VC-B05). */}
+        <Stack.Screen name="event/[id]" options={{ title: 'Event' }} />
+        <Stack.Screen name="check-in/[id]" options={{ title: 'Check in' }} />
       </Stack.Protected>
 
       {/* Admins only (VC-B04): the New event screen. This only keeps the
