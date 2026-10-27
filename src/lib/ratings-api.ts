@@ -19,6 +19,7 @@
  * changed app can't skip them.
  */
 import type { ErrorLike } from '@/lib/auth-errors';
+import { isHeadsUpTag } from '@/lib/rating';
 import type { CompleteDraft, HeadsUpTag } from '@/lib/rating';
 import { supabase } from '@/lib/supabase';
 
@@ -102,16 +103,6 @@ export const RatingErrorCode = {
 
 /** The general "something went wrong" sentence. */
 const GENERIC_MESSAGE = "We couldn't save that. Please try again.";
-
-/** The heads-up keys the app knows (to skip any a newer server adds). */
-const KNOWN_TAGS: readonly string[] = [
-  'lines_long',
-  'music_fire',
-  'packed',
-  'overpriced',
-  'good_crowd',
-  'sound_bad',
-];
 
 /**
  * Reads the shared "not now" answers.
@@ -205,9 +196,11 @@ export function parseHeadsUpList(data: unknown): HeadsUpCount[] {
   for (const item of data) {
     if (!item || typeof item !== 'object') continue;
     const value = item as Record<string, unknown>;
-    if (typeof value.tag !== 'string' || !KNOWN_TAGS.includes(value.tag)) continue;
+    // Only the nine current tags (VC-45): a retired or newer key is skipped,
+    // even if a server ever sent one.
+    if (typeof value.tag !== 'string' || !isHeadsUpTag(value.tag)) continue;
     if (typeof value.count !== 'number' || value.count < 1) continue;
-    counts.push({ tag: value.tag as HeadsUpTag, count: value.count, mine: value.mine === true });
+    counts.push({ tag: value.tag, count: value.count, mine: value.mine === true });
   }
   return counts;
 }

@@ -44,11 +44,13 @@ from generate_series(1, 9) n;
 insert into public.events (id, title, area_label, starts_at, ends_at, is_test) values
   ('20202020-0000-4000-8000-0000000000ef', 'Test only', 'Shaw, DC', now() - interval '1 hour', now() + interval '3 hours', true);
 
--- At e1, guests 1 and 2 +1'd "overpriced" and guest 1 "packed".
+-- At e1, guests 1 and 2 +1'd "overpriced" and "dress_code" (2 guests each,
+-- so both reach the VC-56 bar and show on the event page).
 insert into public.heads_up_votes (user_id, event_id, tag, created_at) values
   ('20202020-9999-4999-8999-000000000001', '20202020-0000-4000-8000-0000000000e1', 'overpriced', now()),
   ('20202020-9999-4999-8999-000000000002', '20202020-0000-4000-8000-0000000000e1', 'overpriced', now()),
-  ('20202020-9999-4999-8999-000000000001', '20202020-0000-4000-8000-0000000000e1', 'packed', now());
+  ('20202020-9999-4999-8999-000000000001', '20202020-0000-4000-8000-0000000000e1', 'dress_code', now()),
+  ('20202020-9999-4999-8999-000000000002', '20202020-0000-4000-8000-0000000000e1', 'dress_code', now());
 
 -- An old open report at e2 (guest 2, 50 hours ago): overdue. Made before
 -- VC-65, so it has no reason.
@@ -100,11 +102,11 @@ select is(public.report_heads_up_tag('20202020-0000-4000-8000-0000000000e1', 'ov
   '{"status": "already"}'::jsonb, 'the same tag again: already');
 select throws_ok($$ select public.report_heads_up_tag('20202020-0000-4000-8000-0000000000e1', 'liar', 'not_true') $$,
   'VCTAG', null, 'an unknown tag is refused');
-select throws_ok($$ select public.report_heads_up_tag('20202020-0000-4000-8000-0000000000ef', 'packed', 'not_true') $$,
+select throws_ok($$ select public.report_heads_up_tag('20202020-0000-4000-8000-0000000000ef', 'dress_code', 'not_true') $$,
   'VCNFD', null, 'a test event doesn''t exist for a non-tester');
 -- Nine more reports (events e1..e9, different tags) reach 10 in 24 hours.
-select public.report_heads_up_tag('20202020-0000-4000-8000-0000000000e1', 'packed', 'not_true');
-select public.report_heads_up_tag(('20202020-0000-4000-8000-0000000000e' || n)::uuid, 'packed', 'not_true')
+select public.report_heads_up_tag('20202020-0000-4000-8000-0000000000e1', 'dress_code', 'not_true');
+select public.report_heads_up_tag(('20202020-0000-4000-8000-0000000000e' || n)::uuid, 'dress_code', 'not_true')
 from generate_series(2, 9) n;
 reset role;
 select is((select count(*)::int from private.tag_reports
@@ -143,7 +145,7 @@ select ok(public.admin_get_tag_reports()::text !~ '20202020-9999-4999-8999-00000
               !~ '20202020-9999-4999-8999-000000000003',
   'no reporter id appears in the queue, and the guest who only reported isn''t on the moderation list');
 select is(jsonb_array_length(public.admin_get_tag_reports()), 11,
-  '11 open queue rows (e1 overpriced, e1..e9 packed, e2 sound_bad)');
+  '11 open queue rows (e1 overpriced, e1..e9 dress_code, e2 sound_bad)');
 
 -- ---- 4. Hide and keep (7) ---------------------------------------------------
 select throws_ok($$ select public.admin_set_tag_hidden('20202020-0000-4000-8000-0000000000e1', 'overpriced', true, 'venue_asked') $$,
@@ -151,25 +153,25 @@ select throws_ok($$ select public.admin_set_tag_hidden('20202020-0000-4000-8000-
 select is(public.admin_set_tag_hidden('20202020-0000-4000-8000-0000000000e1', 'overpriced', true, 'coordinated', 'Two new accounts'),
   '{"status": "done"}'::jsonb, 'the admin hides the tag at e1');
 select is(public.get_event_heads_ups('20202020-0000-4000-8000-0000000000e1'),
-  '[{"tag": "packed", "count": 1, "mine": false}]'::jsonb,
+  '[{"tag": "dress_code", "count": 2, "mine": false}]'::jsonb,
   'the hidden tag is gone from the event page; other tags stay');
 select is(public.admin_get_event_tags('20202020-0000-4000-8000-0000000000e1'),
-  '[{"tag": "overpriced", "votes": 2, "hidden": true, "open_reports": 0},
-    {"tag": "packed", "votes": 1, "hidden": false, "open_reports": 1}]'::jsonb,
+  '[{"tag": "dress_code", "votes": 2, "hidden": false, "open_reports": 1},
+    {"tag": "overpriced", "votes": 2, "hidden": true, "open_reports": 0}]'::jsonb,
   'the admin still sees both tags, with the hidden one marked and its reports closed');
-select is(public.admin_keep_tag('20202020-0000-4000-8000-0000000000e1', 'packed', 'no_rule_broken'),
+select is(public.admin_keep_tag('20202020-0000-4000-8000-0000000000e1', 'dress_code', 'no_rule_broken'),
   '{"status": "done"}'::jsonb, 'keeping a tag closes its reports');
 reset role;
 select is((select array_agg(row(action, tag, reason)::text order by id) from private.moderation_log
            where event_id = '20202020-0000-4000-8000-0000000000e1'),
   array[row('hide_tag'::text, 'overpriced'::text, 'coordinated'::text)::text,
-        row('keep_tag'::text, 'packed'::text, 'no_rule_broken'::text)::text],
+        row('keep_tag'::text, 'dress_code'::text, 'no_rule_broken'::text)::text],
   'both decisions are logged with their reasons');
 select is((select array_agg(resolution order by tag) from private.tag_reports
            where event_id = '20202020-0000-4000-8000-0000000000e1'
-             and tag in ('overpriced', 'packed')
+             and tag in ('overpriced', 'dress_code')
              and reporter_id = '20202020-9999-4999-8999-000000000003'),
-  array['hidden', 'kept'], 'the reports were closed as hidden and kept');
+  array['kept', 'hidden'], 'the reports were closed as kept (dress_code) and hidden (overpriced)');
 
 select * from finish();
 rollback;

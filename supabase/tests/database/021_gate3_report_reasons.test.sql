@@ -95,23 +95,23 @@ select is((select raters from private.vibe_snapshots
 -- ---- 3. VC-65: reasons (8) --------------------------------------------------
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"21212121-9999-4999-8999-000000000001","role":"authenticated"}', true);
-select throws_ok($$ select public.report_heads_up_tag('21212121-0000-4000-8000-0000000000e2', 'packed', null) $$,
+select throws_ok($$ select public.report_heads_up_tag('21212121-0000-4000-8000-0000000000e2', 'dress_code', null) $$,
   'VCRPT', null, 'a report without a reason is refused');
-select throws_ok($$ select public.report_heads_up_tag('21212121-0000-4000-8000-0000000000e2', 'packed', 'venue_asked') $$,
+select throws_ok($$ select public.report_heads_up_tag('21212121-0000-4000-8000-0000000000e2', 'dress_code', 'venue_asked') $$,
   'VCRPT', null, 'an unknown reason is refused');
 -- Guest 1 reports five tags at e2, one with each reason.
 select is(array_agg(public.report_heads_up_tag('21212121-0000-4000-8000-0000000000e2', r.tag, r.reason) ->> 'status'),
   array['reported', 'reported', 'reported', 'reported', 'reported'],
   'each of the five reasons is accepted')
-from (values ('packed', 'not_true'), ('overpriced', 'spam'), ('lines_long', 'targets_person'),
-             ('sound_bad', 'offensive'), ('good_crowd', 'other')) r(tag, reason);
-select is(public.report_heads_up_tag('21212121-0000-4000-8000-0000000000e2', 'packed', 'spam'),
+from (values ('dress_code', 'not_true'), ('overpriced', 'spam'), ('lines_long', 'targets_person'),
+             ('sound_bad', 'offensive'), ('friendly_crowd', 'other')) r(tag, reason);
+select is(public.report_heads_up_tag('21212121-0000-4000-8000-0000000000e2', 'dress_code', 'spam'),
   '{"status": "already"}'::jsonb, 'reporting the same tag again with another reason: still already');
--- Guests 2 and 3 report "packed" too.
+-- Guests 2 and 3 report "dress_code" too.
 select set_config('request.jwt.claims', '{"sub":"21212121-9999-4999-8999-000000000002","role":"authenticated"}', true);
-select public.report_heads_up_tag('21212121-0000-4000-8000-0000000000e2', 'packed', 'not_true');
+select public.report_heads_up_tag('21212121-0000-4000-8000-0000000000e2', 'dress_code', 'not_true');
 select set_config('request.jwt.claims', '{"sub":"21212121-9999-4999-8999-000000000003","role":"authenticated"}', true);
-select public.report_heads_up_tag('21212121-0000-4000-8000-0000000000e2', 'packed', 'targets_person');
+select public.report_heads_up_tag('21212121-0000-4000-8000-0000000000e2', 'dress_code', 'targets_person');
 -- An old build (before VC-65) reports "overpriced" with no reason.
 select set_config('request.jwt.claims', '{"sub":"21212121-9999-4999-8999-000000000002","role":"authenticated"}', true);
 select is(public.report_heads_up_tag('21212121-0000-4000-8000-0000000000e2', 'overpriced'),
@@ -124,12 +124,12 @@ select is((select reason from private.tag_reports
 select is((select array_agg(row(tag, reason)::text order by tag) from private.tag_reports
            where event_id = '21212121-0000-4000-8000-0000000000e2'
              and reporter_id = '21212121-9999-4999-8999-000000000001'),
-  array[row('good_crowd'::text, 'other'::text)::text, row('lines_long'::text, 'targets_person'::text)::text,
-        row('overpriced'::text, 'spam'::text)::text, row('packed'::text, 'not_true'::text)::text,
+  array[row('dress_code'::text, 'not_true'::text)::text, row('friendly_crowd'::text, 'other'::text)::text,
+        row('lines_long'::text, 'targets_person'::text)::text, row('overpriced'::text, 'spam'::text)::text,
         row('sound_bad'::text, 'offensive'::text)::text],
-  'each reason is stored with its report; the repeat didn''t change "packed" (still not_true)');
+  'each reason is stored with its report; the repeat didn''t change "dress_code" (still not_true)');
 select throws_ok($$ insert into private.tag_reports (event_id, tag, reporter_id, reason)
-                    values ('21212121-0000-4000-8000-0000000000e2', 'packed',
+                    values ('21212121-0000-4000-8000-0000000000e2', 'dress_code',
                             '21212121-9999-4999-8999-0000000000a1', 'venue_asked') $$,
   '23514', null, 'the table itself refuses an unknown reason');
 
@@ -137,9 +137,9 @@ select throws_ok($$ insert into private.tag_reports (event_id, tag, reporter_id,
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"21212121-9999-4999-8999-0000000000a1","role":"authenticated"}', true);
 select is((select q -> 'reasons' from jsonb_array_elements(public.admin_get_tag_reports()) q
-           where q ->> 'event_id' = '21212121-0000-4000-8000-0000000000e2' and q ->> 'tag' = 'packed'),
+           where q ->> 'event_id' = '21212121-0000-4000-8000-0000000000e2' and q ->> 'tag' = 'dress_code'),
   '{"not_true": 2, "targets_person": 1}'::jsonb,
-  'the queue counts the reasons for "packed": 2 not true, 1 targets a person');
+  'the queue counts the reasons for "dress_code": 2 not true, 1 targets a person');
 select ok(public.admin_get_tag_reports()::text !~ '21212121-9999-4999-8999-00000000000[123]',
   'no reporter id appears in the queue');
 

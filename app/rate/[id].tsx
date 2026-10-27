@@ -1,6 +1,9 @@
 /**
  * Rating screen (task VC-B08), in the v3 look (design/v3/Rate.dc.html,
- * wireframe S5), with the heads-up tags folded in (proposal VC-43).
+ * wireframe S5), with the heads-up tags folded in (proposal VC-43; final
+ * nine tags with emoji in VC-45 + VC-57). Picking "Felt unsafe" shows a
+ * line pointing to real help (911 or venue staff, VC-60), because the tag
+ * itself alerts nobody.
  *
  * Address: /rate/<event id>. Opened by "Rate the night" after a successful
  * check-in, or on the event page once the guest is checked in.
@@ -56,6 +59,8 @@ import { readLocationQuietly } from '@/lib/check-in-location';
 import { getEvent } from '@/lib/events-read';
 import {
   EMPTY_DRAFT,
+  FELT_UNSAFE,
+  FELT_UNSAFE_HELP,
   HEADS_UP_TAGS,
   RATING_ROWS,
   REACTIONS,
@@ -412,7 +417,9 @@ function RatingForm({
             <ChoiceChip
               key={tag.key}
               shape="pill"
-              label={tag.label}
+              // Emoji then words, e.g. "⏳ Long line" (VC-45); screen readers
+              // get the words only.
+              label={`${tag.emoji} ${tag.label}`}
               accessibilityLabel={`Heads-up: ${tag.label}`}
               selected={draft.tags.includes(tag.key)}
               disabled={saving}
@@ -420,6 +427,18 @@ function RatingForm({
             />
           ))}
         </View>
+        {/* VC-60: the tag doesn't call for help, so say where help is.
+            Read out as soon as it appears. */}
+        {draft.tags.includes(FELT_UNSAFE) ? (
+          <Text
+            style={styles.safetyHelp}
+            // "alert" so VoiceOver (iOS) reads it out; the live region does the same on Android.
+            accessibilityRole="alert"
+            accessibilityLiveRegion="polite"
+          >
+            {FELT_UNSAFE_HELP}
+          </Text>
+        ) : null}
       </Group>
 
       {error ? <FormMessage message={error} /> : null}
@@ -483,4 +502,6 @@ const styles = StyleSheet.create({
   chipRow: { flexDirection: 'row', gap: spacing.sm },
   wrapRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   note: { ...typography.caption, color: colors.muted, textAlign: 'center' },
+  // Full-strength text (not muted) so the 911 line is easy to read.
+  safetyHelp: { ...typography.bodySm, color: colors.text },
 });

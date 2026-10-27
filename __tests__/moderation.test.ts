@@ -86,11 +86,11 @@ describe('moderation calls (src/lib/moderation-api.ts)', () => {
   it('reports a tag and reads the three answers', async () => {
     for (const status of ['reported', 'already', 'too_many']) {
       rpc.mockResolvedValueOnce({ data: { status }, error: null });
-      expect(await reportHeadsUpTag('e1', 'packed', 'spam')).toEqual({ ok: true, status });
+      expect(await reportHeadsUpTag('e1', 'dress_code', 'spam')).toEqual({ ok: true, status });
     }
     expect(rpc).toHaveBeenCalledWith('report_heads_up_tag', {
       p_event_id: 'e1',
-      p_tag: 'packed',
+      p_tag: 'dress_code',
       p_reason: 'spam',
     });
   });
@@ -100,7 +100,7 @@ describe('moderation calls (src/lib/moderation-api.ts)', () => {
       data: null,
       error: { code: 'VCRPT', message: 'Pick a reason for the report.' },
     });
-    expect(await reportHeadsUpTag('e1', 'packed', 'other')).toEqual({
+    expect(await reportHeadsUpTag('e1', 'dress_code', 'other')).toEqual({
       ok: false,
       message: 'Pick a reason for the report.',
     });
@@ -117,15 +117,15 @@ describe('moderation calls (src/lib/moderation-api.ts)', () => {
       error: { code: 'VCRSN', message: 'Pick why: no rule broken, or it was a mistake.' },
     });
     expect(
-      await keepTag({ eventId: 'e1', hidden: false, reason: 'no_rule_broken' }, 'packed'),
+      await keepTag({ eventId: 'e1', hidden: false, reason: 'no_rule_broken' }, 'dress_code'),
     ).toEqual({ ok: false, message: 'Pick why: no rule broken, or it was a mistake.' });
     rpc.mockRejectedValueOnce(new Error('Network request failed'));
-    expect(await reportHeadsUpTag('e1', 'packed', 'not_true')).toEqual({
+    expect(await reportHeadsUpTag('e1', 'dress_code', 'not_true')).toEqual({
       ok: false,
       message: "We couldn't reach the server. Check your connection and try again.",
     });
     rpc.mockResolvedValueOnce({ data: { status: 'weird' }, error: null });
-    expect((await reportHeadsUpTag('e1', 'packed', 'not_true')).ok).toBe(false);
+    expect((await reportHeadsUpTag('e1', 'dress_code', 'not_true')).ok).toBe(false);
   });
 
   it('sends each admin action with its reason; a blank note is sent as null', async () => {
@@ -167,11 +167,11 @@ describe('moderation calls (src/lib/moderation-api.ts)', () => {
 
     rpc.mockResolvedValueOnce({ data: { status: 'unchanged' }, error: null });
     expect(
-      await keepTag({ eventId: 'e1', hidden: false, reason: 'no_rule_broken' }, 'packed'),
+      await keepTag({ eventId: 'e1', hidden: false, reason: 'no_rule_broken' }, 'dress_code'),
     ).toEqual({ ok: true, status: 'unchanged' });
     expect(rpc).toHaveBeenLastCalledWith('admin_keep_tag', {
       p_event_id: 'e1',
-      p_tag: 'packed',
+      p_tag: 'dress_code',
       p_reason: 'no_rule_broken',
       p_note: null,
     });
@@ -193,7 +193,7 @@ describe('moderation calls (src/lib/moderation-api.ts)', () => {
           votes: 3,
           hidden: false,
         },
-        { event_id: 'e2', tag: 'packed' },
+        { event_id: 'e2', tag: 'dress_code' },
         null,
       ]),
     ).toEqual([
@@ -214,7 +214,7 @@ describe('moderation calls (src/lib/moderation-api.ts)', () => {
     // An older server with no "reasons": an empty count, not a dropped row.
     expect(
       parseTagReports([
-        { event_id: 'e1', event_title: 'R', tag: 'packed', reports: 1, hours_waiting: 0 },
+        { event_id: 'e1', event_title: 'R', tag: 'dress_code', reports: 1, hours_waiting: 0 },
       ])[0].reasons,
     ).toEqual({});
   });
@@ -236,7 +236,7 @@ describe('moderation calls (src/lib/moderation-api.ts)', () => {
             updated_at: '2026-10-27T01:00:00Z',
             hidden: true,
           },
-          heads_ups: [{ tag: 'packed', added_at: '2026-10-27T01:00:00Z', removed: false }],
+          heads_ups: [{ tag: 'dress_code', added_at: '2026-10-27T01:00:00Z', removed: false }],
         },
         {
           user_id: 'u2',

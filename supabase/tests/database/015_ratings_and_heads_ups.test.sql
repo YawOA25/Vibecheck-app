@@ -18,7 +18,9 @@
 --   * Hidden ratings don't count in "raters", stay hidden after an update,
 --     and that guest's heads-ups don't count either.
 --   * Heads-ups: picked while rating, +1 on the event page ('added', then
---     'already'), counts most-first with "mine", same here-now rules.
+--     'already'), counts most-first with "mine", same here-now rules. Since
+--     VC-56 a tag is shown only at 2+ guests, so one guest's own picks are
+--     checked in the table (as the owner) rather than through the counts.
 --
 -- now() is frozen for the whole test (one transaction), so "59 minutes ago"
 -- is exact. Everything runs inside BEGIN ... ROLLBACK: nothing is kept.
@@ -26,7 +28,7 @@
 begin;
 create extension if not exists pgtap with schema extensions;
 
-select plan(51);
+select plan(52);
 
 -- ---- Setup (as owner) -------------------------------------------------------
 -- Users: …d1 and …d2 guests, …d3 a guest whose rating gets hidden, …d4 an
@@ -111,7 +113,7 @@ select set_config('request.jwt.claims',
   '{"sub":"dddddddd-9999-4999-8999-0000000000d4","role":"authenticated"}', true);
 select throws_ok($$ select public.submit_rating('dddddddd-0000-4000-8000-0000000000e1', 3, 3, 3) $$,
   'VCSTF', null, 'an admin is refused, even when checked in (staff rule)');
-select throws_ok($$ select public.add_heads_up('dddddddd-0000-4000-8000-0000000000e1', 'packed') $$,
+select throws_ok($$ select public.add_heads_up('dddddddd-0000-4000-8000-0000000000e1', 'dress_code') $$,
   'VCSTF', null, 'an admin can''t add a heads-up either');
 
 select set_config('request.jwt.claims',
@@ -169,7 +171,7 @@ select is((select count(*)::int from public.ratings
 -- ---- 5. The first save (5) --------------------------------------------------
 select set_config('request.jwt.claims',
   '{"sub":"dddddddd-9999-4999-8999-0000000000d1","role":"authenticated"}', true);
-select is(public.submit_rating('dddddddd-0000-4000-8000-0000000000e1', 3, 3, 2, 'fire', array['lines_long', 'packed', 'packed']),
+select is(public.submit_rating('dddddddd-0000-4000-8000-0000000000e1', 3, 3, 2, 'fire', array['lines_long', 'dress_code', 'dress_code']),
   jsonb_build_object('status', 'saved', 'updated', false, 'saved_at', now(),
     'next_update_at', now() + interval '60 minutes', 'score', 8.3, 'raters', 2),
   'first save: saved, score 8.3, 2 raters (this one and guest two)');
@@ -179,9 +181,17 @@ select row_eq(
        and event_id = 'dddddddd-0000-4000-8000-0000000000e1' $$,
   row(3::smallint, 3::smallint, 2::smallint, 'fire'::text),
   'the rating row holds the three taps and the reaction');
-select is(public.get_event_heads_ups('dddddddd-0000-4000-8000-0000000000e1'),
-  '[{"tag": "lines_long", "count": 1, "mine": true}, {"tag": "packed", "count": 1, "mine": true}]'::jsonb,
-  'the picked tags are saved once each (the repeated "packed" counts once)');
+reset role;
+select is((select array_agg(tag order by tag) from public.heads_up_votes
+           where user_id = 'dddddddd-9999-4999-8999-0000000000d1'
+             and event_id = 'dddddddd-0000-4000-8000-0000000000e1'),
+  array['dress_code', 'lines_long'],
+  'the picked tags are saved once each (the repeated "dress_code" counts once)');
+set local role authenticated;
+select set_config('request.jwt.claims',
+  '{"sub":"dddddddd-9999-4999-8999-0000000000d1","role":"authenticated"}', true);
+select is(public.get_event_heads_ups('dddddddd-0000-4000-8000-0000000000e1'), '[]'::jsonb,
+  'VC-56: one guest''s tags aren''t shown yet (not even to that guest)');
 -- A second event the same night (a party-code check-in).
 select is(public.submit_rating('dddddddd-0000-4000-8000-0000000000e2', 1, 1, 1) ->> 'status',
   'saved', 'the same guest can rate a second event the same night');
@@ -210,7 +220,7 @@ where user_id = 'dddddddd-9999-4999-8999-0000000000d1' and event_id = 'dddddddd-
 set local role authenticated;
 select set_config('request.jwt.claims',
   '{"sub":"dddddddd-9999-4999-8999-0000000000d1","role":"authenticated"}', true);
-select is(public.submit_rating('dddddddd-0000-4000-8000-0000000000e1', 2, 2, 2, null, array['good_crowd']) ->> 'updated',
+select is(public.submit_rating('dddddddd-0000-4000-8000-0000000000e1', 2, 2, 2, null, array['friendly_crowd']) ->> 'updated',
   'true', 'exactly 60 minutes later: saved as an update');
 select is((select count(*)::int from public.ratings
            where user_id = 'dddddddd-9999-4999-8999-0000000000d1'
@@ -223,8 +233,14 @@ select row_eq(
        and event_id = 'dddddddd-0000-4000-8000-0000000000e1' $$,
   row(2::smallint, null::text, true, true),
   'the update replaced the taps, cleared the reaction, kept created_at and moved updated_at');
-select is(jsonb_array_length(public.get_event_heads_ups('dddddddd-0000-4000-8000-0000000000e1')),
+reset role;
+select is((select count(*)::int from public.heads_up_votes
+           where user_id = 'dddddddd-9999-4999-8999-0000000000d1'
+             and event_id = 'dddddddd-0000-4000-8000-0000000000e1'),
   3, 'the update added its new tag and kept the earlier ones (+1s are never taken back)');
+set local role authenticated;
+select set_config('request.jwt.claims',
+  '{"sub":"dddddddd-9999-4999-8999-0000000000d1","role":"authenticated"}', true);
 
 -- ---- 7. Heads-up +1 on the event page (7) -----------------------------------
 select is(public.add_heads_up('dddddddd-0000-4000-8000-0000000000e1', 'lines_long'),
@@ -238,12 +254,12 @@ select set_config('request.jwt.claims',
   '{"sub":"dddddddd-9999-4999-8999-0000000000d2","role":"authenticated"}', true);
 select is(public.add_heads_up('dddddddd-0000-4000-8000-0000000000e1', 'lines_long'),
   '{"status": "added"}'::jsonb, 'another checked-in guest can +1 it: added');
-select is(public.add_heads_up('dddddddd-0000-4000-8000-0000000000e2', 'packed'),
+select is(public.add_heads_up('dddddddd-0000-4000-8000-0000000000e2', 'dress_code'),
   '{"status": "not_checked_in"}'::jsonb, '+1 needs a check-in at that event');
 select is(public.get_event_heads_ups('dddddddd-0000-4000-8000-0000000000e1') -> 0,
   '{"tag": "lines_long", "count": 2, "mine": true}'::jsonb,
   'counts are most-first; "mine" is true for the caller''s own +1');
-select is(public.add_heads_up('dddddddd-0000-4000-8000-0000000000e3', 'packed') ->> 'reason',
+select is(public.add_heads_up('dddddddd-0000-4000-8000-0000000000e3', 'dress_code') ->> 'reason',
   'too_early', '+1 before the window opens: outside_window, too_early');
 
 -- ---- 8. Hidden ratings count nowhere (6) ------------------------------------
@@ -260,8 +276,9 @@ select set_config('request.jwt.claims',
 select ok(not (public.get_event_heads_ups('dddddddd-0000-4000-8000-0000000000e1')
                @> '[{"tag": "sound_bad"}]'::jsonb),
   'a hidden guest''s heads-ups don''t count');
-select is(jsonb_array_length(public.get_event_heads_ups('dddddddd-0000-4000-8000-0000000000e1')),
-  3, 'only the visible guests'' 3 tags are listed');
+select is(public.get_event_heads_ups('dddddddd-0000-4000-8000-0000000000e1'),
+  '[{"tag": "lines_long", "count": 2, "mine": true}]'::jsonb,
+  'only lines_long (2 visible guests) is listed; 1-guest tags stay under the bar');
 select set_config('request.jwt.claims',
   '{"sub":"dddddddd-9999-4999-8999-0000000000d3","role":"authenticated"}', true);
 select is(public.submit_rating('dddddddd-0000-4000-8000-0000000000e1', 3, 3, 3) ->> 'raters',

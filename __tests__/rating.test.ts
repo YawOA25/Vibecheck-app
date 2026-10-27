@@ -1,11 +1,14 @@
 /**
  * Tests for the rating's building blocks (src/lib/rating.ts), task VC-B08,
  * and its wording (src/lib/rating-screens.ts), including the heads-up tags
- * (VC-43).
+ * (VC-43; final nine tags and "Felt unsafe" wording in VC-45, VC-57, VC-60).
  *
  * We check:
  *   - the lists match the server's allowed values exactly (the migration
- *     refuses anything else);
+ *     refuses anything else); retired tags are not offered, and admins get
+ *     readable words for them;
+ *   - event-page chip words: "⏳ Long line · 3", and "Felt unsafe" said as
+ *     guests' view tonight with a neutral icon (no warning sign);
  *   - "Done after 3 taps": only all three rows make a draft complete;
  *   - tags toggle on and off; reactions and tags stay optional;
  *   - the vibe words switch at exactly 4, 7 and 8.5;
@@ -16,10 +19,15 @@
  */
 import {
   EMPTY_DRAFT,
+  FELT_UNSAFE_HELP,
+  HEADS_UP_INFO,
   HEADS_UP_TAGS,
   RATING_ROWS,
   REACTIONS,
+  headsUpChipA11y,
+  headsUpChipText,
   headsUpLabel,
+  isHeadsUpTag,
   isComplete,
   minutesUntilUpdate,
   toggleTag,
@@ -50,20 +58,61 @@ describe('the lists', () => {
       'too_loud',
       'dead',
     ]);
-    // Same six keys as heads_up_votes' check rule (VC-43).
+    // Same nine keys, same order, as private.heads_up_tags_active() (VC-45 + VC-57).
     expect(HEADS_UP_TAGS.map((t) => t.key)).toEqual([
       'lines_long',
-      'music_fire',
-      'packed',
       'overpriced',
-      'good_crowd',
+      'dress_code',
+      'friendly_crowd',
       'sound_bad',
+      'felt_unsafe',
+      'picking_up',
+      'clearing_out',
+      'parking_rough',
+    ]);
+    expect(HEADS_UP_TAGS.map((t) => `${t.emoji} ${t.label}`)).toEqual([
+      '⏳ Long line',
+      '💸 Overpriced',
+      '👔 Strict dress code',
+      '🤝 Friendly crowd',
+      '🔈 Sound is bad',
+      '💬 Felt unsafe',
+      '📈 Picking up',
+      '📉 Clearing out',
+      '🅿️ Parking is rough',
     ]);
   });
 
+  it('never uses the warning sign (VC-60: a neutral icon for "Felt unsafe")', () => {
+    expect(HEADS_UP_TAGS.some((t) => t.emoji.includes('⚠'))).toBe(false);
+  });
+
   it("finds a heads-up tag's words, and null for an unknown key", () => {
-    expect(headsUpLabel('lines_long')).toBe('Lines are long');
+    expect(headsUpLabel('lines_long')).toBe('Long line');
     expect(headsUpLabel('free text')).toBeNull();
+  });
+
+  it('knows retired tags only as admin words, never as tags guests can pick or see', () => {
+    for (const retired of ['music_fire', 'packed', 'good_crowd']) {
+      expect(isHeadsUpTag(retired)).toBe(false);
+      expect(headsUpLabel(retired)).toMatch(/\(retired\)$/);
+    }
+    expect(isHeadsUpTag('parking_rough')).toBe(true);
+  });
+
+  it('writes event-page chips: counts, and "Felt unsafe" as guests tonight', () => {
+    expect(headsUpChipText('lines_long', 3)).toBe('⏳ Long line · 3');
+    expect(headsUpChipText('felt_unsafe', 3)).toBe('💬 Felt unsafe · 3 guests tonight');
+    expect(headsUpChipA11y('lines_long', 1, false)).toBe('Long line, 1 person');
+    expect(headsUpChipA11y('dress_code', 2, true)).toBe(
+      "Strict dress code, 2 people, you +1'd this",
+    );
+    expect(headsUpChipA11y('felt_unsafe', 4, false)).toBe('Felt unsafe, 4 guests tonight');
+  });
+
+  it('has the approved VC-60 copy', () => {
+    expect(HEADS_UP_INFO).toContain('not checked or endorsed by us');
+    expect(FELT_UNSAFE_HELP).toMatch(/^In danger now\? Call 911 or tell venue staff\./);
   });
 });
 
@@ -75,11 +124,11 @@ describe('the draft', () => {
   });
 
   it('toggles a tag on, then off, without changing the old list', () => {
-    const before = ['packed'] as const;
+    const before = ['dress_code'] as const;
     const added = toggleTag([...before], 'lines_long');
-    expect(added).toEqual(['packed', 'lines_long']);
-    expect(toggleTag(added, 'packed')).toEqual(['lines_long']);
-    expect(before).toEqual(['packed']);
+    expect(added).toEqual(['dress_code', 'lines_long']);
+    expect(toggleTag(added, 'dress_code')).toEqual(['lines_long']);
+    expect(before).toEqual(['dress_code']);
   });
 });
 

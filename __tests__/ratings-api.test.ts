@@ -26,7 +26,7 @@ jest.mock('@/lib/supabase', () => ({ supabase: { rpc: jest.fn(), from: jest.fn()
 const rpc = supabase.rpc as jest.Mock;
 const from = supabase.from as jest.Mock;
 
-const DRAFT = { crowd: 3, music: 2, energy: 1, reaction: 'fire', tags: ['packed'] } as const;
+const DRAFT = { crowd: 3, music: 2, energy: 1, reaction: 'fire', tags: ['dress_code'] } as const;
 
 beforeEach(() => jest.clearAllMocks());
 
@@ -59,7 +59,7 @@ describe('submitRating', () => {
       p_music: 2,
       p_energy: 1,
       p_reaction: 'fire',
-      p_tags: ['packed'],
+      p_tags: ['dress_code'],
     });
   });
 
@@ -153,7 +153,7 @@ describe('heads-ups', () => {
     rpc.mockResolvedValue({
       data: [
         { tag: 'lines_long', count: 3, mine: true },
-        { tag: 'packed', count: 1, mine: false },
+        { tag: 'felt_unsafe', count: 3, mine: false },
       ],
       error: null,
     });
@@ -161,17 +161,19 @@ describe('heads-ups', () => {
       ok: true,
       tags: [
         { tag: 'lines_long', count: 3, mine: true },
-        { tag: 'packed', count: 1, mine: false },
+        { tag: 'felt_unsafe', count: 3, mine: false },
       ],
     });
     expect(rpc).toHaveBeenCalledWith('get_event_heads_ups', { p_event_id: 'e1' });
   });
 
-  it('parseHeadsUpList skips unknown tags, zero counts and junk', () => {
+  it('parseHeadsUpList skips unknown and retired tags, zero counts and junk', () => {
     expect(
       parseHeadsUpList([
         { tag: 'from_the_future', count: 2, mine: false },
-        { tag: 'packed', count: 0, mine: false },
+        // Retired in VC-45: never shown, even if a server sent it.
+        { tag: 'packed', count: 5, mine: false },
+        { tag: 'dress_code', count: 0, mine: false },
         null,
         { tag: 'overpriced', count: 2 },
       ]),

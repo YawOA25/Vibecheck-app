@@ -464,38 +464,40 @@ describe('EventScreen heads-up card (VC-43)', () => {
         ok: true,
         tags: [
           { tag: 'lines_long', count: 3, mine: false },
-          { tag: 'good_crowd', count: 1, mine: true },
+          { tag: 'friendly_crowd', count: 2, mine: true },
         ],
       })
       .mockResolvedValueOnce({
         ok: true,
         tags: [
           { tag: 'lines_long', count: 4, mine: true },
-          { tag: 'good_crowd', count: 1, mine: true },
+          { tag: 'friendly_crowd', count: 2, mine: true },
         ],
       });
     plusOne.mockResolvedValue({ ok: true, result: { status: 'added' } });
     get.mockResolvedValue({ ok: true, event: makeEvent() });
     await render(<EventScreen />);
 
-    const lines = await screen.findByRole('button', { name: 'Lines are long, 3 people' });
+    const lines = await screen.findByRole('button', { name: 'Long line, 3 people' });
     // The guest's own +1 is marked (a check mark, and "selected").
     expect(
-      screen.getByRole('button', { name: "Good crowd, 1 person, you +1'd this" }),
+      screen.getByRole('button', { name: "Friendly crowd, 2 people, you +1'd this" }),
     ).toBeSelected();
     await fireEvent.press(lines);
     expect(plusOne).toHaveBeenCalledWith('e1', 'lines_long');
     expect(
-      await screen.findByRole('button', { name: "Lines are long, 4 people, you +1'd this" }),
+      await screen.findByRole('button', { name: "Long line, 4 people, you +1'd this" }),
     ).toBeOnTheScreen();
   });
 
   it('says why when a +1 is refused', async () => {
-    headsUps.mockResolvedValue({ ok: true, tags: [{ tag: 'packed', count: 2, mine: false }] });
+    headsUps.mockResolvedValue({ ok: true, tags: [{ tag: 'dress_code', count: 2, mine: false }] });
     plusOne.mockResolvedValue({ ok: true, result: { status: 'not_checked_in' } });
     get.mockResolvedValue({ ok: true, event: makeEvent() });
     await render(<EventScreen />);
-    await fireEvent.press(await screen.findByRole('button', { name: 'Packed, 2 people' }));
+    await fireEvent.press(
+      await screen.findByRole('button', { name: 'Strict dress code, 2 people' }),
+    );
     expect(
       await screen.findByText('Check in first: only guests who are here can +1 a heads-up.'),
     ).toBeOnTheScreen();
@@ -503,10 +505,10 @@ describe('EventScreen heads-up card (VC-43)', () => {
 
   it('admins see the counts but their chips are switched off', async () => {
     signInAs('admin');
-    headsUps.mockResolvedValue({ ok: true, tags: [{ tag: 'packed', count: 2, mine: false }] });
+    headsUps.mockResolvedValue({ ok: true, tags: [{ tag: 'dress_code', count: 2, mine: false }] });
     get.mockResolvedValue({ ok: true, event: makeEvent() });
     await render(<EventScreen />);
-    const chip = await screen.findByRole('button', { name: 'Packed, 2 people' });
+    const chip = await screen.findByRole('button', { name: 'Strict dress code, 2 people' });
     expect(chip).toBeDisabled();
     await fireEvent.press(chip);
     expect(plusOne).not.toHaveBeenCalled();

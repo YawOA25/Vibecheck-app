@@ -40,7 +40,7 @@ beforeEach(() => {
     ok: true,
     tags: [
       { tag: 'overpriced', count: 3, mine: false },
-      { tag: 'packed', count: 1, mine: false },
+      { tag: 'dress_code', count: 2, mine: false },
     ],
   });
 });
@@ -84,10 +84,10 @@ describe('HeadsUpCard: Report this tag (VC-58)', () => {
   it('"Never mind" at the reasons sends nothing, and the next report starts from the tags', async () => {
     await renderCard();
     await fireEvent.press(screen.getByRole('button', { name: REPORT_LINK }));
-    await fireEvent.press(screen.getByRole('button', { name: 'Packed' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Strict dress code' }));
     await fireEvent.press(screen.getByRole('button', { name: REPORT_CANCEL }));
     expect(report).not.toHaveBeenCalled();
-    expect(screen.queryByText(reportWhy('Packed'))).toBeNull();
+    expect(screen.queryByText(reportWhy('Strict dress code'))).toBeNull();
 
     await fireEvent.press(screen.getByRole('button', { name: REPORT_LINK }));
     expect(screen.getByText(REPORT_PICK)).toBeOnTheScreen();
@@ -98,12 +98,12 @@ describe('HeadsUpCard: Report this tag (VC-58)', () => {
     report.mockResolvedValueOnce({ ok: true, status: 'too_many' });
     await renderCard();
     await fireEvent.press(screen.getByRole('button', { name: REPORT_LINK }));
-    await fireEvent.press(screen.getByRole('button', { name: 'Packed' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Strict dress code' }));
     await fireEvent.press(screen.getByRole('button', { name: 'Not true' }));
     expect(await screen.findByText(REPORT_MESSAGES.already)).toBeOnTheScreen();
 
     await fireEvent.press(screen.getByRole('button', { name: REPORT_LINK }));
-    await fireEvent.press(screen.getByRole('button', { name: 'Packed' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Strict dress code' }));
     await fireEvent.press(screen.getByRole('button', { name: 'Other' }));
     expect(await screen.findByText(REPORT_MESSAGES.too_many)).toBeOnTheScreen();
   });
@@ -112,12 +112,12 @@ describe('HeadsUpCard: Report this tag (VC-58)', () => {
     report.mockResolvedValue({ ok: false, message: "We couldn't reach the server." });
     await renderCard();
     await fireEvent.press(screen.getByRole('button', { name: REPORT_LINK }));
-    await fireEvent.press(screen.getByRole('button', { name: 'Packed' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Strict dress code' }));
     await fireEvent.press(screen.getByRole('button', { name: 'Offensive' }));
     expect(await screen.findByText("We couldn't reach the server.")).toBeOnTheScreen();
-    expect(screen.getByText(reportWhy('Packed'))).toBeOnTheScreen();
+    expect(screen.getByText(reportWhy('Strict dress code'))).toBeOnTheScreen();
     await fireEvent.press(screen.getByRole('button', { name: REPORT_CANCEL }));
-    expect(screen.queryByText(reportWhy('Packed'))).toBeNull();
+    expect(screen.queryByText(reportWhy('Strict dress code'))).toBeNull();
   });
 
   it('has no report link for admins', async () => {

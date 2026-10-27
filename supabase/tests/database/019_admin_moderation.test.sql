@@ -82,11 +82,15 @@ select pg_temp.seed('19191919-0000-4000-8000-0000000000e3', 2, 5, 3, interval '1
 select private.publish_event_vibe('19191919-0000-4000-8000-0000000000e3', now() - interval '30 minutes');
 select pg_temp.seed('19191919-0000-4000-8000-0000000000e3', 6, 8, 3, interval '5 minutes');
 
--- Guest 8 never rated e1 but +1'd "packed" there just now (checked in by code).
+-- Guest 8 never rated e1 but +1'd "dress_code" there just now (checked in by
+-- code). Guest 3 +1'd "dress_code" and "lines_long" too, so a tag guest 8
+-- adds reaches the 2-guest bar (VC-56) and shows on the event page.
 insert into public.check_ins (user_id, event_id, method, first_at, last_verified_at) values
   ('19191919-9999-4999-8999-000000000008', '19191919-0000-4000-8000-0000000000e1', 'code', now(), now());
 insert into public.heads_up_votes (user_id, event_id, tag, created_at) values
-  ('19191919-9999-4999-8999-000000000008', '19191919-0000-4000-8000-0000000000e1', 'packed', now());
+  ('19191919-9999-4999-8999-000000000008', '19191919-0000-4000-8000-0000000000e1', 'dress_code', now()),
+  ('19191919-9999-4999-8999-000000000003', '19191919-0000-4000-8000-0000000000e1', 'dress_code', now()),
+  ('19191919-9999-4999-8999-000000000003', '19191919-0000-4000-8000-0000000000e1', 'lines_long', now());
 
 -- ---- 1. Locked down (6) -----------------------------------------------------
 select ok(not has_function_privilege('anon', 'public.admin_get_event_moderation(uuid)', 'execute')
@@ -221,7 +225,7 @@ set local role authenticated;
 select set_config('request.jwt.claims',
   '{"sub":"19191919-9999-4999-8999-000000000002","role":"authenticated"}', true);
 select is(public.get_event_heads_ups('19191919-0000-4000-8000-0000000000e1'),
-  '[{"tag": "packed", "count": 1, "mine": false}]'::jsonb, 'before: guest 8''s +1 counts');
+  '[{"tag": "dress_code", "count": 2, "mine": false}]'::jsonb, 'before: guest 8''s +1 counts (with guest 3''s, 2 guests)');
 select set_config('request.jwt.claims',
   '{"sub":"19191919-9999-4999-8999-0000000000a1","role":"authenticated"}', true);
 select is(public.admin_set_heads_ups_hidden('19191919-0000-4000-8000-0000000000e1',
@@ -236,7 +240,7 @@ select throws_ok($$ select public.admin_set_rating_hidden('19191919-0000-4000-80
 -- Guest 8 taps the old tag again AND +1s a tag they never picked before.
 select set_config('request.jwt.claims',
   '{"sub":"19191919-9999-4999-8999-000000000008","role":"authenticated"}', true);
-select public.add_heads_up('19191919-0000-4000-8000-0000000000e1', 'packed');
+select public.add_heads_up('19191919-0000-4000-8000-0000000000e1', 'dress_code');
 select public.add_heads_up('19191919-0000-4000-8000-0000000000e1', 'lines_long');
 select is(public.get_event_heads_ups('19191919-0000-4000-8000-0000000000e1'), '[]'::jsonb,
   'after removal, neither the old tag nor a NEW tag from that guest counts');
@@ -250,8 +254,8 @@ select is((select jsonb_build_object('off', p -> 'heads_ups_removed',
   '{"off": true, "tags": [true, true]}'::jsonb,
   'the admin list shows the guest as removed, the new tag included');
 reset role;
-select is(private.counted_tag_votes('19191919-0000-4000-8000-0000000000e1', 'lines_long'), 0,
-  'the queue''s all-night count skips the removed guest''s new tag too');
+select is(private.counted_tag_votes('19191919-0000-4000-8000-0000000000e1', 'lines_long'), 1,
+  'the queue''s all-night count skips the removed guest''s new tag too (only guest 3''s counts)');
 set local role authenticated;
 select set_config('request.jwt.claims',
   '{"sub":"19191919-9999-4999-8999-0000000000a1","role":"authenticated"}', true);
@@ -268,8 +272,8 @@ select is((select p from jsonb_array_elements(
           #- '{heads_ups,0,added_at}' #- '{heads_ups,1,added_at}',
   jsonb_build_object('user_id', '19191919-9999-4999-8999-000000000008', 'display_name', 'Mod guest 8',
     'check_in_method', 'code', 'rating', null, 'heads_ups_removed', false,
-    'heads_ups', jsonb_build_array(jsonb_build_object('tag', 'lines_long', 'removed', false),
-                                   jsonb_build_object('tag', 'packed', 'removed', false))),
+    'heads_ups', jsonb_build_array(jsonb_build_object('tag', 'dress_code', 'removed', false),
+                                   jsonb_build_object('tag', 'lines_long', 'removed', false))),
   'the list includes a guest who only +1''d, with their check-in method and no rating');
 
 select * from finish();

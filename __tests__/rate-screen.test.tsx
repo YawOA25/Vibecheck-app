@@ -7,6 +7,8 @@
  *   - "Drop my rating" stays off until one tap in each of the 3 rows, and a
  *     reaction and tags are optional (a reaction can be un-picked);
  *   - the taps, reaction and tags are sent; the payoff shows;
+ *   - the nine tags show emoji then words; picking "Felt unsafe" shows the
+ *     911 line, and un-picking it hides the line again (VC-45, VC-60);
  *   - the quiet re-check runs for GPS and party-code check-ins (VC-48),
  *     never asks for permission, and "too far" stops the rating; with no
  *     reading (location not allowed) it goes on; a tester check-in skips it;
@@ -21,6 +23,7 @@
 import { fireEvent, render, screen } from '@testing-library/react-native';
 
 import RateScreenRoute, { PROMPT, SAVING_LABEL, SUBMIT_LABEL } from '../app/rate/[id]';
+import { FELT_UNSAFE_HELP } from '@/lib/rating';
 import { useAuth } from '@/lib/auth-context';
 import { submitCheckIn } from '@/lib/check-in-api';
 import { readLocationQuietly } from '@/lib/check-in-location';
@@ -151,8 +154,8 @@ describe('RateScreen form', () => {
     // Pick "Dancing", then switch to "Fire"; pick two heads-ups.
     await fireEvent.press(screen.getByRole('button', { name: 'Reaction: Dancing' }));
     await fireEvent.press(screen.getByRole('button', { name: 'Reaction: Fire' }));
-    await fireEvent.press(screen.getByRole('button', { name: 'Heads-up: Lines are long' }));
-    await fireEvent.press(screen.getByRole('button', { name: 'Heads-up: Packed' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Heads-up: Long line' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Heads-up: Parking is rough' }));
     await fireEvent.press(screen.getByRole('button', { name: SUBMIT_LABEL }));
 
     expect(rate).toHaveBeenCalledWith('e1', {
@@ -160,7 +163,7 @@ describe('RateScreen form', () => {
       music: 2,
       energy: 3,
       reaction: 'fire',
-      tags: ['lines_long', 'packed'],
+      tags: ['lines_long', 'parking_rough'],
     });
     expect(
       await screen.findByText(
@@ -179,6 +182,23 @@ describe('RateScreen form', () => {
     await fireEvent.press(screen.getByRole('button', { name: 'Reaction: Chill' }));
     await fireEvent.press(screen.getByRole('button', { name: SUBMIT_LABEL }));
     expect(rate).toHaveBeenCalledWith('e1', expect.objectContaining({ reaction: null, tags: [] }));
+  });
+
+  it('shows the nine tags with emoji, and the 911 line while "Felt unsafe" is picked', async () => {
+    await render(<RateScreenRoute />);
+    await screen.findByText(PROMPT);
+    // Emoji then words; no retired tag is offered.
+    expect(screen.getByText('⏳ Long line')).toBeOnTheScreen();
+    expect(screen.getByText('🅿️ Parking is rough')).toBeOnTheScreen();
+    expect(screen.queryByRole('button', { name: 'Heads-up: Packed' })).toBeNull();
+    expect(screen.queryByText(FELT_UNSAFE_HELP)).toBeNull();
+    const unsafe = screen.getByRole('button', { name: 'Heads-up: Felt unsafe' });
+    await fireEvent.press(unsafe);
+    expect(screen.getByText(FELT_UNSAFE_HELP)).toBeOnTheScreen();
+    // An alert, so VoiceOver reads it as soon as it appears (cto review).
+    expect(screen.getByRole('alert')).toHaveTextContent(FELT_UNSAFE_HELP);
+    await fireEvent.press(unsafe);
+    expect(screen.queryByText(FELT_UNSAFE_HELP)).toBeNull();
   });
 
   it('shows "Saving..." while the save runs', async () => {
@@ -307,7 +327,7 @@ describe('RateScreen accessibility (VC-49)', () => {
     expect(screen.getByRole('radio', { name: 'crowd: Packed', checked: true })).toBeOnTheScreen();
     // The optional reaction and tags stay on/off buttons.
     expect(screen.getByRole('button', { name: 'Reaction: Fire' })).toBeOnTheScreen();
-    expect(screen.getByRole('button', { name: 'Heads-up: Packed' })).toBeOnTheScreen();
+    expect(screen.getByRole('button', { name: 'Heads-up: Long line' })).toBeOnTheScreen();
   });
 });
 

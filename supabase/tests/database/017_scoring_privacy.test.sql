@@ -136,8 +136,10 @@ cross join (values ('17171717-0000-4000-8000-0000000000c1'::uuid), ('17171717-00
 
 -- VC-46 + VC-48 at d1: guests 1 to 3 checked in by GPS, guest 4 by party
 -- code 30 minutes ago. Heads-ups: guest 1 lines_long exactly 3 hours ago
--- (counts), guest 2 lines_long 3 hours 1 minute ago (doesn't), guest 3
--- music_fire 4 hours ago (doesn't).
+-- (counts), guest 2 lines_long 3 hours 1 minute ago (doesn't), guest 4
+-- lines_long 1 hour ago (counts), guest 3 picking_up 4 hours ago (doesn't),
+-- guest 1 picking_up now (counts, but alone it stays below the VC-56 bar of
+-- 2 guests, so it isn't shown yet).
 insert into public.check_ins (user_id, event_id, method, first_at, last_verified_at) values
   ('17171717-9999-4999-8999-000000000001', '17171717-0000-4000-8000-0000000000d1', 'gps', now(), now()),
   ('17171717-9999-4999-8999-000000000002', '17171717-0000-4000-8000-0000000000d1', 'gps', now(), now()),
@@ -147,7 +149,9 @@ insert into public.check_ins (user_id, event_id, method, first_at, last_verified
 insert into public.heads_up_votes (user_id, event_id, tag, created_at) values
   ('17171717-9999-4999-8999-000000000001', '17171717-0000-4000-8000-0000000000d1', 'lines_long', now() - interval '3 hours'),
   ('17171717-9999-4999-8999-000000000002', '17171717-0000-4000-8000-0000000000d1', 'lines_long', now() - interval '3 hours 1 minute'),
-  ('17171717-9999-4999-8999-000000000003', '17171717-0000-4000-8000-0000000000d1', 'music_fire', now() - interval '4 hours');
+  ('17171717-9999-4999-8999-000000000004', '17171717-0000-4000-8000-0000000000d1', 'lines_long', now() - interval '1 hour'),
+  ('17171717-9999-4999-8999-000000000003', '17171717-0000-4000-8000-0000000000d1', 'picking_up', now() - interval '4 hours'),
+  ('17171717-9999-4999-8999-000000000001', '17171717-0000-4000-8000-0000000000d1', 'picking_up', now());
 
 -- ---- 1. Locked down (5) -----------------------------------------------------
 select ok((select bool_and(prosecdef and proconfig @> array['search_path=""'])
@@ -355,12 +359,12 @@ select is((public.get_event_vibe('17171717-0000-4000-8000-0000000000c1') ->> 'he
 -- ---- 5. VC-46: heads-ups from the last 3 hours (7) --------------------------
 select set_config('request.jwt.claims', '{"sub":"17171717-9999-4999-8999-000000000002","role":"authenticated"}', true);
 select is(public.get_event_heads_ups('17171717-0000-4000-8000-0000000000d1'),
-  '[{"tag": "lines_long", "count": 1, "mine": false}]'::jsonb,
-  'only +1s from the last 3 hours count (3 h exactly in; older ones and music_fire out)');
+  '[{"tag": "lines_long", "count": 2, "mine": false}]'::jsonb,
+  'only +1s from the last 3 hours count (3 h exactly in; 3 h 1 min out; picking_up has 1 guest, under the bar)');
 select is(public.add_heads_up('17171717-0000-4000-8000-0000000000d1', 'lines_long') ->> 'status', 'added',
   'an own +1 older than 3 hours can be added again (refreshed)');
 select is(public.get_event_heads_ups('17171717-0000-4000-8000-0000000000d1'),
-  '[{"tag": "lines_long", "count": 2, "mine": true}]'::jsonb,
+  '[{"tag": "lines_long", "count": 3, "mine": true}]'::jsonb,
   'the refreshed +1 counts and shows as mine');
 select is(public.add_heads_up('17171717-0000-4000-8000-0000000000d1', 'lines_long') ->> 'status', 'already',
   'a +1 that still counts can''t be added twice');
@@ -368,11 +372,11 @@ select set_config('request.jwt.claims', '{"sub":"17171717-9999-4999-8999-0000000
 select is(public.add_heads_up('17171717-0000-4000-8000-0000000000d1', 'lines_long') ->> 'status', 'already',
   'a +1 exactly 3 hours old still counts, so it is "already"');
 select set_config('request.jwt.claims', '{"sub":"17171717-9999-4999-8999-000000000003","role":"authenticated"}', true);
-select is(public.submit_rating('17171717-0000-4000-8000-0000000000d1', 2, 2, 2, null, array['music_fire']) ->> 'status', 'saved',
+select is(public.submit_rating('17171717-0000-4000-8000-0000000000d1', 2, 2, 2, null, array['picking_up']) ->> 'status', 'saved',
   'rating with an old tag picked');
 select is(public.get_event_heads_ups('17171717-0000-4000-8000-0000000000d1') -> 1,
-  '{"tag": "music_fire", "count": 1, "mine": true}'::jsonb,
-  'rating refreshes the old music_fire +1, so it counts again');
+  '{"tag": "picking_up", "count": 2, "mine": true}'::jsonb,
+  'rating refreshes the old picking_up +1, so it counts again (now 2 guests, so shown)');
 
 -- ---- 6. VC-48: the quiet check for a party-code guest (6) -------------------
 -- The app sends the reading straight to check_in (app/rate/[id].tsx).

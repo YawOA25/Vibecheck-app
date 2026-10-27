@@ -24,6 +24,16 @@
  *     sets VENUE_CONTACT_EMAIL (src/lib/contact.ts), venues and hosts also
  *     see an email address here.
  *
+ *   - which tags appear is decided on the server (VC-56, VC-59): a tag shows
+ *     only once 2 or more guests picked it, and "Felt unsafe" only at 3+
+ *     guests and 10% of tonight's raters, counting tonight only. Lower
+ *     counts never reach the app, so this card just shows what it gets.
+ *   - "Felt unsafe" (VC-60) is worded as guests' view for that night
+ *     ("💬 Felt unsafe · 3 guests tonight", a neutral icon, not a warning
+ *     sign). "What are these?" opens a line saying tags are guests'
+ *     impressions, not checked or endorsed by us. A guest who +1s "Felt
+ *     unsafe" is told where real help is (911 or venue staff).
+ *
  * Why there's no free text: nothing to moderate (VC-43). Free-text comments
  * are the separate backlog item VC-44. Nobody ever sees WHO added a tag.
  */
@@ -38,7 +48,14 @@ import { REPORT_REASONS } from '@/lib/moderation';
 import type { ReportReason } from '@/lib/moderation';
 import { reportHeadsUpTag } from '@/lib/moderation-api';
 import type { ReportStatus } from '@/lib/moderation-api';
-import { headsUpLabel } from '@/lib/rating';
+import {
+  FELT_UNSAFE,
+  FELT_UNSAFE_HELP,
+  HEADS_UP_INFO,
+  headsUpChipA11y,
+  headsUpChipText,
+  headsUpLabel,
+} from '@/lib/rating';
 import type { HeadsUpTag } from '@/lib/rating';
 import { addHeadsUp, getEventHeadsUps } from '@/lib/ratings-api';
 import type { HeadsUpCount } from '@/lib/ratings-api';
@@ -47,13 +64,17 @@ import { colors, radius, spacing, typography } from '@/theme';
 
 /** The card's words (exported so tests use the same text). */
 export const HEADS_UP_TITLE = 'HEADS-UP';
-export const NO_HEADS_UPS = 'No heads-ups yet. Guests who are here can add one when they rate.';
+export const NO_HEADS_UPS =
+  'No heads-ups yet. A tag shows here once 2 or more guests who are here pick it.';
 export const HEADS_UP_LOAD_ERROR = "We couldn't load the heads-ups.";
 export const PLUS_ONE_HINT = 'Here now? Tap a heads-up to +1 it.';
 export const REPORT_LINK = 'Report this tag';
 export const REPORT_PICK =
   'Which tag is wrong? Our team reviews reports within 48 hours. Nobody else sees who reported.';
 export const REPORT_CANCEL = 'Never mind';
+/** The info tap that explains what tags are (VC-60). */
+export const INFO_LINK = 'What are these?';
+export const INFO_CLOSE = 'Hide info';
 
 /**
  * The question above the reasons, once a tag is picked (VC-65).
@@ -127,6 +148,10 @@ export function HeadsUpCard({
   const [reportTag, setReportTag] = useState<HeadsUpTag | null>(null);
   const [reporting, setReporting] = useState<ReportReason | null>(null);
   const [reportMessage, setReportMessage] = useState<{ text: string; ok: boolean } | null>(null);
+  // VC-60: whether the "what are these?" line is open, and whether to show
+  // the 911 line (after this guest +1'd "Felt unsafe").
+  const [infoOpen, setInfoOpen] = useState(false);
+  const [showSafetyHelp, setShowSafetyHelp] = useState(false);
 
   // Load the counts. State is only set when the answer arrives, and a late
   // answer is ignored if the card has gone or a newer load started.
@@ -155,6 +180,8 @@ export function HeadsUpCard({
       if (!outcome.ok) {
         setMessage(outcome.message);
       } else if (outcome.result.status === 'added' || outcome.result.status === 'already') {
+        // VC-60: picking "Felt unsafe" alerts nobody, so point to real help.
+        if (tag === FELT_UNSAFE) setShowSafetyHelp(true);
         setReload((n) => n + 1);
       } else {
         setMessage(headsUpRefusalMessage(outcome.result));
@@ -213,16 +240,14 @@ export function HeadsUpCard({
         <>
           <View style={styles.chips}>
             {list.tags.map((item) => {
-              // parseHeadsUpList only keeps tags this app knows, so a label exists.
-              const label = headsUpLabel(item.tag) ?? item.tag;
-              const people = `${item.count} ${item.count === 1 ? 'person' : 'people'}`;
               return (
                 <ChoiceChip
                   key={item.tag}
                   shape="pill"
-                  label={`${label} · ${item.count}`}
-                  // "Lines are long, 3 people, you +1'd this".
-                  accessibilityLabel={`${label}, ${people}${item.mine ? ", you +1'd this" : ''}`}
+                  // "⏳ Long line · 3", or "💬 Felt unsafe · 3 guests tonight".
+                  label={headsUpChipText(item.tag, item.count)}
+                  // "Long line, 3 people, you +1'd this" (no emoji).
+                  accessibilityLabel={headsUpChipA11y(item.tag, item.count, item.mine)}
                   accessibilityHint={canVote && !item.mine ? 'Tap to +1' : undefined}
                   // Highlighted (with a check mark) when the guest has +1'd it.
                   selected={item.mine}
@@ -235,7 +260,28 @@ export function HeadsUpCard({
             })}
           </View>
           {canVote ? <Text style={styles.caption}>{PLUS_ONE_HINT}</Text> : null}
+          {/* VC-60: the info tap. Tags are guests' impressions, not ours. */}
+          <View style={styles.reportRow}>
+            <Button
+              label={infoOpen ? INFO_CLOSE : INFO_LINK}
+              variant="text"
+              size="small"
+              onPress={() => setInfoOpen((open) => !open)}
+            />
+          </View>
+          {infoOpen ? <Text style={styles.caption}>{HEADS_UP_INFO}</Text> : null}
         </>
+      ) : null}
+
+      {showSafetyHelp ? (
+        <Text
+          style={styles.safetyHelp}
+          // "alert" so VoiceOver (iOS) reads it out; the live region does the same on Android.
+          accessibilityRole="alert"
+          accessibilityLiveRegion="polite"
+        >
+          {FELT_UNSAFE_HELP}
+        </Text>
       ) : null}
 
       {message ? <FormMessage message={message} /> : null}
@@ -330,4 +376,6 @@ const styles = StyleSheet.create({
   // The report link sits at the start, only as wide as its words.
   reportRow: { flexDirection: 'row' },
   reportBox: { gap: spacing.sm },
+  // Full-strength text (not muted) so the 911 line is easy to read.
+  safetyHelp: { ...typography.bodySm, color: colors.text },
 });

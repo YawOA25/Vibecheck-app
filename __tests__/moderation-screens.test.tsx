@@ -146,7 +146,7 @@ function people() {
             hidden: false,
           },
           headsUpsRemoved: false,
-          headsUps: [{ tag: 'packed', removed: false }],
+          headsUps: [{ tag: 'dress_code', removed: false }],
         },
         {
           userId: 'u2',
@@ -191,10 +191,11 @@ describe('Moderate screen (VC-47, VC-58)', () => {
     expect(await screen.findByText('3 +1s tonight · 2 open reports')).toBeOnTheScreen();
     expect(tags).toHaveBeenCalledWith('e1');
     expect(moderation).toHaveBeenCalledWith('e1');
-    // Overpriced: visible with reports -> Hide and Keep. Packed: hidden -> Unhide.
+    // Overpriced: visible with reports -> Hide and Keep. Packed: hidden ->
+    // Unhide (a tag retired in VC-45, so admins see it marked "(retired)").
     expect(screen.getByRole('button', { name: 'Hide tag, Overpriced' })).toBeOnTheScreen();
     expect(screen.getByRole('button', { name: 'Keep tag, Overpriced' })).toBeOnTheScreen();
-    expect(screen.getByRole('button', { name: 'Unhide tag, Packed' })).toBeOnTheScreen();
+    expect(screen.getByRole('button', { name: 'Unhide tag, Packed (retired)' })).toBeOnTheScreen();
     // Ava rated; Ben only +1'd (and his +1 was removed).
     expect(screen.getByText('Crowd 1 · Music 1 · Energy 1 · score 0.0')).toBeOnTheScreen();
     expect(screen.getByText('No rating (only +1s)')).toBeOnTheScreen();
@@ -296,7 +297,7 @@ describe('Moderate screen accessibility (cto review)', () => {
       ok: true,
       tags: [
         { tag: 'overpriced', votes: 3, hidden: false, openReports: 1 },
-        { tag: 'packed', votes: 2, hidden: false, openReports: 1 },
+        { tag: 'dress_code', votes: 2, hidden: false, openReports: 1 },
       ],
     });
     const two = people();
@@ -319,8 +320,8 @@ describe('Moderate screen accessibility (cto review)', () => {
       expect.arrayContaining([
         'Hide tag, Overpriced',
         'Keep tag, Overpriced',
-        'Hide tag, Packed',
-        'Keep tag, Packed',
+        'Hide tag, Strict dress code',
+        'Keep tag, Strict dress code',
         'Hide rating, Ava',
         'Hide rating, Ben',
         'Remove +1s, Ava',
