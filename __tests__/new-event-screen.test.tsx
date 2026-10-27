@@ -53,7 +53,10 @@ beforeEach(() => {
  */
 async function fillForm(endDate: string = dayAfter) {
   await fireEvent.changeText(screen.getByLabelText('Event name'), 'Saturday rooftop');
-  await fireEvent.changeText(screen.getByLabelText('Area'), 'Shaw, DC');
+  // VC-37: pick the state, then search its areas and pick the match.
+  await fireEvent.press(screen.getByRole('radio', { name: 'DC' }));
+  await fireEvent.changeText(screen.getByLabelText('Area'), 'Shaw');
+  await fireEvent.press(screen.getByRole('button', { name: 'Shaw, DC' }));
   await fireEvent.changeText(screen.getByLabelText('Start date'), tomorrow.replace(/\D/g, ''));
   await fireEvent.changeText(screen.getByLabelText('Start time'), '10:00 PM');
   await fireEvent.changeText(screen.getByLabelText('End date'), endDate.replace(/\D/g, ''));
@@ -110,6 +113,7 @@ describe('NewEventScreen', () => {
         p_radius_m: 150,
         p_code_check_in_enabled: true,
         p_source: 'host',
+        p_state: 'DC',
       }),
     );
     expect(screen.getByText('K7MX2Q')).toBeOnTheScreen();

@@ -6,6 +6,8 @@
  * signed in but hasn't passed the 18+ gate can't reach Tonight, even by
  * opening the "/" address directly.
  *
+ * Admins only (VC-34): the Edit event address opens only for admins.
+ *
  * How: expo-router's `renderRouter` builds a pretend app in memory from the
  * real root layout plus simple stand-in screens. The sign-in state is faked.
  */
@@ -99,5 +101,48 @@ describe('root layout guards', () => {
     await openAt('/');
     expect(await screen.findByText("Can't load your profile")).toBeOnTheScreen();
     expect(screen.getByRole('button', { name: 'Try again' })).toBeOnTheScreen();
+  });
+});
+
+describe('admin-only screens (VC-34 Edit event)', () => {
+  /**
+   * Pretends a signed-up person with the given role, then opens the Edit
+   * event address with a stand-in edit screen in the pretend app.
+   *
+   * @param role - 'user' or 'admin'.
+   * @param isTester - whether they are a tester.
+   */
+  async function openEditAs(role: 'user' | 'admin', isTester = false) {
+    (useAuth as jest.Mock).mockReturnValue({
+      status: 'ready',
+      profile: { id: 'p1', display_name: 'Ava', role, is_tester: isTester },
+      refreshProfile: jest.fn(),
+      signOut: jest.fn(),
+    });
+    await renderRouter(
+      {
+        _layout: RootLayout,
+        index: () => <Text>Tonight screen</Text>,
+        'admin/edit-event/[id]': () => <Text>Edit event screen</Text>,
+      },
+      { initialUrl: '/admin/edit-event/e1' },
+    );
+  }
+
+  it('lets an admin open Edit event by address', async () => {
+    await openEditAs('admin');
+    expect(await screen.findByText('Edit event screen')).toBeOnTheScreen();
+  });
+
+  it('sends a normal user who opens the Edit event address to Tonight instead', async () => {
+    await openEditAs('user');
+    expect(await screen.findByText('Tonight screen')).toBeOnTheScreen();
+    expect(screen.queryByText('Edit event screen')).toBeNull();
+  });
+
+  it('keeps a tester who is not an admin out too', async () => {
+    await openEditAs('user', true);
+    expect(await screen.findByText('Tonight screen')).toBeOnTheScreen();
+    expect(screen.queryByText('Edit event screen')).toBeNull();
   });
 });

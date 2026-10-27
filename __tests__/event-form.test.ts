@@ -37,6 +37,7 @@ const NOW = new Date('2026-10-31T19:00:00Z'); // Saturday 31 October 2026, 3:00 
 function form(overrides: Partial<EventFormValues> = {}): EventFormValues {
   return {
     title: 'Saturday rooftop',
+    state: 'DC',
     areaLabel: 'Shaw, DC',
     startDate: '10 / 31 / 2026',
     startTime: '10:00 PM',
@@ -103,8 +104,14 @@ describe('validateEventForm', () => {
         p_source: 'staff_pick',
         p_summary: 'Afrobeats on the roof.',
         p_is_21_plus: false,
+        p_state: 'DC',
       },
     });
+  });
+
+  it('asks for the state on a new event (VC-37)', () => {
+    const result = validateEventForm(form({ state: null }), NOW);
+    expect(result).toEqual({ ok: false, errors: { state: 'Pick DC, Maryland or Virginia.' } });
   });
 
   it('sends empty optional fields as null and the source as host', () => {

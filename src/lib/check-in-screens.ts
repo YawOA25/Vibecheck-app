@@ -54,6 +54,9 @@ export interface ResultScreen {
 /** The most different events someone may check in to in 24 hours (server rule). */
 export const MAX_EVENTS_PER_DAY = 8;
 
+/** The sentence on the "GPS check-in is off" screen (VC-36). */
+export const GPS_LOCKED_BODY = 'GPS check-in is off for this event. Enter the party code.';
+
 /** Reused button labels. */
 const BACK: ActionButton = { action: 'back', label: 'Back to the event' };
 const RETRY: ActionButton = { action: 'retry', label: 'Try again' };
@@ -124,6 +127,18 @@ export function resultScreen(view: CheckInView, eventTitle: string): ResultScree
         body: `You've checked in to ${MAX_EVENTS_PER_DAY} events in the last 24 hours, the most we allow. You can still go back to events you've already checked in to.`,
         success: false,
         actions: [BACK],
+      };
+    case 'gps_locked':
+      // VC-36: after 5 "too far" answers for this event, the server won't
+      // judge GPS for this person again (so nobody can hunt for a private
+      // party's pin). The party code is the way in, so it's the main button.
+      // No "Try again": GPS would give the same answer all night.
+      return {
+        lead: 'GPS check-in',
+        highlight: 'is off.',
+        body: GPS_LOCKED_BODY,
+        success: false,
+        actions: [CODE, BACK],
       };
   }
 }

@@ -7,7 +7,8 @@
  *   - the "You at <event>?" sheet: name, neighbourhood, privacy note, and
  *     no address or map;
  *   - every result screen's headline and its buttons: passed, too far,
- *     weak signal, too early, too late, both limits;
+ *     weak signal, too early, too late, both limits, and "GPS check-in is
+ *     off" after 5 "too far" answers (VC-36);
  *   - the permission screens: denied ("Allow location" asks again, "Not
  *     now" goes back), blocked and approximate (open Settings), location
  *     switched off; phone-side problems never call the server;
@@ -30,6 +31,7 @@ import { submitCheckIn } from '@/lib/check-in-api';
 import type { CheckInOutcome } from '@/lib/check-in-api';
 import { readLocationForCheckIn } from '@/lib/check-in-location';
 import type { ReadingOutcome } from '@/lib/check-in-location';
+import { GPS_LOCKED_BODY } from '@/lib/check-in-screens';
 import { getEvent } from '@/lib/events-read';
 import type { PublicEvent } from '@/lib/tonight';
 
@@ -226,6 +228,17 @@ describe('result screens from the server', () => {
     await checkInWith({ ok: true, result: { status: 'too_many_attempts', retryAfterMinutes: 12 } });
     expect(await screen.findByRole('header', { name: 'Too many tries.' })).toBeOnTheScreen();
     expect(screen.getByText(/Try again in 12 minutes/)).toBeOnTheScreen();
+  });
+
+  it('GPS locked (VC-36): says GPS is off for this event, offers only the party code and back', async () => {
+    await checkInWith({ ok: true, result: { status: 'gps_locked' } });
+    expect(await screen.findByRole('header', { name: 'GPS check-in is off.' })).toBeOnTheScreen();
+    expect(screen.getByText(GPS_LOCKED_BODY)).toBeOnTheScreen();
+    // No "Try again": GPS would give the same answer all night.
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+    await fireEvent.press(screen.getByRole('button', { name: 'Enter the party code' }));
+    expect(mockPush).toHaveBeenCalledWith({ pathname: '/join/[id]', params: { id: 'e1' } });
+    expect(screen.getByRole('button', { name: 'Back to the event' })).toBeOnTheScreen();
   });
 
   it('8 events in 24 hours: explains the limit', async () => {

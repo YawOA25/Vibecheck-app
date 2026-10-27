@@ -11,18 +11,25 @@
  *     that opens the ticket page in the browser, and "Not affiliated with
  *     Eventbrite.";
  *   - a host party never shows a ticket link, even if one is stored;
- *   - "I'm here" opens the check-in screen (tested in check-in-screen.test.tsx).
+ *   - "I'm here" opens the check-in screen (tested in check-in-screen.test.tsx);
+ *   - admins only (VC-34, VC-35): an Admin box with "Edit event" (opens the
+ *     edit screen) and "Show party code" (asks the server, shows the code,
+ *     and can hide it again); guests and testers never see the box.
  */
 import { fireEvent, render, screen } from '@testing-library/react-native';
 import { Linking } from 'react-native';
 
-import EventScreen, { NOT_FOUND_TITLE } from '../app/event/[id]';
+import EventScreen, { EDIT_EVENT, HIDE_CODE, NOT_FOUND_TITLE, SHOW_CODE } from '../app/event/[id]';
 import { EARLY_READING_TITLE } from '@/components/LiveVibeCard';
 import { NOT_AFFILIATED } from '@/components/TicketLink';
+import { useAuth } from '@/lib/auth-context';
+import { getEventCode } from '@/lib/events-api';
 import { getEvent } from '@/lib/events-read';
 import type { PublicEvent } from '@/lib/tonight';
 
 jest.mock('@/lib/events-read', () => ({ getEvent: jest.fn() }));
+jest.mock('@/lib/events-api', () => ({ getEventCode: jest.fn() }));
+jest.mock('@/lib/auth-context', () => ({ useAuth: jest.fn() }));
 // The "mock" prefix lets jest.mock (which runs first) use these fakes.
 const mockPush = jest.fn();
 const mockBack = jest.fn();
@@ -34,9 +41,28 @@ jest.mock('expo-router', () => ({
     canGoBack: () => true,
   }),
   useLocalSearchParams: () => ({ id: 'e1' }),
+  // Outside a real navigator the page is "in view" once: run the effect like
+  // a normal useEffect. (require inside: jest.mock can't use outer imports.)
+  useFocusEffect: (effect: () => void | (() => void)) => {
+    const { useEffect } = require('react');
+    useEffect(effect, [effect]);
+  },
 }));
 
 const get = getEvent as jest.Mock;
+const code = getEventCode as jest.Mock;
+
+/**
+ * Pretends the signed-in person has the given role.
+ *
+ * @param role - 'user' or 'admin'.
+ * @param isTester - whether they are a tester.
+ */
+function signInAs(role: 'user' | 'admin', isTester = false) {
+  (useAuth as jest.Mock).mockReturnValue({
+    profile: { id: 'p1', display_name: 'Ava', role, is_tester: isTester },
+  });
+}
 const TICKET_URL = 'https://www.eventbrite.com/e/rooftop-sundown-123';
 const HOUR = 60 * 60 * 1000;
 
@@ -67,6 +93,7 @@ let openURL: jest.SpyInstance;
 
 beforeEach(() => {
   jest.clearAllMocks();
+  signInAs('user');
   openURL = jest.spyOn(Linking, 'openURL').mockResolvedValue(undefined);
 });
 
@@ -166,5 +193,81 @@ describe('EventScreen staff picks (VC-29)', () => {
     await render(<EventScreen />);
     await screen.findByText('Staff pick');
     expect(screen.queryByRole('link', { name: 'Get tickets' })).toBeNull();
+  });
+});
+
+describe('EventScreen admin tools (VC-34, VC-35)', () => {
+  it('guests see no Admin box, no Edit event and no party code button', async () => {
+    get.mockResolvedValue({ ok: true, event: makeEvent() });
+    await render(<EventScreen />);
+    await screen.findByRole('header', { name: 'Rooftop Sundown' });
+
+    expect(screen.queryByText('ADMIN')).toBeNull();
+    expect(screen.queryByRole('button', { name: EDIT_EVENT })).toBeNull();
+    expect(screen.queryByRole('button', { name: SHOW_CODE })).toBeNull();
+  });
+
+  it('a tester who is not an admin sees no admin tools either', async () => {
+    signInAs('user', true);
+    get.mockResolvedValue({ ok: true, event: makeEvent() });
+    await render(<EventScreen />);
+    await screen.findByRole('header', { name: 'Rooftop Sundown' });
+    expect(screen.queryByRole('button', { name: EDIT_EVENT })).toBeNull();
+    expect(screen.queryByRole('button', { name: SHOW_CODE })).toBeNull();
+  });
+
+  it('an admin can open Edit event', async () => {
+    signInAs('admin');
+    get.mockResolvedValue({ ok: true, event: makeEvent() });
+    await render(<EventScreen />);
+    await fireEvent.press(await screen.findByRole('button', { name: EDIT_EVENT }));
+    expect(mockPush).toHaveBeenCalledWith({
+      pathname: '/admin/edit-event/[id]',
+      params: { id: 'e1' },
+    });
+  });
+
+  it('the party code stays hidden until the admin taps, then can be hidden again', async () => {
+    signInAs('admin');
+    get.mockResolvedValue({ ok: true, event: makeEvent() });
+    code.mockResolvedValue({ ok: true, code: 'K7MX2Q' });
+    await render(<EventScreen />);
+    await screen.findByRole('header', { name: 'Rooftop Sundown' });
+
+    // Not fetched, not shown, until the tap.
+    expect(code).not.toHaveBeenCalled();
+    expect(screen.queryByText('K7MX2Q')).toBeNull();
+
+    await fireEvent.press(screen.getByRole('button', { name: SHOW_CODE }));
+    expect(code).toHaveBeenCalledWith('e1');
+    expect(screen.getByText('K7MX2Q')).toBeOnTheScreen();
+
+    await fireEvent.press(screen.getByRole('button', { name: HIDE_CODE }));
+    expect(screen.queryByText('K7MX2Q')).toBeNull();
+    expect(screen.getByRole('button', { name: SHOW_CODE })).toBeOnTheScreen();
+  });
+
+  it('shows a plain message if the code cannot be loaded', async () => {
+    signInAs('admin');
+    get.mockResolvedValue({ ok: true, event: makeEvent() });
+    code.mockResolvedValue({ ok: false, message: 'Only admins can see the party code.' });
+    await render(<EventScreen />);
+    await fireEvent.press(await screen.findByRole('button', { name: SHOW_CODE }));
+    expect(screen.getByText('Only admins can see the party code.')).toBeOnTheScreen();
+  });
+
+  it('never writes the code to the console', async () => {
+    const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((level) =>
+      jest.spyOn(console, level).mockImplementation(() => {}),
+    );
+    signInAs('admin');
+    get.mockResolvedValue({ ok: true, event: makeEvent() });
+    code.mockResolvedValue({ ok: true, code: 'K7MX2Q' });
+    await render(<EventScreen />);
+    await fireEvent.press(await screen.findByRole('button', { name: SHOW_CODE }));
+    for (const spy of spies) {
+      expect(JSON.stringify(spy.mock.calls)).not.toContain('K7MX2Q');
+      spy.mockRestore();
+    }
   });
 });

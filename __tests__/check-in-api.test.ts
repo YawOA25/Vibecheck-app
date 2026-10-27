@@ -91,6 +91,8 @@ describe('parseCheckInResult', () => {
     expect(parseCheckInResult({ status: 'too_many_events' })).toEqual({
       status: 'too_many_events',
     });
+    // VC-36: 5 "too far" answers for this event, so GPS is off for it.
+    expect(parseCheckInResult({ status: 'gps_locked' })).toEqual({ status: 'gps_locked' });
     expect(
       parseCheckInResult({
         status: 'outside_window',

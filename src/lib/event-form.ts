@@ -1,10 +1,11 @@
 /**
- * Rules for the admin "New event" form (task VC-B04), kept apart from the
- * screen so they can be tested on their own.
+ * Rules for the admin "New event" and "Edit event" forms (tasks VC-B04 and
+ * VC-34), kept apart from the screens so they can be tested on their own.
  *
  * What it does: turns what the admin typed (text in boxes, switches, the GPS
- * pin) into the exact values `create_event` expects, or a list of friendly
- * error messages, one per box.
+ * pin) into the exact values `create_event` expects (or, when editing, just
+ * the changes for `update_event`), or a list of friendly error messages, one
+ * per box. It also fills the form from an existing event for editing.
  *
  * Why the phone checks at all when the server checks everything again: so
  * the admin sees "The end must be after the start" under the right box
@@ -12,9 +13,12 @@
  * (supabase/migrations/20261026180000_admin_events.sql) are the ones that
  * count; these copy them. If one changes, change both.
  */
+import { stateOfListedArea } from '@/data/dmv-areas';
+import type { AreaState } from '@/data/dmv-areas';
 import { formatDateInput, parseDateInput, todayInZone } from '@/lib/age';
 import type { CalendarDate } from '@/lib/age';
-import { zonedMoment } from '@/lib/tonight';
+import { formatClock, zonedMoment } from '@/lib/tonight';
+import type { PublicEvent } from '@/lib/tonight';
 
 /** Longest event name (same as the database rule). */
 export const MAX_TITLE_LENGTH = 80;
@@ -61,6 +65,11 @@ export interface Pin {
 /** Everything on the form, as typed. */
 export interface EventFormValues {
   title: string;
+  /**
+   * DC, Maryland or Virginia (VC-37), chosen before the area. null until
+   * picked (or guessed from the pin).
+   */
+  state: AreaState | null;
   areaLabel: string;
   /** "MM / DD / YYYY" */
   startDate: string;
@@ -85,6 +94,7 @@ export interface EventFormValues {
 /** The boxes that can show an error. */
 export type EventFormField =
   | 'title'
+  | 'state'
   | 'areaLabel'
   | 'startDate'
   | 'startTime'
@@ -115,6 +125,8 @@ export interface CreateEventInput {
   p_source: 'host' | 'staff_pick';
   p_summary: string | null;
   p_is_21_plus: boolean;
+  /** VC-37: 'DC', 'MD' or 'VA'. */
+  p_state: AreaState;
 }
 
 /** What {@link validateEventForm} returns: the values to send, or the errors. */
@@ -222,15 +234,41 @@ export function looksLikeStreetAddress(label: string): boolean {
   return /^\s*\d+\s/.test(label);
 }
 
+/** What the form is for: making a new event, or editing one (VC-34). */
+export type EventFormMode = 'create' | 'edit';
+
+/** The pieces {@link checkEventForm} worked out, used to build the server call. */
+interface CheckedForm {
+  title: string;
+  areaLabel: string;
+  startsAt: Date;
+  endsAt: Date;
+  /** null in edit mode when the radius box was left empty ("keep"). */
+  radius: number | null;
+  ticketUrl: string;
+  summary: string;
+}
+
 /**
- * Checks the whole form and builds the values for `create_event`.
+ * Checks every box on the form. Shared by "New event" and "Edit event" so
+ * the two can't drift apart.
  *
  * @param values - what is on the form.
- * @param now - the current moment (passed in so tests can choose it).
- * @returns `{ ok: true, input }` ready to send, or `{ ok: false, errors }`
- *   with one plain-English message per box that needs fixing.
+ * @param now - the current moment.
+ * @param mode - 'create' or 'edit'. Edit mode differs in three ways, each
+ *   matching the server's update_event:
+ *     - the pin may stay empty: it means "keep the current location" (the
+ *       app can't read the old pin, so it can't show it);
+ *     - the radius may be empty for the same reason ("keep");
+ *     - an end time in the past is allowed (fixing a typo after the party is
+ *       fine; only brand-new events must not be over already).
+ * @returns the checked pieces, or one plain-English message per bad box.
  */
-export function validateEventForm(values: EventFormValues, now: Date): EventFormResult {
+function checkEventForm(
+  values: EventFormValues,
+  now: Date,
+  mode: EventFormMode,
+): { ok: true; form: CheckedForm } | { ok: false; errors: EventFormErrors } {
   const errors: EventFormErrors = {};
 
   const title = values.title.trim();
@@ -238,8 +276,15 @@ export function validateEventForm(values: EventFormValues, now: Date): EventForm
   else if (title.length > MAX_TITLE_LENGTH)
     errors.title = `Keep the name to ${MAX_TITLE_LENGTH} characters.`;
 
+  // The state (VC-37) is required for new events. When editing, an older
+  // event may have none, and leaving it empty keeps it that way.
+  if (mode === 'create' && !values.state) errors.state = 'Pick DC, Maryland or Virginia.';
+
   const areaLabel = values.areaLabel.trim();
-  if (areaLabel.length < 1) errors.areaLabel = 'Add the area, like "Shaw, DC".';
+  // The Area box only sets a value once a suggestion or "Use ..." is picked
+  // (VC-37), so say how to finish, not just "add it".
+  if (areaLabel.length < 1)
+    errors.areaLabel = 'Add the area: start typing, then pick a match or "Use ...".';
   else if (areaLabel.length > MAX_AREA_LENGTH)
     errors.areaLabel = `Keep the area to ${MAX_AREA_LENGTH} characters.`;
   else if (looksLikeStreetAddress(areaLabel))
@@ -267,16 +312,22 @@ export function validateEventForm(values: EventFormValues, now: Date): EventForm
     if (hours <= 0) errors.endTime = END_BEFORE_START;
     else if (hours > MAX_EVENT_HOURS)
       errors.endDate = `An event can last ${MAX_EVENT_HOURS} hours at most. Check the end date.`;
-    else if (endsAt.getTime() <= now.getTime())
+    else if (mode === 'create' && endsAt.getTime() <= now.getTime())
       errors.endTime = 'That end time has already passed. Check the date and AM/PM.';
   }
 
-  if (!values.pin) errors.pin = 'Tap "Use my current location" while you are at the event.';
+  if (mode === 'create' && !values.pin)
+    errors.pin = 'Tap "Use my current location" while you are at the event.';
 
   // The radius must be a whole number in range ("150", not "150.5" or "abc").
-  const radius = /^\d+$/.test(values.radius.trim()) ? Number(values.radius.trim()) : NaN;
-  if (!(radius >= MIN_RADIUS_M && radius <= MAX_RADIUS_M))
-    errors.radius = `Enter ${MIN_RADIUS_M} to ${MAX_RADIUS_M} metres.`;
+  // In edit mode an empty box means "keep the current radius".
+  const radiusText = values.radius.trim();
+  let radius: number | null = null;
+  if (!(mode === 'edit' && radiusText === '')) {
+    radius = /^\d+$/.test(radiusText) ? Number(radiusText) : NaN;
+    if (!(radius >= MIN_RADIUS_M && radius <= MAX_RADIUS_M))
+      errors.radius = `Enter ${MIN_RADIUS_M} to ${MAX_RADIUS_M} metres.`;
+  }
 
   const ticketUrl = values.ticketUrl.trim();
   if (ticketUrl !== '' && !isAllowedTicketUrl(ticketUrl))
@@ -286,26 +337,195 @@ export function validateEventForm(values: EventFormValues, now: Date): EventForm
   if (wordCount(summary) > MAX_SUMMARY_WORDS || summary.length > MAX_SUMMARY_LENGTH)
     errors.summary = `Keep it to ${MAX_SUMMARY_WORDS} words or fewer, in our own words.`;
 
-  if (Object.keys(errors).length > 0 || !startsAt || !endsAt || !values.pin) {
+  if (Object.keys(errors).length > 0 || !startsAt || !endsAt) {
     return { ok: false, errors };
   }
+  return {
+    ok: true,
+    form: { title, areaLabel, startsAt, endsAt, radius, ticketUrl, summary },
+  };
+}
 
+/**
+ * Checks the whole form and builds the values for `create_event`.
+ *
+ * @param values - what is on the form.
+ * @param now - the current moment (passed in so tests can choose it).
+ * @returns `{ ok: true, input }` ready to send, or `{ ok: false, errors }`
+ *   with one plain-English message per box that needs fixing.
+ */
+export function validateEventForm(values: EventFormValues, now: Date): EventFormResult {
+  const checked = checkEventForm(values, now, 'create');
+  if (!checked.ok) return checked;
+  // In create mode checkEventForm insists on a pin and a radius, so these
+  // are always set here; the guard just keeps TypeScript sure of it.
+  const { form } = checked;
+  const radius = form.radius;
+  if (!values.pin || radius === null || !values.state) return { ok: false, errors: {} };
   return {
     ok: true,
     input: {
-      p_title: title,
-      p_area_label: areaLabel,
-      p_starts_at: startsAt.toISOString(),
-      p_ends_at: endsAt.toISOString(),
+      p_title: form.title,
+      p_area_label: form.areaLabel,
+      p_starts_at: form.startsAt.toISOString(),
+      p_ends_at: form.endsAt.toISOString(),
       p_lat: values.pin.lat,
       p_lng: values.pin.lng,
       p_radius_m: radius,
       p_code_check_in_enabled: values.codeEnabled,
       p_is_test: values.isTest,
-      p_ticket_url: ticketUrl === '' ? null : ticketUrl,
+      p_ticket_url: form.ticketUrl === '' ? null : form.ticketUrl,
       p_source: values.isStaffPick ? 'staff_pick' : 'host',
-      p_summary: summary === '' ? null : summary,
+      p_summary: form.summary === '' ? null : form.summary,
       p_is_21_plus: values.is21Plus,
+      p_state: values.state,
     },
   };
+}
+
+// ---- Editing an event (VC-34) ----------------------------------------------
+
+/**
+ * What the Edit event form starts from: the event's public facts plus the
+ * party-code switch. Read with getEventForEdit (src/lib/events-api.ts).
+ * The pin, radius and party code are NOT included: they live in
+ * event_private, which no app user can read (VC-20).
+ */
+export interface EditableEvent extends PublicEvent {
+  code_check_in_enabled: boolean;
+  /** VC-37: 'DC', 'MD' or 'VA', or null for events made before it. */
+  state: AreaState | null;
+}
+
+/**
+ * The values sent to `update_event` (names match the SQL). Only the event id
+ * is always there. Every other field is sent only when the admin changed
+ * it; a missing field means "keep what's there" (the server reads a missing
+ * value as null = keep). For the ticket link and summary, an empty string
+ * means "remove it".
+ */
+export interface UpdateEventInput {
+  p_event_id: string;
+  p_title?: string;
+  p_area_label?: string;
+  p_starts_at?: string;
+  p_ends_at?: string;
+  p_lat?: number;
+  p_lng?: number;
+  p_radius_m?: number;
+  p_code_check_in_enabled?: boolean;
+  p_is_test?: boolean;
+  p_ticket_url?: string;
+  p_source?: 'host' | 'staff_pick';
+  p_summary?: string;
+  p_is_21_plus?: boolean;
+  /** VC-37: 'DC', 'MD' or 'VA'. */
+  p_state?: AreaState;
+}
+
+/** What {@link validateEventEdit} returns: the changes to send, or the errors. */
+export type EventEditResult =
+  { ok: true; input: UpdateEventInput; changed: boolean } | { ok: false; errors: EventFormErrors };
+
+/**
+ * Formats a moment for the time boxes, in New York time.
+ *
+ * @param date - the moment.
+ * @returns for example "10 PM" or "9:30 PM", which parseTimeInput reads
+ *   back to the same time. New York, never the phone's zone (B04/B05 rule).
+ */
+export function timeInputFor(date: Date): string {
+  return formatClock(date);
+}
+
+/**
+ * Fills the form from an existing event, for the Edit event screen.
+ *
+ * @param event - the event as read by getEventForEdit.
+ * @returns form values: name, area, New York dates and times, switches,
+ *   ticket link and summary as stored. The pin starts empty and the radius
+ *   box starts empty: both mean "keep the current one" (the app can't read
+ *   them), and the admin can set new ones.
+ */
+export function valuesFromEvent(event: EditableEvent): EventFormValues {
+  const startsAt = new Date(event.starts_at);
+  const endsAt = new Date(event.ends_at);
+  return {
+    title: event.title,
+    // An older event with no saved state gets one from its area when the
+    // area is on the list ("Shaw, DC" -> DC); saving then fills it in.
+    state: event.state ?? stateOfListedArea(event.area_label),
+    areaLabel: event.area_label,
+    startDate: dateInputFor(startsAt),
+    startTime: timeInputFor(startsAt),
+    endDate: dateInputFor(endsAt),
+    endTime: timeInputFor(endsAt),
+    radius: '',
+    codeEnabled: event.code_check_in_enabled,
+    isTest: event.is_test,
+    isStaffPick: event.source === 'staff_pick',
+    is21Plus: event.is_21_plus,
+    ticketUrl: event.ticket_url ?? '',
+    summary: event.summary ?? '',
+    pin: null,
+  };
+}
+
+/**
+ * Checks the Edit event form and works out what changed.
+ *
+ * @param values - what is on the form now.
+ * @param original - the event as it was loaded.
+ * @param now - the current moment.
+ * @returns `{ ok: true, input, changed }`: the update_event values holding
+ *   only the changed fields (changed = false when nothing did), or the
+ *   errors per box.
+ * Why only changed fields: update_event keeps anything not sent. Sending
+ * only changes means (1) the test flag is only sent when the admin flips it,
+ * so the "people have checked in" lock (VCTST) only speaks up when it
+ * matters, and (2) two admins editing different fields don't undo each
+ * other's work.
+ * Times: a time is sent only when its boxes were edited AND the moment
+ * really moved, so re-typing "10 PM" as "10:00 PM" is no change, and an
+ * event stored with seconds (made by SQL) isn't rounded to the minute.
+ */
+export function validateEventEdit(
+  values: EventFormValues,
+  original: EditableEvent,
+  now: Date,
+): EventEditResult {
+  const checked = checkEventForm(values, now, 'edit');
+  if (!checked.ok) return checked;
+  const { form } = checked;
+  const before = valuesFromEvent(original);
+  const input: UpdateEventInput = { p_event_id: original.id };
+
+  if (form.title !== original.title) input.p_title = form.title;
+  if (form.areaLabel !== original.area_label) input.p_area_label = form.areaLabel;
+  const startEdited =
+    values.startDate !== before.startDate || values.startTime !== before.startTime;
+  if (startEdited && form.startsAt.getTime() !== new Date(original.starts_at).getTime())
+    input.p_starts_at = form.startsAt.toISOString();
+  const endEdited = values.endDate !== before.endDate || values.endTime !== before.endTime;
+  if (endEdited && form.endsAt.getTime() !== new Date(original.ends_at).getTime())
+    input.p_ends_at = form.endsAt.toISOString();
+  // A new pin replaces the old one; no pin keeps it.
+  if (values.pin) {
+    input.p_lat = values.pin.lat;
+    input.p_lng = values.pin.lng;
+  }
+  if (form.radius !== null) input.p_radius_m = form.radius;
+  if (values.codeEnabled !== original.code_check_in_enabled)
+    input.p_code_check_in_enabled = values.codeEnabled;
+  if (values.isTest !== original.is_test) input.p_is_test = values.isTest;
+  if (values.is21Plus !== original.is_21_plus) input.p_is_21_plus = values.is21Plus;
+  if (values.state && values.state !== original.state) input.p_state = values.state;
+  const source = values.isStaffPick ? 'staff_pick' : 'host';
+  if (source !== original.source) input.p_source = source;
+  // '' is sent on purpose when a link or summary was removed: the server
+  // reads an empty string as "remove it".
+  if (form.ticketUrl !== (original.ticket_url ?? '')) input.p_ticket_url = form.ticketUrl;
+  if (form.summary !== (original.summary ?? '')) input.p_summary = form.summary;
+
+  return { ok: true, input, changed: Object.keys(input).length > 1 };
 }

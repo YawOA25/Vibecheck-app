@@ -242,10 +242,13 @@ select is((public.check_in('99999999-0000-4000-8000-000000000012', 38.9, -77.0, 
 
 -- ---- 11. Limits (8) ---------------------------------------------------------
 -- 20 an hour: 19 earlier tries (59 minutes ago), then one more = 20.
+-- The 19 are stored as 'weak_signal': the hourly limit counts every kind of
+-- try, and 'too_far' rows would trip the separate 5-per-event 'too far' cap
+-- (VC-36, tested in file 11) before this limit is reached.
 reset role;
 insert into public.check_in_attempts (user_id, event_id, result, accuracy_bucket, at)
 select '99999999-9999-4999-8999-999999999995', '99999999-0000-4000-8000-000000000001',
-       'too_far', '0-25m', now() - interval '59 minutes'
+       'weak_signal', '300m+', now() - interval '59 minutes'
 from generate_series(1, 19);
 set local role authenticated;
 select set_config('request.jwt.claims',

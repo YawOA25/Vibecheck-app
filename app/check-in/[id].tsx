@@ -13,7 +13,8 @@
  *      foreground reading (src/lib/check-in-location.ts) and send it to the
  *      server's check_in function (src/lib/check-in-api.ts).
  *   3. Show the result: passed, too far, weak signal (offers the party code),
- *      too early or too late, a limit reached, or a permission problem.
+ *      too early or too late, a limit reached, GPS switched off for this
+ *      event after 5 "too far" answers (VC-36), or a permission problem.
  *      All wording lives in src/lib/check-in-screens.ts.
  *
  * Privacy: the reading is passed straight from step 2's reader to the

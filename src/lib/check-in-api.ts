@@ -35,7 +35,13 @@ export type CheckInResult =
   /** 20 tries in the last hour; wait this many minutes. */
   | { status: 'too_many_attempts'; retryAfterMinutes: number }
   /** Already checked in to 8 other events in the last 24 hours. */
-  | { status: 'too_many_events' };
+  | { status: 'too_many_events' }
+  /**
+   * 5 "too far" answers for this event already (VC-36): GPS check-in is off
+   * for this person and this event for the rest of the event. The party
+   * code still works.
+   */
+  | { status: 'gps_locked' };
 
 /** Kinds of failure the screen treats differently. */
 export type CheckInErrorKind = 'notFound' | 'notAllowed' | 'badReading' | 'network' | 'unknown';
@@ -76,6 +82,7 @@ export function parseCheckInResult(data: unknown): CheckInResult | null {
     case 'too_far':
     case 'weak_signal':
     case 'too_many_events':
+    case 'gps_locked':
       return { status: value.status };
     case 'outside_window':
       return (value.reason === 'too_early' || value.reason === 'too_late') &&

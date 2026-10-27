@@ -42,10 +42,10 @@ insert into public.event_private (event_id, lat, lng, check_in_code) values
 
 -- ---- 1. Static checks: who may call what (4) -------------------------------
 select ok(not has_function_privilege('anon',
-  'public.create_event(text, text, timestamptz, timestamptz, double precision, double precision, integer, boolean, boolean, text, text, text, boolean)',
+  'public.create_event(text, text, timestamptz, timestamptz, double precision, double precision, integer, boolean, boolean, text, text, text, boolean, text)',
   'execute'), 'anon can''t run create_event');
 select ok(not has_function_privilege('anon',
-  'public.update_event(uuid, text, text, timestamptz, timestamptz, double precision, double precision, integer, boolean, boolean, boolean, text, text, text, boolean)',
+  'public.update_event(uuid, text, text, timestamptz, timestamptz, double precision, double precision, integer, boolean, boolean, boolean, text, text, text, boolean, text)',
   'execute'), 'anon can''t run update_event');
 select ok(not has_function_privilege('authenticated', 'private.is_admin()', 'execute'),
   'app users can''t call the is_admin helper directly');

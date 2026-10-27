@@ -8,7 +8,8 @@
  *        signed out            -> only the sign-in screen
  *        signed in, no profile -> only the age gate
  *        signed in + profile   -> the app itself (Tonight, event pages)
- *        ... and an admin      -> also the New event screen (VC-B04)
+ *        ... and an admin      -> also the New and Edit event screens
+ *                                 (VC-B04, VC-34)
  *        refused by the 18+ gate -> only the "sorry" screen (VC-30)
  *      `Stack.Protected` hides screens whose `guard` is false. If someone is on
  *      a screen that becomes hidden (for example they sign out), expo-router
@@ -123,11 +124,13 @@ function RootNavigator({ fontsReady }: { fontsReady: boolean }) {
         <Stack.Screen name="join/[id]" options={{ title: 'Party code' }} />
       </Stack.Protected>
 
-      {/* Admins only (VC-B04): the New event screen. This only keeps the
+      {/* Admins only (VC-B04, VC-34): the New and Edit event screens. This only keeps the
           screen out of reach for others; the server's create_event refuses
           non-admins by itself. */}
       <Stack.Protected guard={status === 'ready' && profile?.role === 'admin'}>
         <Stack.Screen name="admin/new-event" options={{ title: 'New event' }} />
+        {/* Edit event (VC-34): same rule; update_event refuses non-admins. */}
+        <Stack.Screen name="admin/edit-event/[id]" options={{ title: 'Edit event' }} />
       </Stack.Protected>
 
       {/* Not signed in: only the sign-in screen exists. */}

@@ -15,13 +15,23 @@
  *   - the "I'm here" button, which opens GPS check-in
  *     (app/check-in/[id].tsx, task VC-B06);
  *   - for staff picks with a ticket link: a plain "Get tickets" text link
- *     and "Not affiliated with Eventbrite." (VC-29 and the legal check).
+ *     and "Not affiliated with Eventbrite." (VC-29 and the legal check);
+ *   - for admins only, an "Admin" box: "Edit event" (opens
+ *     app/admin/edit-event/[id].tsx, VC-34) and "Show party code", which
+ *     asks the server for the current code and shows it after the tap
+ *     (VC-35). Guests never see this box, and the server refuses both to
+ *     non-admins anyway.
+ *
+ * The page reloads the event each time it comes back into view (for
+ * example after "Save changes" on Edit event), so it never shows old
+ * details.
  *
  * Not here on purpose (VC-31): photos, share, "Now playing", clips, the
  * Live / Last 24h switch.
  */
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useCallback, useState } from 'react';
+import type { ReactNode } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -29,16 +39,22 @@ import { BackButton } from '@/components/BackButton';
 import { Button } from '@/components/Button';
 import { FormMessage } from '@/components/FormMessage';
 import { LiveVibeCard } from '@/components/LiveVibeCard';
+import { PartyCodeCard } from '@/components/PartyCodeCard';
 import { Tag } from '@/components/Tag';
 import { TicketLink } from '@/components/TicketLink';
+import { useAuth } from '@/lib/auth-context';
+import { getEventCode } from '@/lib/events-api';
 import { getEvent } from '@/lib/events-read';
 import { isStaffPick, timeRange } from '@/lib/tonight';
 import type { PublicEvent } from '@/lib/tonight';
-import { colors, spacing, typography } from '@/theme';
+import { colors, radius, spacing, typography } from '@/theme';
 
 /** The words of the "not found" state (exported so tests use the same text). */
 export const NOT_FOUND_TITLE = 'Event not found';
 export const NOT_FOUND_BODY = 'It may have been removed, or the link is wrong.';
+export const EDIT_EVENT = 'Edit event';
+export const SHOW_CODE = 'Show party code';
+export const HIDE_CODE = 'Hide party code';
 
 /** What the page is showing: loading, a load error, not found, or the event. */
 type PageState =
@@ -54,6 +70,10 @@ type PageState =
  */
 export default function EventScreen() {
   const router = useRouter();
+  // Admins also get the Admin box (VC-34, VC-35). This only decides what to
+  // draw; the server refuses non-admins whatever the app shows.
+  const { profile } = useAuth();
+  const isAdmin = profile?.role === 'admin';
   // The id from the address /event/<id>. expo-router can hand over a list
   // if the address repeats it, so take the first one.
   const params = useLocalSearchParams<{ id: string | string[] }>();
@@ -63,23 +83,35 @@ export default function EventScreen() {
   // Bumped by "Try again" to load once more.
   const [attempt, setAttempt] = useState(0);
 
-  // Load the event when the page opens (and after "Try again"). State is
-  // only set when the answer arrives, and a late answer is ignored if the
-  // page has closed or the id changed.
-  useEffect(() => {
-    let active = true;
-    const now = new Date();
-    const load = id ? getEvent(id) : Promise.resolve({ ok: true as const, event: null });
-    load.then((outcome) => {
-      if (!active) return;
-      if (!outcome.ok) setState({ kind: 'error', message: outcome.message });
-      else if (!outcome.event) setState({ kind: 'notFound' });
-      else setState({ kind: 'ready', event: outcome.event, loadedAt: now });
-    });
-    return () => {
-      active = false;
-    };
-  }, [id, attempt]);
+  // Load the event when the page comes into view: when it opens, after
+  // "Try again", and when the admin comes back from Edit event. State is only
+  // set when the answer arrives, and a late answer is ignored if the page has
+  // closed, lost focus, or the id changed. If a RE-load fails while the
+  // page already shows the event, the page keeps showing it rather than
+  // swapping it for an error.
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      const now = new Date();
+      const load = id ? getEvent(id) : Promise.resolve({ ok: true as const, event: null });
+      load.then((outcome) => {
+        if (!active) return;
+        setState((current) => {
+          if (!outcome.ok) {
+            return current.kind === 'ready' ? current : { kind: 'error', message: outcome.message };
+          }
+          if (!outcome.event) return { kind: 'notFound' };
+          return { kind: 'ready', event: outcome.event, loadedAt: now };
+        });
+      });
+      return () => {
+        active = false;
+      };
+      // `attempt` isn't read inside, but it must be listed: "Try again" bumps
+      // it, which makes a new callback, which runs the load once more.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [id, attempt]),
+  );
 
   /** "Try again": back to the spinner, then reload. */
   const retry = useCallback(() => {
@@ -128,6 +160,22 @@ export default function EventScreen() {
           onImHere={() =>
             router.push({ pathname: '/check-in/[id]', params: { id: state.event.id } })
           }
+          admin={
+            isAdmin ? (
+              <AdminTools
+                // A fresh box per event, so a code shown for one event is
+                // never left on screen for another.
+                key={state.event.id}
+                eventId={state.event.id}
+                onEdit={() =>
+                  router.push({
+                    pathname: '/admin/edit-event/[id]',
+                    params: { id: state.event.id },
+                  })
+                }
+              />
+            ) : null
+          }
         />
       ) : null}
     </SafeAreaView>
@@ -140,16 +188,19 @@ export default function EventScreen() {
  * @param props.event - the event's public facts.
  * @param props.now - the moment used for "Today" / "On now".
  * @param props.onImHere - what "I'm here" does (opens check-in).
+ * @param props.admin - the Admin box, or null for everyone but admins.
  * @returns a scrolling view with the details and the buttons at the bottom.
  */
 function EventDetails({
   event,
   now,
   onImHere,
+  admin,
 }: {
   event: PublicEvent;
   now: Date;
   onImHere: () => void;
+  admin: ReactNode;
 }) {
   const staffPick = isStaffPick(event);
   // The ticket link is only for staff picks (VC-29 overrides the plan's "no
@@ -178,6 +229,8 @@ function EventDetails({
         {event.summary ? <Text style={styles.summary}>{event.summary}</Text> : null}
 
         <LiveVibeCard />
+
+        {admin}
       </ScrollView>
 
       {/* Bottom bar: the main action, plus the ticket link for staff picks. */}
@@ -186,6 +239,68 @@ function EventDetails({
         {ticketUrl ? <TicketLink url={ticketUrl} /> : null}
       </View>
     </>
+  );
+}
+
+/** What the Admin box's party-code part is showing. */
+type CodeState =
+  | { kind: 'hidden' }
+  | { kind: 'loading' }
+  | { kind: 'shown'; code: string }
+  | { kind: 'error'; message: string };
+
+/**
+ * The Admin box on the event page (admins only): "Edit event" and
+ * "Show party code".
+ *
+ * @param props.eventId - the event's id.
+ * @param props.onEdit - opens the Edit event screen.
+ * @returns the box view.
+ * Why the code is behind a tap: it shouldn't sit on screen where a guest
+ * looking over the host's shoulder could read it. It's fetched fresh from
+ * the server on every tap (so it's the newest code after a rotation), kept
+ * only in this box's memory, and never logged.
+ */
+function AdminTools({ eventId, onEdit }: { eventId: string; onEdit: () => void }) {
+  const [codeState, setCodeState] = useState<CodeState>({ kind: 'hidden' });
+
+  /** Asks the server for the current code and shows it. Returns nothing. */
+  async function showCode() {
+    setCodeState({ kind: 'loading' });
+    const outcome = await getEventCode(eventId);
+    setCodeState(
+      outcome.ok
+        ? { kind: 'shown', code: outcome.code }
+        : { kind: 'error', message: outcome.message },
+    );
+  }
+
+  return (
+    <View style={styles.adminBox}>
+      <Text style={styles.kicker}>ADMIN</Text>
+      <Button label={EDIT_EVENT} variant="outline" size="small" onPress={onEdit} />
+      {codeState.kind === 'shown' ? (
+        <>
+          <PartyCodeCard code={codeState.code} />
+          <Button
+            label={HIDE_CODE}
+            variant="text"
+            size="small"
+            onPress={() => setCodeState({ kind: 'hidden' })}
+          />
+        </>
+      ) : (
+        <Button
+          label={SHOW_CODE}
+          variant="text"
+          size="small"
+          busy={codeState.kind === 'loading'}
+          busyLabel="Getting the code..."
+          onPress={showCode}
+        />
+      )}
+      {codeState.kind === 'error' ? <FormMessage message={codeState.message} /> : null}
+    </View>
   );
 }
 
@@ -200,6 +315,13 @@ const styles = StyleSheet.create({
   area: { ...typography.bodySm, color: colors.muted },
   tags: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   summary: { ...typography.body, color: colors.text },
+  adminBox: {
+    gap: spacing.sm,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.card,
+  },
   bottomBar: {
     paddingHorizontal: spacing.gutter,
     paddingTop: spacing.gap12,
