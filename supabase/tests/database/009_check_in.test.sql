@@ -302,7 +302,8 @@ select is(public.check_in('99999999-0000-4000-8000-000000000029',
 -- ---- 12. No raw coordinates stored anywhere (2) -----------------------------
 reset role;
 -- (a) The only columns that can hold a fractional number are the event's own
---     secret pin (event_private.lat/lng, admin-set) and the rating score.
+--     secret pin (event_private.lat/lng, admin-set), the rating score, and
+--     the published vibe's score and night average (VC-51 totals).
 select is_empty(
   $$ select table_schema || '.' || table_name || '.' || column_name
      from information_schema.columns
@@ -312,7 +313,9 @@ select is_empty(
        and (table_schema, table_name, column_name) not in (
          ('public', 'event_private', 'lat'),
          ('public', 'event_private', 'lng'),
-         ('public', 'ratings', 'score')) $$,
+         ('public', 'ratings', 'score'),
+         ('private', 'vibe_snapshots', 'score'),
+         ('private', 'vibe_snapshots', 'night_average')) $$,
   'no table has a column that could hold a guest''s coordinates');
 -- (b) The distinctive reading from section 9 (38.9001234, -77.0004321)
 --     appears in no row of any table in public or private. query_to_xml

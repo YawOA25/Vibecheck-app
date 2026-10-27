@@ -7,9 +7,10 @@
  *   - "Drop my rating" stays off until one tap in each of the 3 rows, and a
  *     reaction and tags are optional (a reaction can be un-picked);
  *   - the taps, reaction and tags are sent; the payoff shows;
- *   - the quiet re-check runs only for GPS check-ins, never asks for
- *     permission, and "too far" stops the rating; a party-code check-in
- *     skips it;
+ *   - the quiet re-check runs for GPS and party-code check-ins (VC-48),
+ *     never asks for permission, and "too far" stops the rating; with no
+ *     reading (location not allowed) it goes on; a tester check-in skips it;
+ *   - the three rows are radio groups for screen readers (VC-49);
  *   - opening the screen: not checked in, rated less than an hour ago, and
  *     admins each get their message instead of the form;
  *   - the server's refusals (too soon, stale check-in) and a network error
@@ -94,9 +95,9 @@ function checkedInWith(method: 'gps' | 'code' | 'tester' | null, ratedAt: string
 
 /** Taps one option in each of the three rows (the "3 taps"). */
 async function tapThreeRows() {
-  await fireEvent.press(screen.getByRole('button', { name: 'crowd: Packed' }));
-  await fireEvent.press(screen.getByRole('button', { name: 'music: Good' }));
-  await fireEvent.press(screen.getByRole('button', { name: 'energy: Fire' }));
+  await fireEvent.press(screen.getByRole('radio', { name: 'crowd: Packed' }));
+  await fireEvent.press(screen.getByRole('radio', { name: 'music: Good' }));
+  await fireEvent.press(screen.getByRole('radio', { name: 'energy: Fire' }));
 }
 
 let consoleSpies: jest.SpyInstance[];
@@ -133,14 +134,14 @@ describe('RateScreen form', () => {
     const submit = screen.getByRole('button', { name: SUBMIT_LABEL });
     expect(submit).toBeDisabled();
 
-    await fireEvent.press(screen.getByRole('button', { name: 'crowd: Packed' }));
-    await fireEvent.press(screen.getByRole('button', { name: 'music: Good' }));
+    await fireEvent.press(screen.getByRole('radio', { name: 'crowd: Packed' }));
+    await fireEvent.press(screen.getByRole('radio', { name: 'music: Good' }));
     expect(submit).toBeDisabled();
-    await fireEvent.press(screen.getByRole('button', { name: 'energy: Fire' }));
+    await fireEvent.press(screen.getByRole('radio', { name: 'energy: Fire' }));
     expect(screen.getByRole('button', { name: SUBMIT_LABEL })).toBeEnabled();
     // Picked chips are marked "selected" (not by colour alone).
-    expect(screen.getByRole('button', { name: 'crowd: Packed' })).toBeSelected();
-    expect(screen.getByRole('button', { name: 'crowd: Quiet' })).not.toBeSelected();
+    expect(screen.getByRole('radio', { name: 'crowd: Packed' })).toBeChecked();
+    expect(screen.getByRole('radio', { name: 'crowd: Quiet' })).not.toBeChecked();
   });
 
   it('sends the taps, the reaction and the tags, then shows the payoff', async () => {
@@ -226,8 +227,58 @@ describe('RateScreen quiet re-check', () => {
     expect(rate).toHaveBeenCalledTimes(1);
   });
 
-  it('a party-code check-in skips the GPS re-check', async () => {
+  it('a party-code check-in gets the quiet check too (VC-48)', async () => {
     checkedInWith('code');
+    await render(<RateScreenRoute />);
+    await screen.findByText(PROMPT);
+    await tapThreeRows();
+    await fireEvent.press(screen.getByRole('button', { name: SUBMIT_LABEL }));
+    await screen.findByText(/Vibe/);
+    expect(quietRead).toHaveBeenCalledTimes(1);
+    expect(checkIn).toHaveBeenCalledWith('e1', READING);
+    expect(rate).toHaveBeenCalledTimes(1);
+  });
+
+  it('a party-code guest who is too far is stopped (VC-48)', async () => {
+    checkedInWith('code');
+    checkIn.mockResolvedValue({ ok: true, result: { status: 'too_far' } });
+    await render(<RateScreenRoute />);
+    await screen.findByText(PROMPT);
+    await tapThreeRows();
+    await fireEvent.press(screen.getByRole('button', { name: SUBMIT_LABEL }));
+    expect(await screen.findByText(/outside the party area for Rooftop/)).toBeOnTheScreen();
+    expect(rate).not.toHaveBeenCalled();
+  });
+
+  it('a party-code guest whose GPS is locked (5 too-far answers) is stopped too', async () => {
+    checkedInWith('code');
+    // After 5 "too far" answers the server says gps_locked instead. That must
+    // not let a guest at home through on the 6th try.
+    checkIn.mockResolvedValue({ ok: true, result: { status: 'gps_locked' } });
+    await render(<RateScreenRoute />);
+    await screen.findByText(PROMPT);
+    await tapThreeRows();
+    await fireEvent.press(screen.getByRole('button', { name: SUBMIT_LABEL }));
+    expect(await screen.findByText(/outside the party area for Rooftop/)).toBeOnTheScreen();
+    expect(rate).not.toHaveBeenCalled();
+  });
+
+  it('a party-code guest without location permission rates as before (never asked)', async () => {
+    checkedInWith('code');
+    // The quiet reader returns null when permission isn't already granted;
+    // it never shows the phone's question (src/lib/check-in-location.ts).
+    quietRead.mockResolvedValueOnce(null);
+    await render(<RateScreenRoute />);
+    await screen.findByText(PROMPT);
+    await tapThreeRows();
+    await fireEvent.press(screen.getByRole('button', { name: SUBMIT_LABEL }));
+    await screen.findByText(/Vibe/);
+    expect(checkIn).not.toHaveBeenCalled();
+    expect(rate).toHaveBeenCalledTimes(1);
+  });
+
+  it('a tester check-in skips the GPS re-check', async () => {
+    checkedInWith('tester');
     await render(<RateScreenRoute />);
     await screen.findByText(PROMPT);
     await tapThreeRows();
@@ -235,6 +286,28 @@ describe('RateScreen quiet re-check', () => {
     await screen.findByText(/Vibe/);
     expect(quietRead).not.toHaveBeenCalled();
     expect(checkIn).not.toHaveBeenCalled();
+    expect(rate).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('RateScreen accessibility (VC-49)', () => {
+  it('each rating row is a radio group of radio buttons, with the pick "checked"', async () => {
+    await render(<RateScreenRoute />);
+    await screen.findByText(PROMPT);
+    // One radio group per row, named after the row. (getByRole only finds
+    // "accessible" elements, and the group must NOT be one, or its chips
+    // couldn't be reached one by one; so look it up by its label.)
+    for (const row of ['crowd', 'music', 'energy']) {
+      expect(screen.getByLabelText(row).props.accessibilityRole).toBe('radiogroup');
+    }
+    // Three choices per row are radios, not buttons.
+    expect(screen.getAllByRole('radio')).toHaveLength(9);
+    expect(screen.queryByRole('button', { name: 'crowd: Packed' })).toBeNull();
+    await fireEvent.press(screen.getByRole('radio', { name: 'crowd: Packed' }));
+    expect(screen.getByRole('radio', { name: 'crowd: Packed', checked: true })).toBeOnTheScreen();
+    // The optional reaction and tags stay on/off buttons.
+    expect(screen.getByRole('button', { name: 'Reaction: Fire' })).toBeOnTheScreen();
+    expect(screen.getByRole('button', { name: 'Heads-up: Packed' })).toBeOnTheScreen();
   });
 });
 
@@ -309,7 +382,7 @@ describe('RateScreen server answers', () => {
     await tapThreeRows();
     await fireEvent.press(screen.getByRole('button', { name: SUBMIT_LABEL }));
     expect(await screen.findByText('No connection.')).toBeOnTheScreen();
-    expect(screen.getByRole('button', { name: 'crowd: Packed' })).toBeSelected();
+    expect(screen.getByRole('radio', { name: 'crowd: Packed' })).toBeChecked();
     // Trying again works with the same taps.
     await fireEvent.press(screen.getByRole('button', { name: SUBMIT_LABEL }));
     expect(await screen.findByText(/Vibe/)).toBeOnTheScreen();

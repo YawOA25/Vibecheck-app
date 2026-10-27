@@ -200,3 +200,46 @@ describe('vibe words', () => {
     );
   });
 });
+
+describe('published snapshots (VC-51) and the 3-hour headcount (VC-55)', () => {
+  // Before the first snapshot an event says "none" even if one person has
+  // rated (the server waits for a second rater), but the headcount is live.
+  it('a "none" answer still carries the live headcount', () => {
+    const vibe = parseVibe({
+      state: 'none',
+      raters: 0,
+      here: 12,
+      score: null,
+      label: null,
+      night_average: null,
+      minutes_since_last: null,
+      reactions: [],
+    });
+    expect(vibe).not.toBeNull();
+    expect(vibe!.score).toBeNull();
+    expect(hereText(vibe!.here, false)).toBe('12 here');
+    expect(vibeDetail(vibe!)).toBe('No vibe yet. Be the first.');
+  });
+
+  // The first snapshot comes with 2 raters: early, no number, and the
+  // minutes count from the newest rating in it.
+  it('the first published snapshot (2 raters) is an early reading without a number', () => {
+    const vibe = parseVibe({
+      state: 'early',
+      raters: 2,
+      here: 12,
+      score: 9.5,
+      label: 'Fire',
+      night_average: 9.5,
+      minutes_since_last: 3,
+      reactions: [{ reaction: 'fire', count: 2 }],
+    });
+    expect(vibe).toMatchObject({ state: 'early', raters: 2, score: null, label: null });
+    expect(vibe!.nightAverage).toBeNull();
+    expect(vibeDetail(vibe!)).toBe('Early reading: 2 people so far');
+  });
+
+  it('after the end the same count reads "were here"', () => {
+    expect(hereText(40, true)).toBe('40 were here');
+  });
+});

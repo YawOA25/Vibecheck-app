@@ -10,6 +10,9 @@
  *   - tapping a tag adds the guest's +1 (add_heads_up). The server decides
  *     whether they may (checked in within 45 minutes, inside the event
  *     window, not an admin); if not, the card says why.
+ *   - the counts cover the last 3 hours only (proposal VC-46, done on the
+ *     server), so a tag fades out unless people keep +1'ing it; a guest's
+ *     own +1 older than that can be added again.
  *
  * Why there's no free text: nothing to moderate (VC-43). Free-text comments
  * are the separate backlog item VC-44. Nobody ever sees WHO added a tag.

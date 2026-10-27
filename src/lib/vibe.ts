@@ -14,6 +14,13 @@
  * and nobody's single rating row is ever readable from the app. The server
  * hands out totals only (supabase/migrations/20261027130000_vibe_score.sql
  * and its privacy follow-up 20261027130100_vibe_score_privacy.sql).
+ *
+ * Since 2026-10-27 (proposals VC-50, VC-51, VC-55, migrations
+ * 20261027140000 to 20261027140200) the server sends a PUBLISHED snapshot:
+ * the score, rater count and reactions only change once 2 or more new
+ * people have rated, so watching the meter can't reveal one person's
+ * rating. The JSON shape is unchanged, so nothing here had to change; only
+ * the meaning of two fields did (see `here` and `minutesSinceLast` below).
  */
 import { REACTIONS, vibeLabel } from '@/lib/rating';
 import type { ReactionKey, VibeLabel } from '@/lib/rating';
@@ -36,9 +43,16 @@ export interface ReactionCount {
 /** One event's vibe, tidied up from the server's answer. */
 export interface Vibe {
   state: VibeState;
-  /** How many people's ratings count (hidden ones never do). */
+  /**
+   * How many people's ratings count (hidden ones never do), as of the last
+   * published score (VC-51), so it can lag one rating behind.
+   */
   raters: number;
-  /** How many people checked in (VC-42: a number only, never names). */
+  /**
+   * How many people are here (VC-42: a number only, never names). While the
+   * event is on: check-ins confirmed in the last 3 hours (VC-55). After the
+   * end time: everyone who checked in that night ("N were here").
+   */
   here: number;
   /** live: the live score; stale: the last score; otherwise null. 0 to 10, 1 decimal. */
   score: number | null;
@@ -46,7 +60,10 @@ export interface Vibe {
   label: VibeLabel | null;
   /** stale only: the plain average of the night's ratings; otherwise null (privacy). */
   nightAverage: number | null;
-  /** Whole minutes since the newest rating (worked out by the server's clock), or null. */
+  /**
+   * Whole minutes since the newest rating in the published score (worked out
+   * by the server's clock), or null. "Updated 4 min ago" means the score.
+   */
   minutesSinceLast: number | null;
   /** stale and live: the reaction tally, most first. Empty otherwise. */
   reactions: ReactionCount[];
@@ -206,8 +223,10 @@ export function quietForText(minutes: number): string {
 /**
  * The headcount line (VC-42: a number only).
  *
- * @param here - how many people checked in.
- * @param ended - true once the event is over, so it says "were here".
+ * @param here - the server's count: checked in within the last 3 hours
+ *   while the event is on, everyone that night once it has ended (VC-55).
+ * @param ended - true once the event is over, so it says "were here". The
+ *   server switches its count at the same moment (the event's end time).
  * @returns e.g. "74 here" or "74 were here"; null when nobody has checked
  *   in (nothing is shown then).
  */

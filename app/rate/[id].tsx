@@ -16,12 +16,18 @@
  *   2. The form: three rows (Crowd, Music, Energy), each three chips. The
  *      button switches on after one tap in each row ("Done after 3 taps").
  *      A reaction (pick one) and heads-up tags (pick any) are optional.
- *   3. On "Drop my rating": for a GPS check-in, quietly take one location
- *      reading if location is already allowed, and send it to check_in to
- *      keep "here now" true. If that says "too far", stop and say so. Any
- *      other answer (or no reading) goes on: the server's 45-minute rule
- *      decides. Party-code and tester check-ins skip this step (they never
- *      used GPS, and a tester at home would always be "too far").
+ *   3. On "Drop my rating": for a GPS or party-code check-in, quietly take
+ *      one location reading, but ONLY if location is already allowed (the
+ *      phone's permission question is never shown here), and send it to
+ *      check_in to keep "here now" true. If that says "too far" (or
+ *      "gps_locked", which is what 5 earlier "too far" answers become),
+ *      stop and say so. Any other answer (or no reading: permission not given, no
+ *      fix) goes on: the server's 45-minute rule decides.
+ *      Party-code guests get the check too since proposal VC-48 (approved
+ *      2026-10-27): otherwise anyone who learned the code could rate from
+ *      home. A guest who never allowed location is not asked and rates as
+ *      before. Tester check-ins still skip it (a tester at home would
+ *      always be "too far").
  *   4. Send the rating (submit_rating) and show the result: the payoff
  *      ("You and 4 others have rated ..., your vibe, update after ..."),
  *      or why not (too soon, check in again, outside the window).
@@ -170,7 +176,8 @@ export default function RateScreenRoute() {
   }, [router]);
 
   /**
-   * "Drop my rating": the quiet re-check (GPS check-ins only), then the save.
+   * "Drop my rating": the quiet re-check (GPS and party-code check-ins,
+   * only when location is already allowed), then the save.
    *
    * @param form - the form phase being submitted (event and check-in method).
    */
@@ -180,12 +187,20 @@ export default function RateScreenRoute() {
       const { event } = form;
       setPhase({ ...form, saving: true, error: null });
 
-      if (form.method === 'gps') {
+      // GPS and party-code check-ins (VC-48); never tester check-ins.
+      if (form.method !== 'tester') {
         const reading = await readLocationQuietly();
         if (reading) {
           // The reading goes straight into the request and is then forgotten.
           const recheck = await submitCheckIn(event.id, reading);
-          if (recheck.ok && recheck.result.status === 'too_far') {
+          // 'gps_locked' counts as too far too: each too_far here adds to the
+          // server's 5-strike cap, so after 5 the answer turns into
+          // gps_locked. Letting that through would let a guest at home rate
+          // on the 6th try (cto review of VC-48).
+          if (
+            recheck.ok &&
+            (recheck.result.status === 'too_far' || recheck.result.status === 'gps_locked')
+          ) {
             setPhase({
               kind: 'result',
               event,
@@ -193,8 +208,8 @@ export default function RateScreenRoute() {
             });
             return;
           }
-          // Anything else (passed, weak signal, a limit, a network error):
-          // carry on. The server's 45-minute rule decides.
+          // Anything else (passed, weak signal, an hourly limit, a network
+          // error): carry on. The server's 45-minute rule decides.
         }
       }
 
@@ -343,12 +358,19 @@ function RatingForm({
 
       {RATING_ROWS.map((row) => (
         <Group key={row.key} label={row.label}>
-          <View style={styles.chipRow}>
+          {/* A pick-one row: read as one radio group, e.g. "Crowd, radio
+              group", then "Packed, radio button, 3 of 3" (VC-49). */}
+          <View
+            style={styles.chipRow}
+            accessibilityRole="radiogroup"
+            accessibilityLabel={row.label.toLowerCase()}
+          >
             {row.options.map((option, index) => {
               const value = (index + 1) as RowValue;
               return (
                 <ChoiceChip
                   key={option}
+                  role="radio"
                   label={option}
                   // e.g. "Crowd: Packed", so the row is clear when heard alone.
                   accessibilityLabel={`${row.label.toLowerCase()}: ${option}`}

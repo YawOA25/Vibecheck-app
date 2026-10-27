@@ -8,7 +8,16 @@
  *
  * Accessibility (v3 spec section 3, fix 9): being picked is never shown by
  * colour alone. A picked chip also shows a check mark, and screen readers
- * hear "selected". Every chip is at least 44 px tall (fix 4).
+ * hear "selected" (or "checked" for a radio). Every chip is at least 44 px
+ * tall (fix 4).
+ *
+ * Two roles (proposal VC-49, cto debt from B08):
+ *   - 'button' (default): a chip you switch on and off on its own, such as
+ *     a heads-up tag or the optional reaction;
+ *   - 'radio': one of a set where exactly one is picked, such as the three
+ *     Crowd choices. Screen readers then say "radio button, 2 of 3" and
+ *     "checked". Put radio chips inside a View with
+ *     accessibilityRole="radiogroup" so they are read as one group.
  */
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text } from 'react-native';
@@ -35,13 +44,19 @@ export interface ChoiceChipProps {
   accessibilityHint?: string;
   /** true to make it untappable (e.g. while saving). */
   disabled?: boolean;
+  /**
+   * What screen readers call it: 'button' (default) for an on/off chip, or
+   * 'radio' for one choice in a pick-one row (see the file comment).
+   */
+  role?: 'button' | 'radio';
 }
 
 /**
  * Renders the chip.
  *
  * @returns the chip view. Screen readers hear it as a button with a
- *   "selected" state.
+ *   "selected" state, or (role 'radio') as a radio button with a "checked"
+ *   state.
  */
 export function ChoiceChip({
   label,
@@ -51,6 +66,7 @@ export function ChoiceChip({
   accessibilityLabel,
   accessibilityHint,
   disabled,
+  role = 'button',
 }: ChoiceChipProps) {
   // The 2 px gold focus ring for keyboard and switch users (spec section 3, fix 6).
   const [focused, setFocused] = useState(false);
@@ -60,10 +76,15 @@ export function ChoiceChip({
       disabled={disabled}
       onFocus={() => setFocused(true)}
       onBlur={() => setFocused(false)}
-      accessibilityRole="button"
+      accessibilityRole={role}
       accessibilityLabel={accessibilityLabel ?? label}
       accessibilityHint={accessibilityHint}
-      accessibilityState={{ selected, disabled: Boolean(disabled) }}
+      // A radio says "checked" / "not checked"; a button says "selected".
+      accessibilityState={
+        role === 'radio'
+          ? { checked: selected, disabled: Boolean(disabled) }
+          : { selected, disabled: Boolean(disabled) }
+      }
       style={({ pressed }) => [
         styles.base,
         shape === 'block' ? styles.block : styles.pill,

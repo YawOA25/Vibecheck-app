@@ -8,8 +8,9 @@
 --     (including the one that takes a clock) can't be called from the app.
 --   * The maths, with a fixed clock and always 5+ ratings: a rating 30
 --     minutes old counts half as much (10 now + four 0s at 30 min = 3.3); 60
---     minutes old a quarter (5.0); exactly 3 hours old still counts a little
---     (0.9) but 3 hours and 1 minute old doesn't count at all (0.0); ratings
+--     minutes old a quarter (5.0); exactly 3 hours old still counts, at the
+--     0.25 floor (VC-50: 1.7), but 3 hours and 1 minute old doesn't count at
+--     all (0.0); ratings
 --     after the moment are ignored, and fewer than 5 gives no number.
 --   * Privacy (cto review, migration 20261027130100): never a number from
 --     fewer than 5 ratings. 5 old ratings plus 1 recent one uses the plain
@@ -84,8 +85,9 @@ insert into public.ratings (user_id, event_id, crowd, music, energy, created_at,
   ('eeeeeeee-9999-4999-8999-000000000003', 'eeeeeeee-0000-4000-8000-0000000000f2', 1, 1, 1, now() - interval '60 minutes', now() - interval '60 minutes'),
   ('eeeeeeee-9999-4999-8999-000000000004', 'eeeeeeee-0000-4000-8000-0000000000f2', 1, 1, 1, now() - interval '60 minutes', now() - interval '60 minutes'),
   ('eeeeeeee-9999-4999-8999-000000000005', 'eeeeeeee-0000-4000-8000-0000000000f2', 1, 1, 1, now() - interval '60 minutes', now() - interval '60 minutes'),
-  -- f3: five 0s 150 minutes ago (weight 1/32 each) and a 10 exactly 3 hours
-  -- ago (weight 1/64) -> (10/64) / (5/32 + 1/64) = 10/11 = 0.91 -> 0.9
+  -- f3: five 0s 150 minutes ago and a 10 exactly 3 hours ago. Both would
+  -- weigh under 0.25 (1/32 and 1/64), so both get the 0.25 floor (VC-50,
+  -- migration 20261027140000): (10 x 0.25) / (6 x 0.25) = 1.67 -> 1.7
   ('eeeeeeee-9999-4999-8999-000000000001', 'eeeeeeee-0000-4000-8000-0000000000f3', 1, 1, 1, now() - interval '150 minutes', now() - interval '150 minutes'),
   ('eeeeeeee-9999-4999-8999-000000000002', 'eeeeeeee-0000-4000-8000-0000000000f3', 1, 1, 1, now() - interval '150 minutes', now() - interval '150 minutes'),
   ('eeeeeeee-9999-4999-8999-000000000003', 'eeeeeeee-0000-4000-8000-0000000000f3', 1, 1, 1, now() - interval '150 minutes', now() - interval '150 minutes'),
@@ -151,8 +153,8 @@ select is(private.vibe_score_at('eeeeeeee-0000-4000-8000-0000000000f1', now()), 
   'a rating 30 minutes old counts half: 10 now + four 0s at 30 min = 3.3');
 select is(private.vibe_score_at('eeeeeeee-0000-4000-8000-0000000000f2', now()), 5.0,
   'a rating 60 minutes old counts a quarter: 10 now + four 0s at 60 min = 5.0');
-select is(private.vibe_score_at('eeeeeeee-0000-4000-8000-0000000000f3', now()), 0.9,
-  'a rating exactly 3 hours old still counts (1/64): 0.9');
+select is(private.vibe_score_at('eeeeeeee-0000-4000-8000-0000000000f3', now()), 1.7,
+  'a rating exactly 3 hours old still counts, at the 0.25 floor (VC-50): 1.7');
 select is(private.vibe_score_at('eeeeeeee-0000-4000-8000-0000000000f4', now()), 2.0,
   'ratings of the same age: a plain average, 2.0');
 select is(private.vibe_score_at('eeeeeeee-0000-4000-8000-0000000000f1', now() - interval '30 minutes'), null,
@@ -255,9 +257,13 @@ where event_id = 'eeeeeeee-0000-4000-8000-0000000000f5' and user_id = 'eeeeeeee-
 select is((private.event_vibe('eeeeeeee-0000-4000-8000-0000000000f5', now() - interval '2 hours') ->> 'here')::int, 0,
   'the headcount only counts check-ins up to the moment');
 
--- Back to all five visible ratings fresh, for the app checks below.
+-- Back to all five visible ratings fresh, for the app checks below. Since
+-- VC-51 (migration 20261027140200) the app functions show the last PUBLISHED
+-- snapshot, and these ratings were written straight into the table, so
+-- publish one now (submit_rating would do this after 2 new raters).
 update public.ratings set updated_at = now()
 where event_id = 'eeeeeeee-0000-4000-8000-0000000000f5';
+select private.publish_event_vibe('eeeeeeee-0000-4000-8000-0000000000f5', now());
 
 -- ---- 5. The app functions (13) ----------------------------------------------
 set local role authenticated;
