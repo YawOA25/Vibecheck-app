@@ -21,6 +21,7 @@
 import { fireEvent, render, screen } from '@testing-library/react-native';
 
 import EditEventScreen, { NOTHING_CHANGED, SAVE_LABEL } from '../app/admin/edit-event/[id]';
+import { pickDateTime } from '../test-utils/pick-date-time';
 import { PICK_STATE_TO_CHANGE_AREA } from '@/components/AreaPicker';
 import { KEEPING_LOCATION } from '@/components/EventForm';
 import { STATE_REQUIRED } from '@/lib/event-form';
@@ -103,9 +104,13 @@ describe('EditEventScreen', () => {
     expect(screen.queryByLabelText('State suggestions')).toBeNull();
     expect(screen.getByLabelText('Area')).not.toBeDisabled();
     expect(screen.getByLabelText('Area')).toHaveDisplayValue('Shaw, DC');
-    expect(screen.getByLabelText('Start date')).toHaveDisplayValue('10 / 24 / 2026');
-    expect(screen.getByLabelText('Start time')).toHaveDisplayValue('10 PM');
-    expect(screen.getByLabelText('End time')).toHaveDisplayValue('2 AM');
+    // Starts and Ends show the stored times as words, in New York time.
+    expect(screen.getByRole('button', { name: 'Starts' })).toHaveAccessibilityValue({
+      text: 'Sat, Oct 24 · 10:00 PM',
+    });
+    expect(screen.getByRole('button', { name: 'Ends' })).toHaveAccessibilityValue({
+      text: 'Sun, Oct 25 · 2:00 AM',
+    });
     expect(screen.getByLabelText('Summary (optional)')).toHaveDisplayValue(
       'Afrobeats on the roof.',
     );
@@ -119,7 +124,8 @@ describe('EditEventScreen', () => {
     eventsReadReturns({ data: storedEvent(), error: null });
     await render(<EditEventScreen />);
     await fireEvent.changeText(screen.getByLabelText('Event name'), 'Sunday rooftop');
-    await fireEvent.changeText(screen.getByLabelText('End time'), '3:00 AM');
+    // Move the end to 3 AM New York time (07:00 UTC) on the picker wheel.
+    await pickDateTime('Ends', new Date('2026-10-25T07:00:00.000Z'));
     await fireEvent.press(screen.getByRole('button', { name: SAVE_LABEL }));
 
     expect(rpc).toHaveBeenCalledWith('update_event', {

@@ -20,4 +20,7 @@ module.exports = {
   // Run every test with the machine's time zone set to Tokyo, so code that
   // uses the phone's clock instead of New York's fails (VC-B05 cto review).
   globalSetup: '<rootDir>/jest.global-setup.js',
+  // Gives findBy/waitFor 5 s instead of 1 s, so a slow cold start can't make
+  // a screen test fail now and then (see jest.setup.js).
+  setupFilesAfterEnv: ['<rootDir>/jest.setup.js'],
 };

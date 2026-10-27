@@ -71,6 +71,7 @@ describe('valuesFromEvent (prefill)', () => {
       isStaffPick: false,
       is21Plus: false,
       ticketUrl: '',
+      entryUrl: '',
       summary: 'Afrobeats on the roof.',
       pin: null,
     });
@@ -212,5 +213,37 @@ describe('validateEventEdit', () => {
     const result = validateEventEdit(values, withSeconds, NOW);
     expect(result).toMatchObject({ ok: true });
     if (result.ok) expect(result.input.p_starts_at).toBeUndefined();
+  });
+});
+
+// ---- VC-40: the "How to get in" link ---------------------------------------
+
+describe('validateEventEdit and the "How to get in" link', () => {
+  const withLink = () => event({ entry_url: 'https://partiful.com/e/1' });
+
+  it('prefills the stored link and sends nothing when it is untouched', () => {
+    const values = valuesFromEvent(withLink());
+    expect(values.entryUrl).toBe('https://partiful.com/e/1');
+    expect(validateEventEdit(values, withLink(), NOW)).toMatchObject({ changed: false });
+  });
+
+  it('sends a new link, and an empty one to remove it', () => {
+    const changed = { ...valuesFromEvent(withLink()), entryUrl: 'https://lu.ma/x' };
+    expect(validateEventEdit(changed, withLink(), NOW)).toMatchObject({
+      input: { p_event_id: 'event-1', p_entry_url: 'https://lu.ma/x' },
+    });
+    const removed = { ...valuesFromEvent(withLink()), entryUrl: '  ' };
+    expect(validateEventEdit(removed, withLink(), NOW)).toMatchObject({
+      input: { p_event_id: 'event-1', p_entry_url: '' },
+    });
+  });
+
+  it('removes the link when the event becomes a staff pick (the server insists)', () => {
+    const values = { ...valuesFromEvent(withLink()), isStaffPick: true };
+    expect(validateEventEdit(values, withLink(), NOW)).toEqual({
+      ok: true,
+      input: { p_event_id: 'event-1', p_source: 'staff_pick', p_entry_url: '' },
+      changed: true,
+    });
   });
 });

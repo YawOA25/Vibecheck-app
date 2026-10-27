@@ -5,7 +5,8 @@
  * What's here:
  *   - useEventForm: the form's memory (what's typed, the error per box, the
  *     location buttons' busy state) and the actions that change it;
- *   - EventFormFields: the boxes, the State lookup (VC-37 follow-up,
+ *   - EventFormFields: the boxes, the Starts/Ends date pickers
+ *     (src/components/DateTimeField.tsx), the State lookup (VC-37 follow-up,
  *     src/components/StatePicker.tsx), the Area picker (VC-37,
  *     src/components/AreaPicker.tsx), location buttons and switches, in the
  *     v3 look. Each screen adds its own heading and Save button around it.
@@ -27,14 +28,19 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { AreaPicker } from '@/components/AreaPicker';
 import { Button } from '@/components/Button';
+import { DateTimeField } from '@/components/DateTimeField';
 import { FormMessage } from '@/components/FormMessage';
 import { StatePicker } from '@/components/StatePicker';
 import { TextField } from '@/components/TextField';
 import { ToggleRow } from '@/components/ToggleRow';
 import { stateForPin, stateOfListedArea } from '@/data/dmv-areas';
 import type { AreaState } from '@/data/dmv-areas';
-import { DATE_INPUT_MAX_LENGTH, formatDateInput } from '@/lib/age';
-import { MAX_SUMMARY_WORDS, MAX_TITLE_LENGTH, wordCount } from '@/lib/event-form';
+import {
+  MAX_SUMMARY_WORDS,
+  MAX_TITLE_LENGTH,
+  pickerStartingPoints,
+  wordCount,
+} from '@/lib/event-form';
 import type {
   EventFormErrors,
   EventFormField,
@@ -252,6 +258,20 @@ export function EventFormFields({ form, mode, saving }: EventFormFieldsProps) {
   const { values, errors, update } = form;
   const editing = mode === 'edit';
   const summaryWords = wordCount(values.summary);
+  // Where each picker opens when nothing is picked yet (10 PM on the start
+  // date; the end 4 hours after the start).
+  const startingPoints = pickerStartingPoints(values, new Date());
+
+  /**
+   * Puts a picked date and/or time into the start or end boxes.
+   *
+   * @param which - 'start' or 'end'.
+   * @param parts - the new date text, time text, or both.
+   */
+  function applyPicked(which: 'start' | 'end', parts: { date?: string; time?: string }) {
+    if (parts.date !== undefined) update(which === 'start' ? 'startDate' : 'endDate', parts.date);
+    if (parts.time !== undefined) update(which === 'start' ? 'startTime' : 'endTime', parts.time);
+  }
 
   // The location button's words: the first pin, a fresh reading, or (edit
   // mode) swapping the event's current pin for where the admin is now.
@@ -287,56 +307,28 @@ export function EventFormFields({ form, mode, saving }: EventFormFieldsProps) {
         error={errors.areaLabel}
       />
 
-      {/* Date and time sit side by side: the date box is wider. All times
-          are New York time, whatever zone the phone is in (B04). */}
-      <View style={styles.row}>
-        <View style={styles.dateCol}>
-          <TextField
-            label="Start date"
-            value={values.startDate}
-            onChangeText={(text) => update('startDate', formatDateInput(text))}
-            error={errors.startDate}
-            keyboardType="number-pad"
-            maxLength={DATE_INPUT_MAX_LENGTH}
-            placeholder="MM / DD / YYYY"
-          />
-        </View>
-        <View style={styles.timeCol}>
-          <TextField
-            label="Start time"
-            value={values.startTime}
-            onChangeText={(text) => update('startTime', text)}
-            error={errors.startTime}
-            autoCapitalize="characters"
-            autoCorrect={false}
-            placeholder="10:00 PM"
-          />
-        </View>
-      </View>
-      <View style={styles.row}>
-        <View style={styles.dateCol}>
-          <TextField
-            label="End date"
-            value={values.endDate}
-            onChangeText={(text) => update('endDate', formatDateInput(text))}
-            error={errors.endDate}
-            keyboardType="number-pad"
-            maxLength={DATE_INPUT_MAX_LENGTH}
-            placeholder="MM / DD / YYYY"
-          />
-        </View>
-        <View style={styles.timeCol}>
-          <TextField
-            label="End time"
-            value={values.endTime}
-            onChangeText={(text) => update('endTime', text)}
-            error={errors.endTime}
-            autoCapitalize="characters"
-            autoCorrect={false}
-            placeholder="2:00 AM"
-          />
-        </View>
-      </View>
+      {/* Starts and Ends open the phone's own date and time pickers
+          (founder: "dates are hard to type"). All times are New York time,
+          whatever zone the phone is in (B04). */}
+      <DateTimeField
+        label="Starts"
+        testID="starts-picker"
+        date={values.startDate}
+        time={values.startTime}
+        initialMoment={startingPoints.start}
+        onChange={(parts) => applyPicked('start', parts)}
+        error={errors.startDate ?? errors.startTime}
+      />
+      <DateTimeField
+        label="Ends"
+        testID="ends-picker"
+        date={values.endDate}
+        time={values.endTime}
+        initialMoment={startingPoints.end}
+        onChange={(parts) => applyPicked('end', parts)}
+        error={errors.endDate ?? errors.endTime}
+      />
+      <Text style={styles.helper}>Times are New York time.</Text>
 
       {/* Location: the exact spot is sent to the server and kept private. */}
       <View style={styles.group}>
@@ -446,6 +438,22 @@ export function EventFormFields({ form, mode, saving }: EventFormFieldsProps) {
         onValueChange={(on) => update('isStaffPick', on)}
       />
 
+      {/* VC-40: host events only. Guests see a plain "How to get in" button
+          that opens the host's own RSVP or invite page. Hidden for staff
+          picks, which use the ticket link below. */}
+      {values.isStaffPick ? null : (
+        <TextField
+          label="How to get in link (optional)"
+          value={values.entryUrl}
+          onChangeText={(text) => update('entryUrl', text)}
+          error={errors.entryUrl}
+          helper="The host's RSVP or invite page: Partiful, Posh, Luma, Eventbrite, DICE or Instagram."
+          keyboardType="url"
+          autoCapitalize="none"
+          autoCorrect={false}
+          placeholder="https://partiful.com/e/..."
+        />
+      )}
       <TextField
         label="Ticket link (optional)"
         value={values.ticketUrl}
@@ -472,10 +480,6 @@ export function EventFormFields({ form, mode, saving }: EventFormFieldsProps) {
 
 /** Styles built only from theme tokens. */
 const styles = StyleSheet.create({
-  // flexWrap lets the time box drop under the date box when text is very large.
-  row: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.gap12 },
-  dateCol: { flexGrow: 3, flexBasis: 170 },
-  timeCol: { flexGrow: 2, flexBasis: 120 },
   group: { gap: spacing.sm },
   label: { ...typography.label, color: colors.muted, textTransform: 'uppercase' },
   helper: { ...typography.caption, color: colors.muted },

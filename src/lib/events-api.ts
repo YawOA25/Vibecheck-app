@@ -44,6 +44,8 @@ export const EventErrorCode = {
   testFlag: 'VCTST',
   /** VC-37: state isn't DC, MD or VA (migration 12). */
   state: 'VCSTA',
+  /** VC-40: the "How to get in" link isn't allowed, or it's a staff pick (migration 13). */
+  entryUrl: 'VCENT',
 } as const;
 
 /** Our own codes whose server message is already written for people to read. */
@@ -58,6 +60,7 @@ const READABLE_CODES = new Set<string>([
   EventErrorCode.notFound,
   EventErrorCode.testFlag,
   EventErrorCode.state,
+  EventErrorCode.entryUrl,
 ]);
 
 /**
@@ -168,12 +171,13 @@ export type EditableEventOutcome =
  */
 export async function getEventForEdit(id: string): Promise<EditableEventOutcome> {
   try {
-    // code_check_in_enabled (a plain on/off switch) and state (DC/MD/VA,
-    // VC-37) are public facts on the events row, readable by signed-in
-    // adults. Neither says where exactly the party is.
+    // code_check_in_enabled (a plain on/off switch) is a public fact on the
+    // events row, readable by signed-in adults; state (DC/MD/VA, VC-37) and
+    // entry_url (VC-40) come with PUBLIC_EVENT_COLUMNS. None says where
+    // exactly the party is.
     const { data, error } = await supabase
       .from('events')
-      .select(`${PUBLIC_EVENT_COLUMNS}, code_check_in_enabled, state`)
+      .select(`${PUBLIC_EVENT_COLUMNS}, code_check_in_enabled`)
       .eq('id', id)
       .maybeSingle();
     if (error) {

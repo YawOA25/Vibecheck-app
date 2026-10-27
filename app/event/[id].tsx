@@ -16,6 +16,11 @@
  *     (app/check-in/[id].tsx, task VC-B06);
  *   - for staff picks with a ticket link: a plain "Get tickets" text link
  *     and "Not affiliated with Eventbrite." (VC-29 and the legal check);
+ *   - for host events with a "How to get in" link (VC-40): a plain "How to
+ *     get in" text link to the host's RSVP page, with "Links go to the
+ *     host's page. We're not responsible for other sites." under it;
+ *   - a "Share" button (VC-41) that opens the phone's share sheet with the
+ *     event's name, area and time. Never the party code or the pin;
  *   - for admins only, an "Admin" box: "Edit event" (opens
  *     app/admin/edit-event/[id].tsx, VC-34) and "Show party code", which
  *     asks the server for the current code and shows it after the tap
@@ -26,17 +31,18 @@
  * example after "Save changes" on Edit event), so it never shows old
  * details.
  *
- * Not here on purpose (VC-31): photos, share, "Now playing", clips, the
- * Live / Last 24h switch.
+ * Not here on purpose (VC-31): photos, "Now playing", clips, the Live /
+ * Last 24h switch.
  */
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
 import type { ReactNode } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BackButton } from '@/components/BackButton';
 import { Button } from '@/components/Button';
+import { EntryLink } from '@/components/EntryLink';
 import { FormMessage } from '@/components/FormMessage';
 import { LiveVibeCard } from '@/components/LiveVibeCard';
 import { PartyCodeCard } from '@/components/PartyCodeCard';
@@ -45,6 +51,7 @@ import { TicketLink } from '@/components/TicketLink';
 import { useAuth } from '@/lib/auth-context';
 import { getEventCode } from '@/lib/events-api';
 import { getEvent } from '@/lib/events-read';
+import { buildShareMessage } from '@/lib/share';
 import { isStaffPick, timeRange } from '@/lib/tonight';
 import type { PublicEvent } from '@/lib/tonight';
 import { colors, radius, spacing, typography } from '@/theme';
@@ -55,6 +62,7 @@ export const NOT_FOUND_BODY = 'It may have been removed, or the link is wrong.';
 export const EDIT_EVENT = 'Edit event';
 export const SHOW_CODE = 'Show party code';
 export const HIDE_CODE = 'Hide party code';
+export const SHARE_LABEL = 'Share';
 
 /** What the page is showing: loading, a load error, not found, or the event. */
 type PageState =
@@ -206,6 +214,19 @@ function EventDetails({
   // The ticket link is only for staff picks (VC-29 overrides the plan's "no
   // tickets" for those alone). A host party with a link shows none.
   const ticketUrl = staffPick ? event.ticket_url : null;
+  // The "How to get in" link is only for host events (VC-40); the server
+  // refuses one on a staff pick, and this keeps the app consistent too.
+  const entryUrl = staffPick ? null : (event.entry_url ?? null);
+
+  /**
+   * Opens the phone's share sheet with the event's public facts (VC-41).
+   * buildShareMessage only copies the name, area, state and times, so the
+   * party code and the pin can never be shared. If the sheet fails to open
+   * (rare), nothing else happens: there is nothing for the guest to fix.
+   */
+  function share() {
+    Share.share({ message: buildShareMessage(event) }).catch(() => {});
+  }
 
   return (
     <>
@@ -217,6 +238,10 @@ function EventDetails({
             {event.title}
           </Text>
           <Text style={styles.area}>{event.area_label}</Text>
+        </View>
+
+        <View style={styles.shareRow}>
+          <Button label={SHARE_LABEL} variant="outline" size="small" onPress={share} />
         </View>
 
         {staffPick || event.is_21_plus ? (
@@ -233,10 +258,12 @@ function EventDetails({
         {admin}
       </ScrollView>
 
-      {/* Bottom bar: the main action, plus the ticket link for staff picks. */}
+      {/* Bottom bar: the main action, plus the ticket link for staff picks
+          or the "How to get in" link for host events. */}
       <View style={styles.bottomBar}>
         <Button label="I'm here" onPress={onImHere} />
         {ticketUrl ? <TicketLink url={ticketUrl} /> : null}
+        {entryUrl ? <EntryLink url={entryUrl} /> : null}
       </View>
     </>
   );
@@ -314,6 +341,8 @@ const styles = StyleSheet.create({
   title: { ...typography.title, color: colors.text },
   area: { ...typography.bodySm, color: colors.muted },
   tags: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  // Share sits on its own line, at the start, only as wide as its words.
+  shareRow: { flexDirection: 'row' },
   summary: { ...typography.body, color: colors.text },
   adminBox: {
     gap: spacing.sm,

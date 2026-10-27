@@ -153,11 +153,15 @@ returning p.id, p.display_name, p.role;
 
 To remove admin rights later, run the same query with `set role = 'user'`.
 
-**Create an event on your phone.** Stand at the place, tap **New event**, fill in the name and area, check the dates and times (for a party past midnight, set the end date to the next day), tap **Use my current location** (allow location when asked), set the switches, then **Create event**. The next screen shows the 6-character party code to write or print on a card; **Get a new code** replaces it if it leaks. Turn on **Test event** while trying things out: only testers see test events.
+**Create an event on your phone.** Stand at the place, tap **New event**, fill in the name and area, tap **Starts** and **Ends** to pick the dates and times on your phone's own picker (a spinning wheel with **Done** on iPhone; a calendar, then a clock, on Android), tap **Use my current location** (allow location when asked), set the switches, then **Create event**. The next screen shows the 6-character party code to write or print on a card; **Get a new code** replaces it if it leaks. Turn on **Test event** while trying things out: only testers see test events.
 
-**Times are always New York time.** The dates and times you type are read as New York (DC) time, whatever time zone your phone is set to, and the date boxes start on New York's date. So "10:00 PM" always means 10 PM at the party, even if you create the event while travelling. Daylight-saving nights work too: on the November night the clocks go back, a party from 10:00 PM to 2:00 AM lasts 5 real hours, as it should.
+**Times are always New York time.** The pickers show and pick New York (DC) time, whatever time zone your phone is set to, and they start on New York's date. So "10:00 PM" always means 10 PM at the party, even if you create the event while travelling. Daylight-saving nights work too: on the November night the clocks go back, a party from 10:00 PM to 2:00 AM lasts 5 real hours, as it should.
 
 **Staff picks (VC-29).** For a venue event the team picked: turn on **Staff pick**, paste the ticket link (only `https://` links on eventbrite.com are accepted) and write a summary of 15 words or fewer **in our own words**. Never paste the organizer's description, and never use their flyer or Eventbrite's logo (legal conditions, `team/projects/vibecheck/legal/eventbrite-terms-2026-10-26.md`).
+
+**"How to get in" link (VC-40).** For a host event (not a staff pick), you can paste the host's own RSVP or invite page. Only `https://` links on partiful.com, posh.vip, lu.ma, luma.com, eventbrite.com, dice.fm or instagram.com are accepted (ra.co is left out on purpose; see `team/projects/vibecheck/legal/vc40-host-links-2026-10-27.md`). Guests see a plain **How to get in** link, never a site name or logo, with "Links go to the host's page. We're not responsible for other sites." under it.
+
+**Share (VC-41).** The event page has a **Share** button that opens your phone's share sheet with the event's name, area and time. It never includes the party code or the location. There's no web link yet: once there is one, put it in `SHARE_LINK` in `src/lib/share.ts`.
 
 ## Crash reports with Sentry (VC-26)
 

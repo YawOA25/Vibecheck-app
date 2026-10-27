@@ -24,7 +24,7 @@ import type { PublicEvent } from '@/lib/tonight';
  * pin in the `events` table. Keep in sync with {@link PublicEvent}.
  */
 export const PUBLIC_EVENT_COLUMNS =
-  'id, title, area_label, starts_at, ends_at, source, ticket_url, summary, is_21_plus, is_test';
+  'id, title, area_label, starts_at, ends_at, source, ticket_url, summary, is_21_plus, is_test, entry_url, state';
 
 /** The most events the list asks for at once (a busy weekend is far fewer). */
 const LIST_LIMIT = 100;

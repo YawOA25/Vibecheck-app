@@ -17,9 +17,16 @@
  *     and can hide it again); guests and testers never see the box.
  */
 import { fireEvent, render, screen } from '@testing-library/react-native';
-import { Linking } from 'react-native';
+import { Linking, Share } from 'react-native';
 
-import EventScreen, { EDIT_EVENT, HIDE_CODE, NOT_FOUND_TITLE, SHOW_CODE } from '../app/event/[id]';
+import EventScreen, {
+  EDIT_EVENT,
+  HIDE_CODE,
+  NOT_FOUND_TITLE,
+  SHARE_LABEL,
+  SHOW_CODE,
+} from '../app/event/[id]';
+import { ENTRY_DISCLAIMER, ENTRY_LINK_LABEL } from '@/components/EntryLink';
 import { EARLY_READING_TITLE } from '@/components/LiveVibeCard';
 import { NOT_AFFILIATED } from '@/components/TicketLink';
 import { useAuth } from '@/lib/auth-context';
@@ -193,6 +200,75 @@ describe('EventScreen staff picks (VC-29)', () => {
     await render(<EventScreen />);
     await screen.findByText('Staff pick');
     expect(screen.queryByRole('link', { name: 'Get tickets' })).toBeNull();
+  });
+});
+
+describe('EventScreen "How to get in" link (VC-40)', () => {
+  const ENTRY_URL = 'https://partiful.com/e/rooftop';
+
+  it('shows a plain "How to get in" link and the disclaimer for a host event', async () => {
+    get.mockResolvedValue({ ok: true, event: makeEvent({ entry_url: ENTRY_URL }) });
+    await render(<EventScreen />);
+
+    const link = await screen.findByRole('link', { name: ENTRY_LINK_LABEL });
+    expect(screen.getByText(ENTRY_DISCLAIMER)).toBeOnTheScreen();
+    // No site names anywhere (legal prep: no marks in or near the link).
+    expect(screen.queryByText(/partiful/i)).toBeNull();
+    // It opens the host's page in the phone's browser.
+    await fireEvent.press(link);
+    expect(openURL).toHaveBeenCalledWith(ENTRY_URL);
+  });
+
+  it('shows nothing when no link is set', async () => {
+    get.mockResolvedValue({ ok: true, event: makeEvent() });
+    await render(<EventScreen />);
+    await screen.findByRole('header', { name: 'Rooftop Sundown' });
+    expect(screen.queryByRole('link', { name: ENTRY_LINK_LABEL })).toBeNull();
+    expect(screen.queryByText(ENTRY_DISCLAIMER)).toBeNull();
+  });
+
+  it('shows nothing for a staff pick, or for a link that fails the safety check', async () => {
+    get.mockResolvedValue({
+      ok: true,
+      event: makeEvent({ source: 'staff_pick', entry_url: ENTRY_URL }),
+    });
+    const first = await render(<EventScreen />);
+    await screen.findByText('Staff pick');
+    expect(screen.queryByRole('link', { name: ENTRY_LINK_LABEL })).toBeNull();
+    await first.unmount();
+
+    get.mockResolvedValue({
+      ok: true,
+      event: makeEvent({ entry_url: 'https://partiful.com@evil.example' }),
+    });
+    await render(<EventScreen />);
+    await screen.findByRole('header', { name: 'Rooftop Sundown' });
+    expect(screen.queryByRole('link', { name: ENTRY_LINK_LABEL })).toBeNull();
+  });
+});
+
+describe('EventScreen Share (VC-41)', () => {
+  it('opens the share sheet with the name, area and time, never the code or pin', async () => {
+    const share = jest
+      .spyOn(Share, 'share')
+      .mockResolvedValue({ action: 'sharedAction', activityType: undefined });
+    // Even if an event object somehow carried secrets, they must not be shared.
+    const event = {
+      ...makeEvent({ state: 'DC' }),
+      check_in_code: 'K7MX2Q',
+      lat: 38.8765,
+      lng: -77.0031,
+    } as PublicEvent;
+    get.mockResolvedValue({ ok: true, event });
+    await render(<EventScreen />);
+    await fireEvent.press(await screen.findByRole('button', { name: SHARE_LABEL }));
+
+    expect(share).toHaveBeenCalledTimes(1);
+    const { message } = share.mock.calls[0][0] as { message: string };
+    expect(message).toContain('Rooftop Sundown');
+    expect(message).toContain('Navy Yard, DC');
+    expect(message).not.toMatch(/K7MX2Q|38\.87|77\.00/);
+    share.mockRestore();
   });
 });
 

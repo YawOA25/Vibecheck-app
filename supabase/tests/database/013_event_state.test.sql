@@ -49,11 +49,11 @@ select ok((select bool_and(prosecdef and proconfig @> array['search_path=""'])
   'both are still security definer with an empty search_path');
 select ok(
   not has_function_privilege('anon',
-    'public.create_event(text, text, timestamptz, timestamptz, double precision, double precision, integer, boolean, boolean, text, text, text, boolean, text)', 'execute')
+    'public.create_event(text, text, timestamptz, timestamptz, double precision, double precision, integer, boolean, boolean, text, text, text, boolean, text, text)', 'execute')
   and not has_function_privilege('anon',
-    'public.update_event(uuid, text, text, timestamptz, timestamptz, double precision, double precision, integer, boolean, boolean, boolean, text, text, text, boolean, text)', 'execute')
+    'public.update_event(uuid, text, text, timestamptz, timestamptz, double precision, double precision, integer, boolean, boolean, boolean, text, text, text, boolean, text, text)', 'execute')
   and has_function_privilege('authenticated',
-    'public.create_event(text, text, timestamptz, timestamptz, double precision, double precision, integer, boolean, boolean, text, text, text, boolean, text)', 'execute'),
+    'public.create_event(text, text, timestamptz, timestamptz, double precision, double precision, integer, boolean, boolean, text, text, text, boolean, text, text)', 'execute'),
   'anon can''t call them; signed-in users can (the admin check inside decides)');
 
 -- ---- 3. create_event and the state (3) --------------------------------------

@@ -60,6 +60,7 @@ function initialValues(now: Date): EventFormValues {
     isStaffPick: false,
     is21Plus: false,
     ticketUrl: '',
+    entryUrl: '',
     summary: '',
     pin: null,
   };

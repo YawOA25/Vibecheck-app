@@ -45,6 +45,13 @@ export interface PublicEvent {
   source: string;
   /** Ticket page link, only for staff picks (eventbrite.com, VC-29). */
   ticket_url: string | null;
+  /**
+   * VC-40: the host's "How to get in" page (Partiful, Posh...), host events
+   * only, or null. Optional here so older test data needn't list it.
+   */
+  entry_url?: string | null;
+  /** VC-37: 'DC', 'MD' or 'VA', or null for older events. Optional like entry_url. */
+  state?: string | null;
   /** Our own short summary (15 words max), or null. */
   summary: string | null;
   /** True when the event is 21 and over (VC-10). */

@@ -15,9 +15,15 @@
 import {
   dateInputFor,
   END_BEFORE_START,
+  ENTRY_URL_ERROR,
+  isAllowedEntryUrl,
   isAllowedTicketUrl,
   looksLikeStreetAddress,
+  momentOf,
   parseTimeInput,
+  pickedParts,
+  pickerStartingPoints,
+  readableDateTime,
   STATE_REQUIRED,
   toEventMoment,
   validateEventForm,
@@ -50,6 +56,7 @@ function form(overrides: Partial<EventFormValues> = {}): EventFormValues {
     isStaffPick: false,
     is21Plus: false,
     ticketUrl: '',
+    entryUrl: '',
     summary: '',
     pin: { lat: 38.91, lng: -77.02, accuracyM: 8 },
     ...overrides,
@@ -106,6 +113,7 @@ describe('validateEventForm', () => {
         p_summary: 'Afrobeats on the roof.',
         p_is_21_plus: false,
         p_state: 'DC',
+        p_entry_url: null,
       },
     });
   });
@@ -270,5 +278,129 @@ describe('small helpers', () => {
     expect(looksLikeStreetAddress('1420 U St NW')).toBe(true);
     expect(looksLikeStreetAddress('14th Street corridor')).toBe(false);
     expect(looksLikeStreetAddress('Shaw, DC')).toBe(false);
+  });
+});
+
+// ---- Native date and time pickers ------------------------------------------
+
+describe('picker helpers', () => {
+  it('reads a picked moment back as New York date and time text, on a Tokyo machine', () => {
+    // 02:00 UTC on 1 Nov is 10 PM on Saturday 31 Oct in New York (EDT), and
+    // already 11 AM on 1 Nov in Tokyo, where Jest runs.
+    expect(pickedParts(new Date('2026-11-01T02:00:00Z'))).toEqual({
+      date: '10 / 31 / 2026',
+      time: '10 PM',
+    });
+  });
+
+  it('round-trips through the form text to the same moment', () => {
+    const moment = new Date('2026-11-08T03:30:00Z'); // Sat 7 Nov, 10:30 PM EST
+    const { date, time } = pickedParts(moment);
+    expect(momentOf(date, time)?.toISOString()).toBe(moment.toISOString());
+    expect(momentOf(date, '')).toBeNull();
+  });
+
+  it('keeps the daylight-saving rules: 1:30 AM on 8 Mar 2026 is before the jump', () => {
+    // New York jumps from 2 AM to 3 AM on 8 March 2026. 1:30 AM is EST (UTC-5).
+    expect(momentOf('03 / 08 / 2026', '1:30 AM')?.toISOString()).toBe('2026-03-08T06:30:00.000Z');
+    expect(momentOf('03 / 08 / 2026', '3:30 AM')?.toISOString()).toBe('2026-03-08T07:30:00.000Z');
+  });
+
+  it('writes the chosen values as words', () => {
+    expect(readableDateTime('11 / 07 / 2026', '10 PM')).toBe('Sat, Nov 7 · 10:00 PM');
+    expect(readableDateTime('11 / 08 / 2026', '12:05 AM')).toBe('Sun, Nov 8 · 12:05 AM');
+    expect(readableDateTime('11 / 07 / 2026', '')).toBe('Sat, Nov 7 · Pick a time');
+    expect(readableDateTime('', '10 PM')).toBe('');
+  });
+
+  it('opens the start picker at 10 PM and the end picker 4 hours later', () => {
+    // Saturday 7 November 2026 (standard time, UTC-5; away from the
+    // 1 November clock change, where "1 AM" happens twice).
+    const points = pickerStartingPoints(
+      { startDate: '11 / 07 / 2026', startTime: '', endDate: '11 / 07 / 2026', endTime: '' },
+      NOW,
+    );
+    expect(points.start.toISOString()).toBe('2026-11-08T03:00:00.000Z'); // 10 PM EST
+    expect(points.end.toISOString()).toBe('2026-11-08T07:00:00.000Z'); // 2 AM EST
+    // Picked values win.
+    const picked = pickerStartingPoints(
+      {
+        startDate: '11 / 07 / 2026',
+        startTime: '9 PM',
+        endDate: '11 / 08 / 2026',
+        endTime: '1 AM',
+      },
+      NOW,
+    );
+    expect(picked.start.toISOString()).toBe('2026-11-08T02:00:00.000Z');
+    expect(picked.end.toISOString()).toBe('2026-11-08T06:00:00.000Z');
+    // No start date at all: 10 PM tonight (NOW is Saturday 31 October, EDT).
+    const blank = pickerStartingPoints(
+      { startDate: '', startTime: '', endDate: '', endTime: '' },
+      NOW,
+    );
+    expect(blank.start.toISOString()).toBe('2026-11-01T02:00:00.000Z');
+  });
+});
+
+// ---- VC-40: the "How to get in" link ---------------------------------------
+
+describe('isAllowedEntryUrl', () => {
+  it.each([
+    'https://partiful.com/e/abc123',
+    'https://www.partiful.com/e/abc123',
+    'https://posh.vip/e/rooftop',
+    'https://lu.ma/abc',
+    'https://luma.com/abc',
+    'https://www.eventbrite.com/e/1',
+    'https://dice.fm/event/xyz',
+    'https://www.instagram.com/somehost/',
+    'https://Partiful.COM',
+    '  https://partiful.com/e/1  ',
+  ])('allows %s', (url) => {
+    expect(isAllowedEntryUrl(url)).toBe(true);
+  });
+
+  it.each([
+    ['plain http', 'http://partiful.com/e/1'],
+    ['ra.co (legal prep)', 'https://ra.co/events/1'],
+    ['a name that only ends in the site', 'https://notpartiful.com/e/1'],
+    ['the site as a prefix', 'https://partiful.com.evil.example/e/1'],
+    ['the user@ trick', 'https://partiful.com@evil.example/e/1'],
+    ['user:password', 'https://user:pw@partiful.com/e/1'],
+    ['a port', 'https://partiful.com:8443/e/1'],
+    ['a punycode name', 'https://xn--prtiful-cvb.com/e/1'],
+    ['a punycode part on an allowed site', 'https://xn--80ak6aa92e.partiful.com/'],
+    ['a Cyrillic look-alike letter', 'https://p\u0430rtiful.com/e/1'],
+    ['a double dot', 'https://a..partiful.com/e/1'],
+    ['a trailing dot', 'https://partiful.com./e/1'],
+    ['a part starting with a dash', 'https://-x.partiful.com/'],
+    ["Instagram's redirect service", 'https://l.instagram.com/?u=https://evil.example'],
+    ['a space in the path', 'https://partiful.com/e/a b'],
+    ['a ? right after the name', 'https://partiful.com?x=1'],
+    ['javascript:', 'javascript:alert(1)'],
+    ['over 500 characters', `https://partiful.com/${'a'.repeat(480)}`],
+  ])('refuses %s', (_why, url) => {
+    expect(isAllowedEntryUrl(url)).toBe(false);
+  });
+});
+
+describe('the "How to get in" link on the form', () => {
+  it("sends a host event's link, trimmed", () => {
+    const result = validateEventForm(form({ entryUrl: ' https://partiful.com/e/1 ' }), NOW);
+    expect(result.ok && result.input.p_entry_url).toBe('https://partiful.com/e/1');
+  });
+
+  it('shows the error under the box for a site that is not allowed', () => {
+    const result = validateEventForm(form({ entryUrl: 'https://ra.co/events/1' }), NOW);
+    expect(result).toEqual({ ok: false, errors: { entryUrl: ENTRY_URL_ERROR } });
+  });
+
+  it('drops the link for a staff pick (the box is hidden there)', () => {
+    const result = validateEventForm(
+      form({ isStaffPick: true, entryUrl: 'https://ra.co/not-even-checked' }),
+      NOW,
+    );
+    expect(result.ok && result.input.p_entry_url).toBeNull();
   });
 });
