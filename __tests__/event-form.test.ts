@@ -6,19 +6,27 @@
  * allowlist (VC-29), the 15-word summary, the street-address guard, and that
  * a good form becomes exactly the values `create_event` expects. The server
  * enforces the same rules again (pgTAP test 008_admin_events).
+ *
+ * Time zone: Jest runs with the machine set to Tokyo (jest.global-setup.js).
+ * Typed times must still be read as New York time (VC-B04b), so every
+ * expected moment below is written as an exact UTC instant, never with
+ * `new Date(year, month, ...)`, which would use the machine's zone.
  */
 import {
+  dateInputFor,
   END_BEFORE_START,
   isAllowedTicketUrl,
   looksLikeStreetAddress,
   parseTimeInput,
+  toEventMoment,
   validateEventForm,
   wordCount,
 } from '@/lib/event-form';
 import type { EventFormValues } from '@/lib/event-form';
 
 // A fixed "now" (a Saturday afternoon) so the tests never depend on today.
-const NOW = new Date(2026, 9, 31, 15, 0); // 31 October 2026, 3:00 PM local time
+// 19:00 UTC is 3:00 PM in New York (daylight time, 4 hours behind UTC).
+const NOW = new Date('2026-10-31T19:00:00Z'); // Saturday 31 October 2026, 3:00 PM New York
 
 /**
  * A complete, valid form, with any values swapped out.
@@ -81,8 +89,11 @@ describe('validateEventForm', () => {
       input: {
         p_title: 'Saturday rooftop',
         p_area_label: 'Shaw, DC',
-        p_starts_at: new Date(2026, 9, 31, 22, 0).toISOString(),
-        p_ends_at: new Date(2026, 10, 1, 2, 0).toISOString(),
+        // 10:00 PM New York daylight time (UTC-4) on 31 October.
+        p_starts_at: '2026-11-01T02:00:00.000Z',
+        // 2:00 AM on 1 November: clocks went back at 2 AM daylight time, so
+        // this is 2:00 AM standard time (UTC-5). The party lasts 5 real hours.
+        p_ends_at: '2026-11-01T07:00:00.000Z',
         p_lat: 38.91,
         p_lng: -77.02,
         p_radius_m: 150,
@@ -163,6 +174,64 @@ describe('validateEventForm', () => {
     );
     expect(!result.ok && result.errors.ticketUrl).toBeDefined();
     expect(!result.ok && result.errors.summary).toBeDefined();
+  });
+});
+
+describe('New York time, whatever the phone zone (VC-B04b)', () => {
+  it('runs these tests with the machine clock in Tokyo', () => {
+    // Guard: if globalSetup stopped forcing Tokyo, the tests below would pass
+    // on a New York machine without proving anything. Tokyo is UTC+9 all year,
+    // so JavaScript reports an offset of -540 minutes.
+    expect(new Date('2026-10-31T19:00:00Z').getTimezoneOffset()).toBe(-540);
+  });
+
+  it('saves a typed "10:00 PM" as 10 PM in New York', () => {
+    const result = validateEventForm(form({ endDate: '10 / 31 / 2026', endTime: '11:30 PM' }), NOW);
+    expect(result.ok && result.input.p_starts_at).toBe('2026-11-01T02:00:00.000Z');
+    expect(result.ok && result.input.p_ends_at).toBe('2026-11-01T03:30:00.000Z');
+  });
+
+  it('reads a party past midnight as the next New York morning', () => {
+    // A normal weekend with no clock change: 10 PM Friday to 2 AM Saturday.
+    const result = validateEventForm(
+      form({ startDate: '11 / 06 / 2026', endDate: '11 / 07 / 2026' }),
+      NOW,
+    );
+    // Standard time (UTC-5): 10 PM is 03:00 UTC, 2 AM is 07:00 UTC.
+    expect(result.ok && result.input.p_starts_at).toBe('2026-11-07T03:00:00.000Z');
+    expect(result.ok && result.input.p_ends_at).toBe('2026-11-07T07:00:00.000Z');
+  });
+
+  it('follows daylight saving: same 10 PM, different UTC hour', () => {
+    // Summer (daylight, UTC-4) versus winter (standard, UTC-5).
+    expect(toEventMoment({ year: 2026, month: 7, day: 4 }, { hour: 22, minute: 0 })).toEqual(
+      new Date('2026-07-05T02:00:00Z'),
+    );
+    expect(toEventMoment({ year: 2026, month: 12, day: 5 }, { hour: 22, minute: 0 })).toEqual(
+      new Date('2026-12-06T03:00:00Z'),
+    );
+  });
+
+  it('handles the November repeat hour and the March missing hour', () => {
+    // 1:30 AM happens twice on 1 November 2026; we take the first (daylight).
+    expect(toEventMoment({ year: 2026, month: 11, day: 1 }, { hour: 1, minute: 30 })).toEqual(
+      new Date('2026-11-01T05:30:00Z'),
+    );
+    // 2:30 AM never happens on 8 March 2026; it comes out as 1:30 AM standard.
+    expect(toEventMoment({ year: 2026, month: 3, day: 8 }, { hour: 2, minute: 30 })).toEqual(
+      new Date('2026-03-08T06:30:00Z'),
+    );
+    // 3:30 AM that morning is daylight time (UTC-4).
+    expect(toEventMoment({ year: 2026, month: 3, day: 8 }, { hour: 3, minute: 30 })).toEqual(
+      new Date('2026-03-08T07:30:00Z'),
+    );
+  });
+
+  it("starts the date boxes on New York's date, not the phone's", () => {
+    // 11 PM Saturday in New York is already Sunday afternoon in Tokyo.
+    expect(dateInputFor(new Date('2026-11-01T03:00:00Z'))).toBe('10 / 31 / 2026');
+    // 1 AM Sunday in New York: New York's date has moved on too.
+    expect(dateInputFor(new Date('2026-11-01T05:00:00Z'))).toBe('11 / 01 / 2026');
   });
 });
 

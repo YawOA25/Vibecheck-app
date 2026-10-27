@@ -22,6 +22,7 @@ import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   RefreshControl,
   SectionList,
   StyleSheet,
@@ -35,6 +36,7 @@ import { EventCard } from '@/components/EventCard';
 import { FormMessage } from '@/components/FormMessage';
 import { useAuth } from '@/lib/auth-context';
 import { listTonightEvents } from '@/lib/events-read';
+import { sendTestError } from '@/lib/sentry';
 import { groupByDay, tonightKicker } from '@/lib/tonight';
 import type { PublicEvent } from '@/lib/tonight';
 import { colors, radius, spacing, typography } from '@/theme';
@@ -132,8 +134,14 @@ export default function TonightScreen() {
         <Text style={styles.kicker}>{tonightKicker(new Date())}</Text>
         {/* Title on the left, the header buttons on the right of the same row. */}
         <View style={styles.headerRow}>
-          {/* accessibilityRole="header" lets screen readers announce this as a heading. */}
-          <Text style={styles.title} accessibilityRole="header">
+          {/* accessibilityRole="header" lets screen readers announce this as a heading.
+              Developers only (__DEV__ is false in store builds): a long-press
+              on the title sends a test crash report to Sentry (VC-26). */}
+          <Text
+            style={styles.title}
+            accessibilityRole="header"
+            onLongPress={__DEV__ ? confirmTestError : undefined}
+          >
             Tonight
           </Text>
           <View style={styles.headerActions}>
@@ -189,6 +197,22 @@ export default function TonightScreen() {
         />
       ) : null}
     </SafeAreaView>
+  );
+}
+
+/**
+ * Developers only: sends a test error to Sentry and says what happened, so
+ * the founder can check it arrives in the Sentry dashboard (VC-26).
+ *
+ * @returns nothing; shows a small pop-up with the result.
+ */
+function confirmTestError() {
+  const sent = sendTestError();
+  Alert.alert(
+    sent ? 'Test error sent' : 'Sentry is off',
+    sent
+      ? 'Look for it in the Sentry dashboard (environment: development) in a minute.'
+      : 'Add EXPO_PUBLIC_SENTRY_DSN to .env, then restart Expo.',
   );
 }
 

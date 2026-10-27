@@ -155,7 +155,26 @@ To remove admin rights later, run the same query with `set role = 'user'`.
 
 **Create an event on your phone.** Stand at the place, tap **New event**, fill in the name and area, check the dates and times (for a party past midnight, set the end date to the next day), tap **Use my current location** (allow location when asked), set the switches, then **Create event**. The next screen shows the 6-character party code to write or print on a card; **Get a new code** replaces it if it leaks. Turn on **Test event** while trying things out: only testers see test events.
 
+**Times are always New York time.** The dates and times you type are read as New York (DC) time, whatever time zone your phone is set to, and the date boxes start on New York's date. So "10:00 PM" always means 10 PM at the party, even if you create the event while travelling. Daylight-saving nights work too: on the November night the clocks go back, a party from 10:00 PM to 2:00 AM lasts 5 real hours, as it should.
+
 **Staff picks (VC-29).** For a venue event the team picked: turn on **Staff pick**, paste the ticket link (only `https://` links on eventbrite.com are accepted) and write a summary of 15 words or fewer **in our own words**. Never paste the organizer's description, and never use their flyer or Eventbrite's logo (legal conditions, `team/projects/vibecheck/legal/eventbrite-terms-2026-10-26.md`).
+
+## Crash reports with Sentry (VC-26)
+
+**What it does.** When the app hits an error it didn't expect, it sends a short report to [Sentry](https://sentry.io), so we hear about bugs before anyone complains. The code is in `src/lib/sentry.ts`.
+
+**Turn it on.** Put your project's DSN (Sentry: **Settings > Projects > vibecheck > Client Keys (DSN)**) in `.env` (not `.env.example`), on the line `EXPO_PUBLIC_SENTRY_DSN=`. Then stop Expo (`Ctrl+C`) and start it again, because Expo reads `.env` only when it starts. With no DSN, Sentry stays off and the app works exactly the same. A DSN is not a password: it only lets an app send reports in, so it is safe inside the app. It still lives only in `.env`, never in the code.
+
+**Check it works (developers only).** With the app open in Expo Go, **press and hold the big "Tonight" title** for about a second. A pop-up says "Test error sent". Within a minute it appears in the Sentry dashboard under **Issues**, with environment **development**. If it says "Sentry is off", the DSN is missing: check `.env` and restart Expo. This long-press only exists in development; store builds don't have it.
+
+**What is never sent (privacy, legal VC-30).** No IP address, name or email. Before anything leaves the phone, every report and every breadcrumb (Sentry's trail of recent taps, network calls and console lines) is cleaned: any field named like a birthdate, date of birth, email, password, code, token or location (lat/lng) is deleted, and emails, plain dates, 6-8 digit codes and GPS coordinates inside messages are blanked out. Screenshots and screen layouts are off.
+
+**Limits for now.**
+
+- **Expo Go reports JavaScript errors only.** Native crashes (deep inside iOS or Android) need our own build (task VC-B10). That's when we also add Sentry's Expo plugin to `app.config.ts`.
+- **No source maps yet.** Reports show the app's packed code lines, not our file names. Uploading source maps needs a Sentry auth token (a secret) and the plugin; it's a later step.
+- Each report is tagged `development` (Expo Go) or `production` (store builds), so test errors don't mix with real ones.
+- In tests, Jest swaps Sentry for a fake (`__mocks__/@sentry/react-native.js`), so tests never send anything.
 
 ## Where things live
 

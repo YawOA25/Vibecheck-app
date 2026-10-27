@@ -61,7 +61,7 @@ export interface EventSection {
 }
 
 /** A calendar date with no time (month 1-12). */
-interface CivilDate {
+export interface CivilDate {
   year: number;
   month: number;
   day: number;
@@ -134,19 +134,28 @@ function addDays(date: CivilDate, days: number): CivilDate {
 }
 
 /**
- * Finds the moment when New York's clock shows a given date and hour.
+ * Finds the moment when New York's clock shows a given date and time.
  *
  * @param date - the New York calendar date.
- * @param hour - the New York hour (0-23), on the hour.
+ * @param hour - the New York hour (0-23).
+ * @param minute - the New York minute (0-59); defaults to 0 (on the hour).
  * @returns that moment.
  * How: first pretend New York is on UTC, see how far New York's clock is
  * from UTC at that moment (4 or 5 hours, depending on daylight saving), and
  * correct by that much. Then check once more, in case the correction crossed
- * a daylight-saving change. Changes happen at 2 AM, so 5 AM (the night
- * cutoff) always exists exactly once and the answer is exact.
+ * a daylight-saving change.
+ * Daylight-saving edge cases (changes happen at 2 AM New York time):
+ *   - In November, 1:00-1:59 AM happens twice; this returns the first one
+ *     (still daylight time), which is what someone typing "1:30 AM" for a
+ *     party that started the evening before means.
+ *   - In March, 2:00-2:59 AM never happens; a time typed in that gap comes
+ *     out one hour earlier (2:30 AM becomes 1:30 AM standard time).
+ *   - 5 AM (the night cutoff) always exists exactly once, so night edges are exact.
+ * Also used by the admin form (src/lib/event-form.ts) to turn typed times
+ * into New York moments.
  */
-function zonedMoment(date: CivilDate, hour: number): Date {
-  const wanted = Date.UTC(date.year, date.month - 1, date.day, hour);
+export function zonedMoment(date: CivilDate, hour: number, minute = 0): Date {
+  const wanted = Date.UTC(date.year, date.month - 1, date.day, hour, minute);
   /** How far New York's clock reads from UTC at moment `ms` (negative: behind). */
   const offsetAt = (ms: number) => {
     const p = zonedParts(new Date(ms));

@@ -18,7 +18,8 @@
  *      AND the app's fonts are loading (v3 design, src/lib/fonts.ts), so
  *      people don't see the sign-in screen flash, or text jump from the
  *      phone's font to ours. If the fonts fail to load, the app carries on
- *      with the phone's own font.
+ *      with the phone's own font;
+ *   4. starts crash reports (Sentry, VC-26) if EXPO_PUBLIC_SENTRY_DSN is set.
  */
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
@@ -30,6 +31,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { Button } from '@/components/Button';
 import { AuthProvider, useAuth } from '@/lib/auth-context';
 import { useAppFonts } from '@/lib/fonts';
+import { initSentry } from '@/lib/sentry';
 import { isSupabaseConfigured } from '@/lib/supabase';
 import { colors, spacing, typography } from '@/theme';
 
@@ -37,6 +39,10 @@ import { colors, spacing, typography } from '@/theme';
 // fonts are ready.
 // `.catch` because this can fail harmlessly if the splash is already gone.
 SplashScreen.preventAutoHideAsync().catch(() => {});
+
+// Start crash reports as early as possible, so errors while the app starts
+// are caught too. Does nothing when .env has no EXPO_PUBLIC_SENTRY_DSN.
+initSentry();
 
 /**
  * The app's outermost component.

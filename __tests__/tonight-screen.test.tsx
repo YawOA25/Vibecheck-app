@@ -10,17 +10,21 @@
  *   - the empty state when there are no events;
  *   - the list: Today/Tomorrow sections, area and time, the "Early" vibe
  *     chip, the "Staff pick" tag, and that a card opens the event page;
- *   - pull to refresh keeps the old list if the refresh fails.
+ *   - pull to refresh keeps the old list if the refresh fails;
+ *   - the developer-only "send a Sentry test error" long-press (VC-26).
  */
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import { Alert } from 'react-native';
 
 import TonightScreen, { EMPTY_BODY, EMPTY_TITLE } from '../app/index';
 import { useAuth } from '@/lib/auth-context';
 import { listTonightEvents } from '@/lib/events-read';
+import { sendTestError } from '@/lib/sentry';
 import type { PublicEvent } from '@/lib/tonight';
 
 jest.mock('@/lib/auth-context', () => ({ useAuth: jest.fn() }));
 jest.mock('@/lib/events-read', () => ({ listTonightEvents: jest.fn() }));
+jest.mock('@/lib/sentry', () => ({ sendTestError: jest.fn(() => true) }));
 // The "mock" prefix lets jest.mock (which runs first) use this fake.
 const mockPush = jest.fn();
 jest.mock('expo-router', () => ({ useRouter: () => ({ push: mockPush }) }));
@@ -91,6 +95,31 @@ describe('TonightScreen header', () => {
     await render(<TonightScreen />);
     await fireEvent.press(screen.getByRole('button', { name: 'Sign out' }));
     expect(signOut).toHaveBeenCalled();
+  });
+});
+
+describe('TonightScreen Sentry test error (developers only, VC-26)', () => {
+  // __DEV__ is a global React Native sets; we switch it per test and put it back.
+  const realDev = (globalThis as any).__DEV__;
+  afterEach(() => {
+    (globalThis as any).__DEV__ = realDev;
+  });
+
+  it('sends a test error on a long-press of the title in development', async () => {
+    (globalThis as any).__DEV__ = true;
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    await render(<TonightScreen />);
+    await fireEvent(screen.getByRole('header', { name: 'Tonight' }), 'longPress');
+    expect(sendTestError).toHaveBeenCalledTimes(1);
+    expect(alert).toHaveBeenCalledWith('Test error sent', expect.any(String));
+  });
+
+  it('does nothing on a long-press in a store build', async () => {
+    (globalThis as any).__DEV__ = false;
+    await render(<TonightScreen />);
+    // In a store build the title has no long-press handler at all.
+    expect(screen.getByRole('header', { name: 'Tonight' }).props.onLongPress).toBeUndefined();
+    expect(sendTestError).not.toHaveBeenCalled();
   });
 });
 

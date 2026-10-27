@@ -12,8 +12,9 @@
  * (supabase/migrations/20261026180000_admin_events.sql) are the ones that
  * count; these copy them. If one changes, change both.
  */
-import { formatDateInput, parseDateInput } from '@/lib/age';
+import { formatDateInput, parseDateInput, todayInZone } from '@/lib/age';
 import type { CalendarDate } from '@/lib/age';
+import { zonedMoment } from '@/lib/tonight';
 
 /** Longest event name (same as the database rule). */
 export const MAX_TITLE_LENGTH = 80;
@@ -153,27 +154,34 @@ export function parseTimeInput(text: string): TimeOfDay | null {
 }
 
 /**
- * Joins a calendar date and a time of day into one moment, in the phone's
- * own time zone (the admin is at the party, in the same zone as the guests).
+ * Joins a calendar date and a time of day into one moment, read as New York
+ * wall-clock time (America/New_York).
  *
- * @param date - the calendar date.
- * @param time - the time of day.
- * @returns a JavaScript Date for that local moment.
+ * @param date - the calendar date, in New York.
+ * @param time - the time of day, in New York.
+ * @returns a JavaScript Date for that moment.
+ * Why New York and not the phone's zone: VibeCheck is a DC-area app and
+ * every event day and time is New York time (src/lib/tonight.ts). If the
+ * admin's phone is set to another zone (travelling, or set wrongly), typing
+ * "10:00 PM" must still mean 10 PM at the party, not 10 PM wherever the
+ * phone thinks it is. zonedMoment explains the daylight-saving edge cases.
  */
-export function toLocalMoment(date: CalendarDate, time: TimeOfDay): Date {
-  // JavaScript months start at 0 (January = 0), hence the "- 1".
-  return new Date(date.year, date.month - 1, date.day, time.hour, time.minute, 0, 0);
+export function toEventMoment(date: CalendarDate, time: TimeOfDay): Date {
+  return zonedMoment(date, time.hour, time.minute);
 }
 
 /**
  * Formats a date for the date boxes, so the form can start on today.
  *
- * @param date - any moment; its local calendar day is used.
- * @returns for example "10 / 31 / 2026".
+ * @param date - any moment, usually now.
+ * @returns New York's calendar date at that moment, for example
+ *   "10 / 31 / 2026". At 11 PM in New York a phone set to Tokyo already shows
+ *   the next day; the form must still start on New York's date.
  */
 export function dateInputFor(date: Date): string {
+  const today = todayInZone(date);
   const pad = (n: number) => String(n).padStart(2, '0');
-  return formatDateInput(`${pad(date.getMonth() + 1)}${pad(date.getDate())}${date.getFullYear()}`);
+  return formatDateInput(`${pad(today.month)}${pad(today.day)}${today.year}`);
 }
 
 /**
@@ -252,8 +260,9 @@ export function validateEventForm(values: EventFormValues, now: Date): EventForm
   let startsAt: Date | null = null;
   let endsAt: Date | null = null;
   if (startDate && startTime && endDate && endTime) {
-    startsAt = toLocalMoment(startDate, startTime);
-    endsAt = toLocalMoment(endDate, endTime);
+    // Read the typed times as New York time, whatever zone the phone is in.
+    startsAt = toEventMoment(startDate, startTime);
+    endsAt = toEventMoment(endDate, endTime);
     const hours = (endsAt.getTime() - startsAt.getTime()) / 3_600_000;
     if (hours <= 0) errors.endTime = END_BEFORE_START;
     else if (hours > MAX_EVENT_HOURS)
