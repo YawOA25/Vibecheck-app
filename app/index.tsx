@@ -9,6 +9,10 @@
  *     admins only a "New event" pill (VC-B04);
  *   - the events, in a "Today" and a "Tomorrow" section, each as a card
  *     (src/components/EventCard.tsx). Tapping a card opens the event page;
+ *   - on each card, the live vibe and the headcount (task VC-B09, VC-42),
+ *     fetched for the whole list in one call when the list loads, when the
+ *     screen comes back into view, on pull to refresh, and every minute
+ *     while it's on screen;
  *   - pull down to refresh;
  *   - a loading state, an error state with "Try again", and an empty state.
  *
@@ -18,11 +22,12 @@
  * expo-router makes `app/index.tsx` the app's home address ("/"). The root
  * layout only allows it for signed-in people who passed the 18+ gate.
  */
-import { useRouter } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  AppState,
   RefreshControl,
   SectionList,
   StyleSheet,
@@ -39,6 +44,9 @@ import { listTonightEvents } from '@/lib/events-read';
 import { sendTestError } from '@/lib/sentry';
 import { groupByDay, tonightKicker } from '@/lib/tonight';
 import type { PublicEvent } from '@/lib/tonight';
+import { LIST_VIBE_REFRESH_MS } from '@/lib/vibe';
+import { getEventsVibe } from '@/lib/vibe-api';
+import type { Vibe } from '@/lib/vibe';
 import { colors, radius, spacing, typography } from '@/theme';
 
 /** Text for the empty state (exported so tests use the same words). */
@@ -76,6 +84,48 @@ export default function TonightScreen() {
   const [refreshError, setRefreshError] = useState<string | null>(null);
   // Bumped by "Try again" to run the first load again.
   const [attempt, setAttempt] = useState(0);
+  // Each event's vibe by id (VC-B09). Empty until the first answer; a failed
+  // refresh keeps the last good scores (cards without one show no badge).
+  const [vibes, setVibes] = useState<Record<string, Vibe>>({});
+  // Bumped by pull to refresh so the scores reload with the list.
+  const [vibeTick, setVibeTick] = useState(0);
+
+  // The ids on screen, joined into one string so the effect below only
+  // restarts when the list of events really changes.
+  const idsKey = useMemo(
+    () => (state.kind === 'ready' ? state.events.map((e) => e.id).join(',') : ''),
+    [state],
+  );
+
+  // Load the vibes for the cards: now, then every minute while this screen
+  // is in view and the app is open. Stops when the guest opens an event (the
+  // event page refreshes its own) and starts again on the way back.
+  useFocusEffect(
+    useCallback(() => {
+      if (!idsKey) return undefined;
+      let active = true;
+      const ids = idsKey.split(',');
+
+      /** Asks for all the scores in one call. */
+      function load() {
+        getEventsVibe(ids).then((outcome) => {
+          if (active && outcome.ok) setVibes(outcome.vibes);
+        });
+      }
+
+      load();
+      const timer = setInterval(() => {
+        // Skip while the app is in the background (not on screen).
+        if (AppState.currentState !== 'background') load();
+      }, LIST_VIBE_REFRESH_MS);
+      return () => {
+        active = false;
+        clearInterval(timer);
+      };
+      // `vibeTick` isn't read inside; listing it reloads after pull to refresh.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [idsKey, vibeTick]),
+  );
 
   // Load the list when the screen opens, and again after "Try again".
   // State is only set inside `.then` (when the answer arrives), and
@@ -114,6 +164,8 @@ export default function TonightScreen() {
     if (outcome.ok) {
       setState({ kind: 'ready', events: outcome.events, loadedAt: now });
       setRefreshError(null);
+      // Fresh scores too, even if the same events came back.
+      setVibeTick((n) => n + 1);
     } else {
       setRefreshError(outcome.message);
     }
@@ -165,7 +217,12 @@ export default function TonightScreen() {
           sections={groupByDay(state.events, state.loadedAt)}
           keyExtractor={(event) => event.id}
           renderItem={({ item }) => (
-            <EventCard event={item} now={state.loadedAt} onPress={() => openEvent(item.id)} />
+            <EventCard
+              event={item}
+              now={state.loadedAt}
+              vibe={vibes[item.id]}
+              onPress={() => openEvent(item.id)}
+            />
           )}
           renderSectionHeader={({ section }) => (
             <Text style={styles.sectionTitle} accessibilityRole="header">

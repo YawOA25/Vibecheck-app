@@ -177,6 +177,17 @@ To remove admin rights later, run the same query with `set role = 'user'`.
 
 **Heads-ups (VC-43).** The six tags are fixed (no free text, so nothing to moderate): Lines are long, Music is fire, Packed, Overpriced, Good crowd, Sound is bad. The event page shows a **Heads-up** card with each tag's count. A checked-in guest can tap a tag to **+1** it, once per tag, and can't take it back. Nobody can see who added a tag.
 
+## Live vibe score and headcount (VC-B09, VC-42)
+
+**What people see.** The event page's **Live vibe** card shows a meter: the score from 0 to 10 with its word (under 4 Quiet, 4 to 6.9 Good, 7 to 8.4 Hot, 8.5 and up Fire), how many people rated and when, the reaction tally, and the headcount ("74 here", a number only: no names, no guest list). It refreshes every 20 seconds while the page is open. Each card on the Tonight list shows the score and word (or "Early" with "3 so far", or "No vibe yet") and the headcount, refreshed every minute.
+
+**The rules** live on the server, in `supabase/migrations/20261027130000_vibe_score.sql`:
+
+- one rating's score is (crowd + music + energy - 3) / 6 x 10. The live score is a weighted average of the ratings saved in the last 3 hours, where a rating counts half as much every 30 minutes, rounded to 1 decimal;
+- fewer than 5 ratings shows "Early reading: N people so far" with no number. A number is never made from fewer than 5 ratings: if the last 3 hours hold fewer than 5, the score is the plain (unweighted) average of the 5 newest instead, so one fresh rating can't outweigh the others. No new rating for 90 minutes shows the last score in grey with "Quiet for ..." and the night's average (the average is only sent in this quiet state);
+- hidden ratings count nowhere;
+- the app only ever gets totals (`get_event_vibe` for one event, `get_events_vibe` for the list), never names, ids or the exact time of a rating, and it can't pick the clock the score is worked out at. This is not perfect privacy: someone who keeps refreshing can see the score and the count change when one new rating arrives, and roughly work out what that rating was (not who gave it). We accept that risk for the party test. The privacy fixes are in `supabase/migrations/20261027130100_vibe_score_privacy.sql` and `20261027130200_vibe_score_floor_plain_average.sql`.
+
 ## Crash reports with Sentry (VC-26)
 
 **What it does.** When the app hits an error it didn't expect, it sends a short report to [Sentry](https://sentry.io), so we hear about bugs before anyone complains. The code is in `src/lib/sentry.ts`.
@@ -208,4 +219,4 @@ To remove admin rights later, run the same query with `set role = 'user'`.
 | `supabase/`       | Database tables and security rules (`migrations/`) and their pgTAP tests (`tests/database/`).                |
 | `scripts/`        | Helper scripts, such as `test-db.js`, which runs the database tests or explains why they were skipped.       |
 
-Screens so far: `app/(auth)/sign-in.tsx` (email code), `app/(auth)/age-gate.tsx` (name and date of birth), `app/index.tsx` (Tonight: today's and tomorrow's events, pull down to refresh), `app/event/[id].tsx` (one event's page, with "I'm here" and, for staff picks, "Get tickets"), `app/check-in/[id].tsx` (GPS check-in, task VC-B06), `app/join/[id].tsx` (party-code check-in, task VC-B07), `app/rate/[id].tsx` (the 3-tap rating, task VC-B08) and `app/admin/new-event.tsx` (admins only). A folder or file name in square brackets, like `[id]`, is a changing part of the address (the event's id). A folder name in brackets, like `(auth)`, groups screens without adding to their address.
+Screens so far: `app/(auth)/sign-in.tsx` (email code), `app/(auth)/age-gate.tsx` (name and date of birth), `app/index.tsx` (Tonight: today's and tomorrow's events, pull down to refresh), `app/event/[id].tsx` (one event's page, with the live vibe meter, "I'm here" and, for staff picks, "Get tickets"), `app/check-in/[id].tsx` (GPS check-in, task VC-B06), `app/join/[id].tsx` (party-code check-in, task VC-B07), `app/rate/[id].tsx` (the 3-tap rating, task VC-B08) and `app/admin/new-event.tsx` (admins only). A folder or file name in square brackets, like `[id]`, is a changing part of the address (the event's id). A folder name in brackets, like `(auth)`, groups screens without adding to their address.

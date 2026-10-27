@@ -10,8 +10,10 @@
  *   - chips: "Staff pick" for venue events the team picked (VC-29/VC-14) and
  *     "21+" when set (VC-10);
  *   - our own short summary, if there is one;
- *   - the "Live vibe" card, in its "Early reading" state until scores exist
- *     (task VC-B09);
+ *   - the "Live vibe" card (task VC-B09): the meter with the live score
+ *     and its word (or "Early reading" / "No vibe yet"), refreshed every 20
+ *     seconds while the page is open, plus the headcount "74 here"
+ *     (VC-42: a number only, never names) (src/components/LiveVibeCard.tsx);
  *   - the "Heads-up" card (VC-43, with VC-B08): quick tags from guests
  *     who are there, with counts and a "+1" (src/components/HeadsUpCard.tsx);
  *   - the "I'm here" button, which opens GPS check-in
@@ -292,7 +294,13 @@ function EventDetails({
 
         {event.summary ? <Text style={styles.summary}>{event.summary}</Text> : null}
 
-        <LiveVibeCard />
+        <LiveVibeCard
+          eventId={event.id}
+          // After the end time the headcount reads "74 were here".
+          ended={now.getTime() > Date.parse(event.ends_at)}
+          // A new load time (each time the page comes into view) reloads it at once.
+          refreshKey={now.getTime()}
+        />
 
         {headsUp}
 

@@ -8,8 +8,11 @@
  *   - the loading state while the list is on its way;
  *   - the error state, and that "Try again" loads again;
  *   - the empty state when there are no events;
- *   - the list: Today/Tomorrow sections, area and time, the "Early" vibe
- *     chip, the "Staff pick" tag, and that a card opens the event page;
+ *   - the list: Today/Tomorrow sections, area and time, the "Staff pick"
+ *     tag, and that a card opens the event page;
+ *   - VC-B09 + VC-42: each card's vibe (live score and word, stale, Early
+ *     with "3 so far", No vibe yet) and the "74 here" headcount, asked for
+ *     in one call with the ids on screen; no badge if the vibes fail;
  *   - pull to refresh keeps the old list if the refresh fails;
  *   - the developer-only "send a Sentry test error" long-press (VC-26).
  */
@@ -21,13 +24,45 @@ import { useAuth } from '@/lib/auth-context';
 import { listTonightEvents } from '@/lib/events-read';
 import { sendTestError } from '@/lib/sentry';
 import type { PublicEvent } from '@/lib/tonight';
+import type { Vibe } from '@/lib/vibe';
+import { getEventsVibe } from '@/lib/vibe-api';
 
 jest.mock('@/lib/auth-context', () => ({ useAuth: jest.fn() }));
 jest.mock('@/lib/events-read', () => ({ listTonightEvents: jest.fn() }));
 jest.mock('@/lib/sentry', () => ({ sendTestError: jest.fn(() => true) }));
 // The "mock" prefix lets jest.mock (which runs first) use this fake.
 const mockPush = jest.fn();
-jest.mock('expo-router', () => ({ useRouter: () => ({ push: mockPush }) }));
+jest.mock('expo-router', () => ({
+  useRouter: () => ({ push: mockPush }),
+  // Outside a real navigator the screen is "in view" once: run the effect
+  // like a normal useEffect. (require inside: jest.mock can't use outer imports.)
+  useFocusEffect: (effect: () => void | (() => void)) => {
+    const { useEffect } = require('react');
+    useEffect(effect, [effect]);
+  },
+}));
+jest.mock('@/lib/vibe-api', () => ({ getEventsVibe: jest.fn() }));
+const vibesFor = getEventsVibe as jest.Mock;
+
+/**
+ * Makes a vibe for the fake server answer.
+ *
+ * @param overrides - fields to change from an "early, 3 raters" vibe.
+ * @returns a Vibe.
+ */
+function makeVibe(overrides: Partial<Vibe> = {}): Vibe {
+  return {
+    state: 'early',
+    raters: 3,
+    here: 0,
+    score: null,
+    label: null,
+    nightAverage: null,
+    minutesSinceLast: 2,
+    reactions: [],
+    ...overrides,
+  };
+}
 
 const signOut = jest.fn();
 const list = listTonightEvents as jest.Mock;
@@ -65,6 +100,8 @@ beforeEach(() => {
     signOut,
   });
   list.mockResolvedValue({ ok: true, events: [] });
+  // By default the vibes call answers with nothing (cards show no badge).
+  vibesFor.mockResolvedValue({ ok: true, vibes: {} });
 });
 
 describe('TonightScreen header', () => {
@@ -157,12 +194,14 @@ describe('TonightScreen list states', () => {
 describe('TonightScreen events', () => {
   it('lists events with area, time and the Early vibe chip, and opens one on tap', async () => {
     list.mockResolvedValue({ ok: true, events: [makeEvent({})] });
+    vibesFor.mockResolvedValue({ ok: true, vibes: { e1: makeVibe() } });
     await render(<TonightScreen />);
 
     expect(await screen.findByText('Saturday rooftop')).toBeOnTheScreen();
     // "Shaw, DC · Today · 10 PM" or similar: area first, then when.
     expect(screen.getByText(/^Shaw, DC · (Today|Tomorrow) · /)).toBeOnTheScreen();
-    expect(screen.getByText('Early')).toBeOnTheScreen();
+    expect(await screen.findByText('Early')).toBeOnTheScreen();
+    expect(screen.getByText('3 so far')).toBeOnTheScreen();
     expect(screen.queryByText('Staff pick')).toBeNull();
 
     await fireEvent.press(screen.getByRole('button', { name: /^Saturday rooftop, / }));
@@ -205,5 +244,74 @@ describe('TonightScreen events', () => {
       screen.getByText("We couldn't reach the server. Check your connection and try again."),
     ).toBeOnTheScreen();
     expect(screen.getByText('Saturday rooftop')).toBeOnTheScreen();
+  });
+});
+
+describe('TonightScreen vibes (VC-B09, VC-42)', () => {
+  it('asks for all the vibes in one call with the ids on screen', async () => {
+    list.mockResolvedValue({
+      ok: true,
+      events: [makeEvent({ id: 'e1' }), makeEvent({ id: 'e2', title: 'Basement' })],
+    });
+    await render(<TonightScreen />);
+    await screen.findByText('Basement');
+    expect(vibesFor).toHaveBeenCalledTimes(1);
+    expect(vibesFor).toHaveBeenCalledWith(['e1', 'e2']);
+  });
+
+  it('shows a live score with its word, the headcount, and says both aloud', async () => {
+    list.mockResolvedValue({ ok: true, events: [makeEvent({})] });
+    vibesFor.mockResolvedValue({
+      ok: true,
+      vibes: { e1: makeVibe({ state: 'live', raters: 6, here: 74, score: 9.1, label: 'Fire' }) },
+    });
+    await render(<TonightScreen />);
+
+    expect(await screen.findByText('9.1')).toBeOnTheScreen();
+    expect(screen.getByText('Fire')).toBeOnTheScreen();
+    expect(screen.getByText(/^Shaw, DC · .+ · 74 here$/)).toBeOnTheScreen();
+    expect(
+      screen.getByRole('button', { name: /74 here, vibe 9\.1 out of 10, Fire$/ }),
+    ).toBeOnTheScreen();
+  });
+
+  it('shows a stale score as "quiet", and "No vibe yet" for an unrated event', async () => {
+    list.mockResolvedValue({
+      ok: true,
+      events: [makeEvent({ id: 'e1' }), makeEvent({ id: 'e2', title: 'Basement' })],
+    });
+    vibesFor.mockResolvedValue({
+      ok: true,
+      vibes: {
+        e1: makeVibe({
+          state: 'stale',
+          raters: 5,
+          score: 6.2,
+          label: 'Good',
+          minutesSinceLast: 130,
+        }),
+        e2: makeVibe({ state: 'none', raters: 0, minutesSinceLast: null }),
+      },
+    });
+    await render(<TonightScreen />);
+
+    expect(await screen.findByText('6.2')).toBeOnTheScreen();
+    expect(screen.getByText('quiet')).toBeOnTheScreen();
+    expect(screen.getByText('No vibe yet')).toBeOnTheScreen();
+    expect(
+      screen.getByRole('button', { name: /vibe quiet for 2 hrs, last 6\.2, Good$/ }),
+    ).toBeOnTheScreen();
+  });
+
+  it('shows no vibe badge (and no number) if the vibes fail to load', async () => {
+    list.mockResolvedValue({ ok: true, events: [makeEvent({})] });
+    vibesFor.mockResolvedValue({ ok: false, message: "We couldn't load the vibe." });
+    await render(<TonightScreen />);
+
+    await screen.findByText('Saturday rooftop');
+    expect(screen.queryByText('Early')).toBeNull();
+    expect(screen.queryByText('No vibe yet')).toBeNull();
+    // A list error is never shown for the vibes; the list itself is fine.
+    expect(screen.queryByText("We couldn't load the vibe.")).toBeNull();
   });
 });

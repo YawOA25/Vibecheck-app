@@ -6,7 +6,8 @@
  * "open this link" function is watched. We check:
  *   - loading, error (with Try again) and not-found states;
  *   - the details: time range, name, area, 21+, our summary, and the
- *     "Early reading" live vibe block;
+ *     live vibe card (VC-B09; its states are tested in
+ *     live-vibe-card.test.tsx);
  *   - staff picks (VC-29): the "Staff pick" tag, a plain "Get tickets" link
  *     that opens the ticket page in the browser, and "Not affiliated with
  *     Eventbrite.";
@@ -34,7 +35,8 @@ import EventScreen, {
 import { ENTRY_DISCLAIMER, ENTRY_LINK_LABEL } from '@/components/EntryLink';
 import { NO_HEADS_UPS } from '@/components/HeadsUpCard';
 import { addHeadsUp, getEventHeadsUps, getMyRatingStatus } from '@/lib/ratings-api';
-import { EARLY_READING_TITLE } from '@/components/LiveVibeCard';
+import { EARLY_TITLE } from '@/lib/vibe';
+import { getEventVibe } from '@/lib/vibe-api';
 import { NOT_AFFILIATED } from '@/components/TicketLink';
 import { useAuth } from '@/lib/auth-context';
 import { getEventCode } from '@/lib/events-api';
@@ -44,6 +46,7 @@ import type { PublicEvent } from '@/lib/tonight';
 jest.mock('@/lib/events-read', () => ({ getEvent: jest.fn() }));
 jest.mock('@/lib/events-api', () => ({ getEventCode: jest.fn() }));
 jest.mock('@/lib/auth-context', () => ({ useAuth: jest.fn() }));
+jest.mock('@/lib/vibe-api', () => ({ getEventVibe: jest.fn() }));
 jest.mock('@/lib/ratings-api', () => ({
   getMyRatingStatus: jest.fn(),
   getEventHeadsUps: jest.fn(),
@@ -120,6 +123,20 @@ beforeEach(() => {
   // By default: not checked in, and no heads-ups yet.
   myStatus.mockResolvedValue({ ok: true, status: { checkIn: null, ratedAt: null } });
   headsUps.mockResolvedValue({ ok: true, tags: [] });
+  // And an early vibe: 3 ratings, 4 people here.
+  (getEventVibe as jest.Mock).mockResolvedValue({
+    ok: true,
+    vibe: {
+      state: 'early',
+      raters: 3,
+      here: 4,
+      score: null,
+      label: null,
+      nightAverage: null,
+      minutesSinceLast: 1,
+      reactions: [],
+    },
+  });
 });
 
 afterEach(() => openURL.mockRestore());
@@ -164,7 +181,11 @@ describe('EventScreen details', () => {
     expect(screen.getByText('Navy Yard, DC')).toBeOnTheScreen();
     expect(screen.getByText('21+')).toBeOnTheScreen();
     expect(screen.getByText('Sunset DJ set on the roof.')).toBeOnTheScreen();
-    expect(screen.getByText(EARLY_READING_TITLE)).toBeOnTheScreen();
+    expect(await screen.findByText(EARLY_TITLE)).toBeOnTheScreen();
+    expect(screen.getByText('Early reading: 3 people so far')).toBeOnTheScreen();
+    // VC-42: the headcount, a number only.
+    expect(screen.getByText('4 here')).toBeOnTheScreen();
+    expect(getEventVibe).toHaveBeenCalledWith('e1');
   });
 
   it('shows no staff-pick tag or ticket link for a host party, even with a stored link', async () => {
