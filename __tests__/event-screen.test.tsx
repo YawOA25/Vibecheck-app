@@ -26,6 +26,7 @@ import { Linking, Share } from 'react-native';
 
 import EventScreen, {
   EDIT_EVENT,
+  MODERATE_LABEL,
   HIDE_CODE,
   NOT_FOUND_TITLE,
   RATE_LABEL,
@@ -47,6 +48,8 @@ jest.mock('@/lib/events-read', () => ({ getEvent: jest.fn() }));
 jest.mock('@/lib/events-api', () => ({ getEventCode: jest.fn() }));
 jest.mock('@/lib/auth-context', () => ({ useAuth: jest.fn() }));
 jest.mock('@/lib/vibe-api', () => ({ getEventVibe: jest.fn() }));
+// The Heads-up card's "Report this tag" call (VC-58); tested in heads-up-report.test.tsx.
+jest.mock('@/lib/moderation-api', () => ({ reportHeadsUpTag: jest.fn() }));
 jest.mock('@/lib/ratings-api', () => ({
   getMyRatingStatus: jest.fn(),
   getEventHeadsUps: jest.fn(),
@@ -339,6 +342,22 @@ describe('EventScreen admin tools (VC-34, VC-35)', () => {
     expect(mockPush).toHaveBeenCalledWith({
       pathname: '/admin/edit-event/[id]',
       params: { id: 'e1' },
+    });
+  });
+
+  it('an admin can open the Moderate screen (VC-47); guests have no such button', async () => {
+    get.mockResolvedValue({ ok: true, event: makeEvent() });
+    await render(<EventScreen />);
+    await screen.findByRole('header', { name: 'Rooftop Sundown' });
+    expect(screen.queryByRole('button', { name: MODERATE_LABEL })).toBeNull();
+    await screen.unmount();
+
+    signInAs('admin');
+    await render(<EventScreen />);
+    await fireEvent.press(await screen.findByRole('button', { name: MODERATE_LABEL }));
+    expect(mockPush).toHaveBeenCalledWith({
+      pathname: '/admin/moderate/[id]',
+      params: { id: 'e1', title: 'Rooftop Sundown' },
     });
   });
 

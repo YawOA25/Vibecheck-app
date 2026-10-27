@@ -204,6 +204,15 @@ export default function TonightScreen() {
                 onPress={() => router.push('/admin/new-event')}
               />
             ) : null}
+            {/* The tag report queue (VC-58), admins only. */}
+            {isAdmin ? (
+              <Button
+                label="Reports"
+                variant="outline"
+                size="small"
+                onPress={() => router.push('/admin/reports')}
+              />
+            ) : null}
             <Button label="Sign out" variant="outline" size="small" onPress={signOut} />
           </View>
         </View>

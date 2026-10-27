@@ -381,13 +381,17 @@ select is((select row(c.method, c.last_verified_at)::text from public.check_ins 
              and c.event_id = '17171717-0000-4000-8000-0000000000d1'),
   row('code'::text, now())::text,
   'a near reading refreshes "here now" and keeps the method ''code''');
+-- Search for the far reading's own latitude to 6 decimals (38.917986...),
+-- worked out here the same way it was sent. A shorter pattern such as
+-- '38.917' also matched a real venue's pin on the shared dev project.
 select is_empty(
-  $$ select t.table_schema || '.' || t.table_name
+  format($$ select t.table_schema || '.' || t.table_name
      from information_schema.tables t
      where t.table_schema in ('public', 'private')
        and t.table_type = 'BASE TABLE'
-       and query_to_xml(format('select * from %I.%I', t.table_schema, t.table_name),
-                        true, false, '')::text ~ '38\.917' $$,
+       and query_to_xml(format('select * from %%I.%%I', t.table_schema, t.table_name),
+                        true, false, '')::text ~ %L $$,
+    replace(left((38.9 + degrees(2000 / 6371008.8))::text, 9), '.', '\.')),
   'the far reading''s coordinates were stored in no table');
 select is((select count(*)::int from public.check_in_attempts a
            where a.user_id = '17171717-9999-4999-8999-000000000004'),

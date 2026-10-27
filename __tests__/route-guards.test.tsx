@@ -146,3 +146,48 @@ describe('admin-only screens (VC-34 Edit event)', () => {
     expect(screen.queryByText('Edit event screen')).toBeNull();
   });
 });
+
+describe('admin-only screens (VC-47, VC-58 moderation)', () => {
+  /**
+   * Pretends a signed-up person with the given role, then opens an address
+   * with stand-ins for the report queue and the Moderate screen.
+   *
+   * @param role - 'user' or 'admin'.
+   * @param url - the address to open.
+   */
+  async function openAs(role: 'user' | 'admin', url: string) {
+    (useAuth as jest.Mock).mockReturnValue({
+      status: 'ready',
+      profile: { id: 'p1', display_name: 'Ava', role, is_tester: false },
+      refreshProfile: jest.fn(),
+      signOut: jest.fn(),
+    });
+    await renderRouter(
+      {
+        _layout: RootLayout,
+        index: () => <Text>Tonight screen</Text>,
+        'admin/reports': () => <Text>Reports screen</Text>,
+        'admin/moderate/[id]': () => <Text>Moderate screen</Text>,
+      },
+      { initialUrl: url },
+    );
+  }
+
+  it('lets an admin open the report queue and the Moderate screen', async () => {
+    await openAs('admin', '/admin/reports');
+    expect(await screen.findByText('Reports screen')).toBeOnTheScreen();
+    await screen.unmount();
+    await openAs('admin', '/admin/moderate/e1');
+    expect(await screen.findByText('Moderate screen')).toBeOnTheScreen();
+  });
+
+  it('sends a normal user who opens either address to Tonight instead', async () => {
+    await openAs('user', '/admin/reports');
+    expect(await screen.findByText('Tonight screen')).toBeOnTheScreen();
+    expect(screen.queryByText('Reports screen')).toBeNull();
+    await screen.unmount();
+    await openAs('user', '/admin/moderate/e1');
+    expect(await screen.findByText('Tonight screen')).toBeOnTheScreen();
+    expect(screen.queryByText('Moderate screen')).toBeNull();
+  });
+});

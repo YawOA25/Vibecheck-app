@@ -128,6 +128,20 @@ describe('TonightScreen header', () => {
     expect(mockPush).toHaveBeenCalledWith('/admin/new-event');
   });
 
+  it('shows admins a Reports button for the tag report queue (VC-58), and nobody else', async () => {
+    await render(<TonightScreen />);
+    expect(screen.queryByRole('button', { name: 'Reports' })).toBeNull();
+    await screen.unmount();
+
+    (useAuth as jest.Mock).mockReturnValue({
+      profile: { id: 'admin-1', display_name: 'Yaw', role: 'admin', is_tester: false },
+      signOut,
+    });
+    await render(<TonightScreen />);
+    await fireEvent.press(screen.getByRole('button', { name: 'Reports' }));
+    expect(mockPush).toHaveBeenCalledWith('/admin/reports');
+  });
+
   it('signs out from the Sign out button', async () => {
     await render(<TonightScreen />);
     await fireEvent.press(screen.getByRole('button', { name: 'Sign out' }));
