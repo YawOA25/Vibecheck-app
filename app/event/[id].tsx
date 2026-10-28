@@ -26,7 +26,8 @@
  *   - for host events with a "How to get in" link (VC-40): a plain "How to
  *     get in" text link to the host's RSVP page, with "Links go to the
  *     host's page. We're not responsible for other sites." under it;
- *   - a "Share" button (VC-41) that opens the phone's share sheet with the
+ *   - a round "Share" button (VC-41) on the right of the top row, opposite
+ *     Back (Q5 fix #4), that opens the phone's share sheet with the
  *     event's name, area and time. Never the party code or the pin;
  *   - for admins only, an "Admin" box: "Edit event" (opens
  *     app/admin/edit-event/[id].tsx, VC-34), "Moderate ratings and tags"
@@ -48,6 +49,12 @@
  * party-code screens offer (cto fix on VC-61). Only the display of the
  * vibe waits for the start.
  *
+ * Layout (Q5, design/v3/Detail.dc.html): one top row with Back on the left
+ * and Share on the right (both 44 px dark circles); 24 px between the
+ * page's sections; and a bottom bar with a thin divider line on top. When
+ * the bar has two buttons ("I'm here" and "Rate the night") they sit side
+ * by side: the outline one on the left, the gold one on the right.
+ *
  * Not here on purpose (VC-31): photos, "Now playing", clips, the Live /
  * Last 24h switch.
  */
@@ -59,6 +66,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BackButton } from '@/components/BackButton';
 import { Button } from '@/components/Button';
+import { CircleIconButton } from '@/components/CircleIconButton';
 import { EntryLink } from '@/components/EntryLink';
 import { TEST_LABEL } from '@/components/EventCard';
 import { FormMessage } from '@/components/FormMessage';
@@ -197,10 +205,27 @@ export default function EventScreen() {
     else router.replace('/');
   }, [router]);
 
+  /**
+   * Opens the phone's share sheet with the event's public facts (VC-41).
+   * buildShareMessage only copies the name, area, state and times, so the
+   * party code and the pin can never be shared. If the sheet fails to open
+   * (rare), nothing else happens: there is nothing for the guest to fix.
+   *
+   * @param event - the event on screen.
+   */
+  function share(event: PublicEvent) {
+    Share.share({ message: buildShareMessage(event) }).catch(() => {});
+  }
+
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.topBar}>
+      {/* Top row (Q5 fix #4): Back on the left, Share on the right. Share
+          only appears once the event has loaded, since it shares its facts. */}
+      <View style={styles.topBar} testID="event-top-row">
         <BackButton onPress={goBack} />
+        {state.kind === 'ready' ? (
+          <CircleIconButton icon="share" label={SHARE_LABEL} onPress={() => share(state.event)} />
+        ) : null}
       </View>
 
       {state.kind === 'loading' ? (
@@ -316,16 +341,6 @@ function EventDetails({
   // refuses one on a staff pick, and this keeps the app consistent too.
   const entryUrl = staffPick ? null : (event.entry_url ?? null);
 
-  /**
-   * Opens the phone's share sheet with the event's public facts (VC-41).
-   * buildShareMessage only copies the name, area, state and times, so the
-   * party code and the pin can never be shared. If the sheet fails to open
-   * (rare), nothing else happens: there is nothing for the guest to fix.
-   */
-  function share() {
-    Share.share({ message: buildShareMessage(event) }).catch(() => {});
-  }
-
   return (
     <>
       {/* ScrollView: everything still fits when the phone's text is large. */}
@@ -336,10 +351,6 @@ function EventDetails({
             {event.title}
           </Text>
           <Text style={styles.area}>{event.area_label}</Text>
-        </View>
-
-        <View style={styles.shareRow}>
-          <Button label={SHARE_LABEL} variant="outline" size="small" onPress={share} />
         </View>
 
         {staffPick || event.is_21_plus || event.is_test ? (
@@ -376,9 +387,21 @@ function EventDetails({
           or the "How to get in" link for host events. */}
       <View style={styles.bottomBar}>
         {/* Checked in: rating is the main action, and "I'm here" stays as an
-            outline button for checking in again later. */}
-        {onRate ? <Button label={RATE_LABEL} onPress={onRate} /> : null}
-        <Button label="I'm here" variant={onRate ? 'outline' : 'primary'} onPress={onImHere} />
+            outline button for checking in again later. With two buttons
+            they share one row (Q5 fix #5, as in v3): outline on the left,
+            gold on the right, where the thumb lands. */}
+        {onRate ? (
+          <View style={styles.twoColumns} testID="event-actions-two-columns">
+            <View style={styles.column}>
+              <Button label="I'm here" variant="outline" onPress={onImHere} />
+            </View>
+            <View style={styles.column}>
+              <Button label={RATE_LABEL} onPress={onRate} />
+            </View>
+          </View>
+        ) : (
+          <Button label="I'm here" onPress={onImHere} />
+        )}
         {ticketUrl ? <TicketLink url={ticketUrl} /> : null}
         {entryUrl ? <EntryLink url={entryUrl} /> : null}
       </View>
@@ -461,15 +484,21 @@ function AdminTools({
 /** Styles built only from theme tokens. */
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
-  topBar: { paddingHorizontal: spacing.gutter, paddingTop: spacing.sm },
-  content: { padding: spacing.gutter, gap: spacing.gap12 },
+  // Back on the left, Share pushed to the far right (Q5 fix #4).
+  topBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: spacing.gutter,
+    paddingTop: spacing.sm,
+  },
+  // 24 px between the page's sections (Q5).
+  content: { padding: spacing.gutter, gap: spacing.lg },
   heading: { gap: spacing.xs },
   kicker: { ...typography.label, color: colors.muted },
   title: { ...typography.title, color: colors.text },
   area: { ...typography.bodySm, color: colors.muted },
   tags: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  // Share sits on its own line, at the start, only as wide as its words.
-  shareRow: { flexDirection: 'row' },
   summary: { ...typography.body, color: colors.text },
   notStarted: { ...typography.bodySm, color: colors.muted },
   adminBox: {
@@ -479,14 +508,19 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderRadius: radius.card,
   },
+  // v3 bottom bar: 12 top, 16 sides, 24 bottom (the safe area adds the
+  // phone's home-bar space below that), with the divider line on top.
   bottomBar: {
     paddingHorizontal: spacing.gutter,
     paddingTop: spacing.gap12,
-    paddingBottom: spacing.md,
+    paddingBottom: spacing.lg,
     borderTopWidth: 1,
-    borderTopColor: colors.border,
+    borderTopColor: colors.divider,
     gap: spacing.sm,
   },
+  // Two equal columns, 12 px apart (v3: a 2-column grid with a 12 gap).
+  twoColumns: { flexDirection: 'row', gap: spacing.gap12 },
+  column: { flex: 1 },
   centre: {
     flex: 1,
     justifyContent: 'center',

@@ -42,6 +42,13 @@
  * Privacy: the quiet reading goes straight from the reader to check_in. It
  * is never put in screen state, shown, or logged (VC-20).
  *
+ * Layout of the form (Q5 fix #9, design/v3/Rate.dc.html): there is no
+ * separate Back row. A round Close (X) button sits on the right of the
+ * "EVENT · CHECKED IN" line and does what Back did (back to the event
+ * page). The chips scroll; "Drop my rating" and the one-per-event note are
+ * pinned to the bottom of the screen, so the button is always in reach.
+ * The other states (loading, errors, results) keep the Back button.
+ *
  * Not here on purpose: "What's playing?" genre chips from the v3 mockup
  * (VC-31, not approved yet); "Add a 15s clip" (clips are out of the MVP);
  * the animated meter on the payoff (the live score is task VC-B09).
@@ -55,6 +62,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { BackButton } from '@/components/BackButton';
 import { Button } from '@/components/Button';
 import { ChoiceChip } from '@/components/ChoiceChip';
+import { CircleIconButton } from '@/components/CircleIconButton';
 import { FormMessage } from '@/components/FormMessage';
 import { Headline } from '@/components/Headline';
 import { useAuth } from '@/lib/auth-context';
@@ -81,7 +89,7 @@ import type { RateAction, RateScreen } from '@/lib/rating-screens';
 import { offerRecapReminder } from '@/lib/recap-notifications';
 import type { RecapReminderResult } from '@/lib/recap-notifications';
 import type { PublicEvent } from '@/lib/tonight';
-import { colors, spacing, typography } from '@/theme';
+import { colors, iconSize, spacing, typography } from '@/theme';
 
 /** The words on this screen (exported so tests use the same text). */
 export const SUBMIT_LABEL = 'Drop my rating';
@@ -90,6 +98,8 @@ export const PROMPT = "How's it feeling right now?";
 export const ONE_PER_EVENT_NOTE =
   'One rating per event. Heading somewhere else tonight? Check in and rate that one too.';
 export const NOT_FOUND_TITLE = 'Event not found';
+/** The round X on the form's top line (Q5): what screen readers say. */
+export const CLOSE_LABEL = 'Close';
 
 /** What the screen is showing. */
 type Phase =
@@ -292,13 +302,15 @@ export default function RateScreenRoute() {
     [goBack, router],
   );
 
-  const saving = phase.kind === 'form' && phase.saving;
-
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.topBar}>
-        <BackButton onPress={goBack} disabled={saving} />
-      </View>
+      {/* The form has its own Close button on its top line (Q5 fix #9);
+          every other state keeps the Back row. */}
+      {phase.kind !== 'form' ? (
+        <View style={styles.topBar}>
+          <BackButton onPress={goBack} />
+        </View>
+      ) : null}
 
       {phase.kind === 'loading' ? (
         <View style={styles.centre} accessible accessibilityLabel="Loading">
@@ -335,6 +347,7 @@ export default function RateScreenRoute() {
           draft={draft}
           onChange={setDraft}
           onSubmit={() => void submit(phase)}
+          onClose={goBack}
         />
       ) : null}
 
@@ -375,121 +388,144 @@ export default function RateScreenRoute() {
  * @param props.draft - the taps so far.
  * @param props.onChange - called with the new draft after a tap.
  * @param props.onSubmit - called by "Drop my rating".
- * @returns a scrolling form.
+ * @param props.onClose - called by the round Close (X) button (back to the event).
+ * @returns the scrolling chips, with the button pinned below them.
  */
 function RatingForm({
   phase,
   draft,
   onChange,
   onSubmit,
+  onClose,
 }: {
   phase: Extract<Phase, { kind: 'form' }>;
   draft: RatingDraft;
   onChange: (draft: RatingDraft) => void;
   onSubmit: () => void;
+  onClose: () => void;
 }) {
   const { event, saving, error } = phase;
   return (
-    <ScrollView contentContainerStyle={styles.content}>
-      <View style={styles.checkedInRow}>
-        {/* The small gold dot is decoration; the words carry the meaning. */}
-        <View style={styles.dot} />
-        <Text style={styles.label}>{`${event.title.toUpperCase()} · CHECKED IN`}</Text>
-      </View>
-      <Headline lead="Spill the" highlight="vibe." />
-      <Text style={styles.muted}>{PROMPT}</Text>
+    <>
+      <ScrollView
+        style={styles.formScroll}
+        contentContainerStyle={styles.content}
+        testID="rate-scroll"
+      >
+        {/* Top line: "EVENT · CHECKED IN" on the left, Close on the right. */}
+        <View style={styles.kickerRow}>
+          <View style={styles.checkedInRow}>
+            {/* The small gold dot is decoration; the words carry the meaning. */}
+            <View style={styles.dot} />
+            <Text style={styles.label}>{`${event.title.toUpperCase()} · CHECKED IN`}</Text>
+          </View>
+          {/* Off while saving, as Back was: leaving mid-save would hide the answer. */}
+          <CircleIconButton
+            icon="close"
+            label={CLOSE_LABEL}
+            iconPx={iconSize.sm}
+            onPress={onClose}
+            disabled={saving}
+          />
+        </View>
+        <Headline lead="Spill the" highlight="vibe." />
+        <Text style={styles.muted}>{PROMPT}</Text>
 
-      {RATING_ROWS.map((row) => (
-        <Group key={row.key} label={row.label}>
-          {/* A pick-one row: read as one radio group, e.g. "Crowd, radio
+        {RATING_ROWS.map((row) => (
+          <Group key={row.key} label={row.label}>
+            {/* A pick-one row: read as one radio group, e.g. "Crowd, radio
               group", then "Packed, radio button, 3 of 3" (VC-49). */}
-          <View
-            style={styles.chipRow}
-            accessibilityRole="radiogroup"
-            accessibilityLabel={row.label.toLowerCase()}
-          >
-            {row.options.map((option, index) => {
-              const value = (index + 1) as RowValue;
-              return (
-                <ChoiceChip
-                  key={option}
-                  role="radio"
-                  label={option}
-                  // e.g. "Crowd: Packed", so the row is clear when heard alone.
-                  accessibilityLabel={`${row.label.toLowerCase()}: ${option}`}
-                  selected={draft[row.key] === value}
-                  disabled={saving}
-                  onPress={() => onChange({ ...draft, [row.key]: value })}
-                />
-              );
-            })}
+            <View
+              style={styles.chipRow}
+              accessibilityRole="radiogroup"
+              accessibilityLabel={row.label.toLowerCase()}
+            >
+              {row.options.map((option, index) => {
+                const value = (index + 1) as RowValue;
+                return (
+                  <ChoiceChip
+                    key={option}
+                    role="radio"
+                    label={option}
+                    // e.g. "Crowd: Packed", so the row is clear when heard alone.
+                    accessibilityLabel={`${row.label.toLowerCase()}: ${option}`}
+                    selected={draft[row.key] === value}
+                    disabled={saving}
+                    onPress={() => onChange({ ...draft, [row.key]: value })}
+                  />
+                );
+              })}
+            </View>
+          </Group>
+        ))}
+
+        <Group label="REACTION" hint="Optional, pick one">
+          <View style={styles.wrapRow}>
+            {REACTIONS.map((reaction) => (
+              <ChoiceChip
+                key={reaction.key}
+                shape="pill"
+                label={`${reaction.emoji} ${reaction.label}`}
+                accessibilityLabel={`Reaction: ${reaction.label}`}
+                selected={draft.reaction === reaction.key}
+                disabled={saving}
+                // Tapping the picked reaction again clears it (it's optional).
+                onPress={() =>
+                  onChange({
+                    ...draft,
+                    reaction: draft.reaction === reaction.key ? null : reaction.key,
+                  })
+                }
+              />
+            ))}
           </View>
         </Group>
-      ))}
 
-      <Group label="REACTION" hint="Optional, pick one">
-        <View style={styles.wrapRow}>
-          {REACTIONS.map((reaction) => (
-            <ChoiceChip
-              key={reaction.key}
-              shape="pill"
-              label={`${reaction.emoji} ${reaction.label}`}
-              accessibilityLabel={`Reaction: ${reaction.label}`}
-              selected={draft.reaction === reaction.key}
-              disabled={saving}
-              // Tapping the picked reaction again clears it (it's optional).
-              onPress={() =>
-                onChange({
-                  ...draft,
-                  reaction: draft.reaction === reaction.key ? null : reaction.key,
-                })
-              }
-            />
-          ))}
-        </View>
-      </Group>
-
-      <Group label="HEADS-UP" hint="Optional, pick any">
-        <View style={styles.wrapRow}>
-          {HEADS_UP_TAGS.map((tag) => (
-            <ChoiceChip
-              key={tag.key}
-              shape="pill"
-              // Emoji then words, e.g. "⏳ Long line" (VC-45); screen readers
-              // get the words only.
-              label={`${tag.emoji} ${tag.label}`}
-              accessibilityLabel={`Heads-up: ${tag.label}`}
-              selected={draft.tags.includes(tag.key)}
-              disabled={saving}
-              onPress={() => onChange({ ...draft, tags: toggleTag(draft.tags, tag.key) })}
-            />
-          ))}
-        </View>
-        {/* VC-60: the tag doesn't call for help, so say where help is.
+        <Group label="HEADS-UP" hint="Optional, pick any">
+          <View style={styles.wrapRow}>
+            {HEADS_UP_TAGS.map((tag) => (
+              <ChoiceChip
+                key={tag.key}
+                shape="pill"
+                // Emoji then words, e.g. "⏳ Long line" (VC-45); screen readers
+                // get the words only.
+                label={`${tag.emoji} ${tag.label}`}
+                accessibilityLabel={`Heads-up: ${tag.label}`}
+                selected={draft.tags.includes(tag.key)}
+                disabled={saving}
+                onPress={() => onChange({ ...draft, tags: toggleTag(draft.tags, tag.key) })}
+              />
+            ))}
+          </View>
+          {/* VC-60: the tag doesn't call for help, so say where help is.
             Read out as soon as it appears. */}
-        {draft.tags.includes(FELT_UNSAFE) ? (
-          <Text
-            style={styles.safetyHelp}
-            // "alert" so VoiceOver (iOS) reads it out; the live region does the same on Android.
-            accessibilityRole="alert"
-            accessibilityLiveRegion="polite"
-          >
-            {FELT_UNSAFE_HELP}
-          </Text>
-        ) : null}
-      </Group>
+          {draft.tags.includes(FELT_UNSAFE) ? (
+            <Text
+              style={styles.safetyHelp}
+              // "alert" so VoiceOver (iOS) reads it out; the live region does the same on Android.
+              accessibilityRole="alert"
+              accessibilityLiveRegion="polite"
+            >
+              {FELT_UNSAFE_HELP}
+            </Text>
+          ) : null}
+        </Group>
+      </ScrollView>
 
-      {error ? <FormMessage message={error} /> : null}
-
-      <Button
-        label={SUBMIT_LABEL}
-        busy={saving}
-        busyLabel={SAVING_LABEL}
-        disabled={!isComplete(draft)}
-        onPress={onSubmit}
-      />
-      <Text style={styles.note}>{ONE_PER_EVENT_NOTE}</Text>
-    </ScrollView>
+      {/* Pinned to the bottom (Q5 fix #9): always in reach, however long
+          the chips get. A save error shows right above the button. */}
+      <View style={styles.footer} testID="rate-footer">
+        {error ? <FormMessage message={error} /> : null}
+        <Button
+          label={SUBMIT_LABEL}
+          busy={saving}
+          busyLabel={SAVING_LABEL}
+          disabled={!isComplete(draft)}
+          onPress={onSubmit}
+        />
+        <Text style={styles.note}>{ONE_PER_EVENT_NOTE}</Text>
+      </View>
+    </>
   );
 }
 
@@ -532,7 +568,25 @@ const styles = StyleSheet.create({
   body: { ...typography.body, color: colors.muted },
   // The recap note line under the payoff (VC-B12).
   reminder: { ...typography.bodySm, color: colors.muted },
-  checkedInRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  // The form's chips take the space left above the pinned footer.
+  formScroll: { flex: 1 },
+  // v3 Rate: the checked-in line on the left, Close on the right.
+  kickerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  // flexShrink lets a long event name wrap instead of pushing Close off screen.
+  checkedInRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flexShrink: 1 },
+  // The pinned bottom block (v3: 20 px sides, 10 px between button and note;
+  // the safe area adds the phone's home-bar space below).
+  footer: {
+    paddingHorizontal: 20,
+    paddingTop: spacing.gap12,
+    paddingBottom: spacing.md,
+    gap: 10,
+  },
   dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.accent },
   label: { ...typography.label, color: colors.muted, flexShrink: 1 },
   successLabel: { color: colors.success },

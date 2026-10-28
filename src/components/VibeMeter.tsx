@@ -27,13 +27,20 @@
  * A poll that brings the same score moves nothing (the effect below only
  * runs when the score itself changes).
  *
+ * Glow (VC-70, approved as proposal P3): a live Hot or Fire score gets a
+ * soft gold glow behind the arc, a radial gradient that fades from 14%
+ * gold in the middle to nothing at the edge (under the 15% cap). It never
+ * moves, so Reduce Motion has nothing to switch off. No glow for Quiet or
+ * Good, a stale (grey) score, early/none, loading, or the All night view,
+ * which stays exactly as it was (words only).
+ *
  * How the arc is drawn: react-native-svg (a new dependency with VC-52). The
  * fill is the same half-circle path as the track, with one dash as long as
  * the whole arc; shifting the dash ("strokeDashoffset") by the empty part
  * leaves only the filled part visible. It uses React Native's own Animated
  * (no extra animation library); SVG props can't use the native driver.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import {
   AccessibilityInfo,
   ActivityIndicator,
@@ -43,7 +50,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import Svg, { Path } from 'react-native-svg';
+import Svg, { Defs, Ellipse, Path, RadialGradient, Stop } from 'react-native-svg';
 
 import type { VibeLabel } from '@/lib/rating';
 import { EARLY_TITLE, NO_VIBE_TITLE, VIBE_LOAD_ERROR, formatScore, meterSpoken } from '@/lib/vibe';
@@ -61,6 +68,24 @@ const STROKE = 8;
 export const FIRST_SWEEP_MS = 700;
 export const MOVE_MS = 400;
 const FADE_MS = 300;
+
+/**
+ * How strong the glow is at its centre (VC-70: must stay under 15%, so it
+ * reads as warmth, not a coloured blob). Exported for the test.
+ */
+export const GLOW_OPACITY = 0.14;
+
+/**
+ * Whether a gauge gets the gold glow (VC-70): only a live Hot or Fire score.
+ *
+ * @param vibe - the vibe on the gauge.
+ * @param hasScore - whether a number is drawn (false for early, none,
+ *   loading, blank and the words-only All night view).
+ * @returns true to draw the glow.
+ */
+export function showsGlow(vibe: Vibe, hasScore: boolean): boolean {
+  return hasScore && vibe.state === 'live' && (vibe.label === 'Hot' || vibe.label === 'Fire');
+}
 
 /** A Path whose props can follow an Animated value. */
 const AnimatedPath = Animated.createAnimatedComponent(Path);
@@ -152,6 +177,11 @@ export function VibeMeter({ vibe, view = 'live', loading = false, blank = false 
   const stale = hasScore && vibe.state === 'stale';
   const target = hasScore ? (vibe.score ?? 0) : 0;
   const colour = wordColour(vibe.label);
+  const glow = showsGlow(vibe, hasScore);
+  // An id for the glow's gradient that is unique on the screen. React's ids
+  // contain ":" characters, which SVG's url(#...) links can't use, so keep
+  // only letters and numbers.
+  const glowId = `vibe-glow-${useId().replace(/[^a-zA-Z0-9]/g, '')}`;
 
   // `progress` is the score the arc currently shows (0 to 10), animated.
   // It starts at 0, so the first reading sweeps up from empty.
@@ -263,6 +293,28 @@ export function VibeMeter({ vibe, view = 'live', loading = false, blank = false 
           accessibilityElementsHidden
           importantForAccessibility="no-hide-descendants"
         >
+          {/* VC-70: the soft gold glow, drawn first so it sits behind the
+              arc. An oval centred on the arc's base line: the drawing area
+              cuts off its lower half, so it rises like a dome of warm light
+              under the arc. Static: it never animates. */}
+          {glow ? (
+            <>
+              <Defs>
+                <RadialGradient id={glowId} cx="50%" cy="50%" r="50%">
+                  <Stop offset="0" stopColor={colors.accent} stopOpacity={GLOW_OPACITY} />
+                  <Stop offset="1" stopColor={colors.accent} stopOpacity={0} />
+                </RadialGradient>
+              </Defs>
+              <Ellipse
+                testID="vibe-meter-glow"
+                cx={100}
+                cy={100}
+                rx={100}
+                ry={96}
+                fill={`url(#${glowId})`}
+              />
+            </>
+          ) : null}
           <Path
             testID="vibe-meter-track"
             d={ARC_PATH}

@@ -27,7 +27,7 @@
  *     can rate, as the check-in and party-code screens already offer.
  * Most tests use an event that started an hour ago, so the live parts show.
  */
-import { fireEvent, render, screen } from '@testing-library/react-native';
+import { fireEvent, render, screen, within } from '@testing-library/react-native';
 import { Linking, Share } from 'react-native';
 
 import EventScreen, {
@@ -335,6 +335,51 @@ describe('EventScreen Share (VC-41)', () => {
     expect(message).toContain('Navy Yard, DC');
     expect(message).not.toMatch(/K7MX2Q|38\.87|77\.00/);
     share.mockRestore();
+  });
+});
+
+describe('EventScreen layout (Q5 fixes #4 and #5)', () => {
+  it('puts Back and a round Share button in one top row, with no Share text pill', async () => {
+    get.mockResolvedValue({ ok: true, event: makeEvent() });
+    await render(<EventScreen />);
+    await screen.findByRole('button', { name: SHARE_LABEL });
+    // Both circles sit in the same top row: Back first (left), then Share (right).
+    const top = screen.getByTestId('event-top-row');
+    expect(
+      within(top)
+        .getAllByRole('button')
+        .map((b) => b.props.accessibilityLabel),
+    ).toEqual(['Back', SHARE_LABEL]);
+    // The old outline pill had the word "Share" written on it; the circle
+    // only has the icon (the word is its spoken label).
+    expect(screen.queryByText(SHARE_LABEL)).toBeNull();
+  });
+
+  it('shows no Share button until the event has loaded', async () => {
+    get.mockReturnValue(new Promise(() => {}));
+    await render(<EventScreen />);
+    expect(screen.getByRole('button', { name: 'Back' })).toBeOnTheScreen();
+    expect(screen.queryByRole('button', { name: SHARE_LABEL })).toBeNull();
+  });
+
+  it("puts two actions side by side: outline I'm here left, gold Rate the night right", async () => {
+    myStatus.mockResolvedValue({
+      ok: true,
+      status: { checkIn: { method: 'gps', lastVerifiedAt: '2026-10-31T02:00:00Z' }, ratedAt: null },
+    });
+    get.mockResolvedValue({ ok: true, event: makeEvent() });
+    await render(<EventScreen />);
+    await screen.findByRole('button', { name: RATE_LABEL });
+    const row = screen.getByTestId('event-actions-two-columns');
+    const buttons = within(row).getAllByRole('button');
+    expect(buttons.map((b) => b.props.accessibilityLabel)).toEqual(["I'm here", RATE_LABEL]);
+  });
+
+  it("keeps one full-width I'm here when it is the only action", async () => {
+    get.mockResolvedValue({ ok: true, event: makeEvent() });
+    await render(<EventScreen />);
+    expect(await screen.findByRole('button', { name: "I'm here" })).toBeOnTheScreen();
+    expect(screen.queryByTestId('event-actions-two-columns')).toBeNull();
   });
 });
 

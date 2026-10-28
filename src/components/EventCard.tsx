@@ -8,7 +8,9 @@
  * "TEST" chip on test events (VC-63b: only testers and admins ever see
  * those, and the chip makes sure nobody mistakes one for a real party), and
  * the vibe (task VC-B09) on the right:
- *   live   the score and its word, e.g. "8.0 Hot" (gold);
+ *   live   the score and its word, e.g. "8.0 Hot", the word in the same
+ *          colour as on the gauge (Q5 fix #6: Quiet grey, Good darker
+ *          gold, Hot gold, Fire bright gold);
  *   stale  the last score and word in grey, with "quiet" under it;
  *   early  an "Early" chip with "3 so far" under it (no number before 5
  *          ratings);
@@ -17,8 +19,13 @@
  * rather than guessing. The "where · when" line also gets the headcount,
  * "74 here", when anyone has checked in (VC-42: a number only).
  *
+ * Once the event has started (and until it ends), a small gold dot and
+ * "LIVE" sit at the top of the right side (Q5 fix #6, v3's LIVE pill). It
+ * only says the party is on now, which the "On now" line already says, so
+ * it is decoration and isn't read out a second time.
+ *
  * Before the event starts (VC-61) the card shows the details only: no vibe
- * badge and no headcount, even if a vibe was passed in. Reviews only mean
+ * badge, no LIVE dot and no headcount, even if a vibe was passed in. Reviews only mean
  * something once the night is on, so nothing about ratings can show early.
  *
  * The whole card is one button: tapping anywhere opens the event page.
@@ -26,6 +33,7 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Tag } from '@/components/Tag';
+import { wordColour } from '@/components/VibeMeter';
 import { hasStarted, isStaffPick, whenLine } from '@/lib/tonight';
 import type { PublicEvent } from '@/lib/tonight';
 import { cardVibeSpoken, formatScore, hereText } from '@/lib/vibe';
@@ -48,6 +56,8 @@ export const EARLY_LABEL = 'Early';
 export const NO_VIBE_LABEL = 'No vibe yet';
 /** The chip on test events (VC-63b), exported for tests. */
 export const TEST_LABEL = 'TEST';
+/** The word next to the gold dot on a running event (Q5), exported for tests. */
+export const LIVE_LABEL = 'LIVE';
 
 /**
  * Renders the card.
@@ -60,7 +70,11 @@ export function EventCard({ event, now, onPress, vibe: given }: EventCardProps) 
   const when = whenLine(event, now);
   // VC-61: before the start, act as if there were no vibe at all, so no
   // score, chip or "here" count can leak onto a not-started card.
-  const vibe = hasStarted(event, now) ? given : undefined;
+  const started = hasStarted(event, now);
+  const vibe = started ? given : undefined;
+  // LIVE: started and not over yet. (The list hides ended events anyway;
+  // this keeps the card honest if one is ever shown.)
+  const live = started && now.getTime() < Date.parse(event.ends_at);
   const staffPick = isStaffPick(event);
   // "74 here" (VC-42). The list only shows events that haven't ended.
   const here = vibe ? hereText(vibe.here, false) : null;
@@ -101,7 +115,17 @@ export function EventCard({ event, now, onPress, vibe: given }: EventCardProps) 
           </View>
         ) : null}
       </View>
-      {vibe ? <VibeBadge vibe={vibe} /> : null}
+      {live || vibe ? (
+        <View style={styles.right}>
+          {live ? (
+            <View style={styles.liveRow} testID="event-card-live">
+              <View style={styles.liveDot} testID="event-card-live-dot" />
+              <Text style={styles.liveText}>{LIVE_LABEL}</Text>
+            </View>
+          ) : null}
+          {vibe ? <VibeBadge vibe={vibe} /> : null}
+        </View>
+      ) : null}
     </Pressable>
   );
 }
@@ -120,7 +144,14 @@ function VibeBadge({ vibe }: { vibe: Vibe }) {
       <View style={styles.badge}>
         <View style={styles.scoreRow}>
           <Text style={[styles.score, stale && styles.staleText]}>{formatScore(vibe.score)}</Text>
-          <Text style={[styles.word, stale && styles.staleText]}>{vibe.label}</Text>
+          {/* The word takes the gauge's colour for it (Q5 fix #6); a stale
+              score stays grey, as on the gauge. */}
+          <Text
+            testID="event-card-word"
+            style={[styles.word, { color: wordColour(vibe.label) }, stale && styles.staleText]}
+          >
+            {vibe.label}
+          </Text>
         </View>
         {stale ? <Text style={styles.note}>quiet</Text> : null}
       </View>
@@ -163,7 +194,14 @@ const styles = StyleSheet.create({
   badge: { alignItems: 'flex-end', gap: 2 },
   scoreRow: { flexDirection: 'row', alignItems: 'baseline', gap: 6 },
   score: { fontFamily: fonts.bodyBold, fontSize: 16, lineHeight: 20, color: colors.text },
-  word: { fontFamily: fonts.displaySemi, fontSize: 15, lineHeight: 20, color: colors.accent },
+  // The colour is set per word in VibeBadge (the gauge's ramp).
+  word: { fontFamily: fonts.displaySemi, fontSize: 15, lineHeight: 20 },
+  // The right side: LIVE on top, the vibe under it, both right-aligned.
+  right: { alignItems: 'flex-end', gap: spacing.xs },
+  // v3 LIVE pill: a 6 px gold dot, 6 px gap, small bold caps.
+  liveRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.accent },
+  liveText: { ...typography.label, color: colors.text },
   staleText: { color: colors.muted },
   note: { ...typography.caption, fontSize: 12, lineHeight: 16, color: colors.muted },
 });

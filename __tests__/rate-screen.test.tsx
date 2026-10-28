@@ -18,11 +18,14 @@
  *   - the server's refusals (too soon, stale check-in) and a network error
  *     (taps kept, message shown);
  *   - "Check in again" replaces this screen with check-in;
- *   - the location reading is never logged.
+ *   - the location reading is never logged;
+ *   - the Q5 layout: a round Close (X) on the form's top line that goes
+ *     back (switched off while saving, as Back was), and "Drop my rating"
+ *     pinned below the scrolling chips instead of scrolling with them.
  */
-import { fireEvent, render, screen } from '@testing-library/react-native';
+import { fireEvent, render, screen, within } from '@testing-library/react-native';
 
-import RateScreenRoute, { PROMPT, SAVING_LABEL, SUBMIT_LABEL } from '../app/rate/[id]';
+import RateScreenRoute, { CLOSE_LABEL, PROMPT, SAVING_LABEL, SUBMIT_LABEL } from '../app/rate/[id]';
 import { FELT_UNSAFE_HELP } from '@/lib/rating';
 import { useAuth } from '@/lib/auth-context';
 import { submitCheckIn } from '@/lib/check-in-api';
@@ -213,6 +216,48 @@ describe('RateScreen form', () => {
     await fireEvent.press(screen.getByRole('button', { name: SUBMIT_LABEL }));
     expect(await screen.findByText(SAVING_LABEL)).toBeOnTheScreen();
     expect(screen.getByRole('button', { name: SUBMIT_LABEL })).toBeBusy();
+  });
+});
+
+describe('RateScreen layout (Q5 fix #9)', () => {
+  it('has a round Close on the top line instead of a Back row, and it goes back', async () => {
+    await render(<RateScreenRoute />);
+    await screen.findByText(PROMPT);
+    // The form shows no separate Back button: Close replaces it.
+    expect(screen.queryByRole('button', { name: 'Back' })).toBeNull();
+    await fireEvent.press(screen.getByRole('button', { name: CLOSE_LABEL }));
+    expect(mockBack).toHaveBeenCalledTimes(1);
+  });
+
+  it('switches Close off while the rating is saving', async () => {
+    rate.mockReturnValue(new Promise(() => {}));
+    await render(<RateScreenRoute />);
+    await screen.findByText(PROMPT);
+    await tapThreeRows();
+    await fireEvent.press(screen.getByRole('button', { name: SUBMIT_LABEL }));
+    await screen.findByText(SAVING_LABEL);
+    expect(screen.getByRole('button', { name: CLOSE_LABEL })).toBeDisabled();
+  });
+
+  it('pins "Drop my rating" and the note below the scrolling chips', async () => {
+    await render(<RateScreenRoute />);
+    await screen.findByText(PROMPT);
+    const footer = screen.getByTestId('rate-footer');
+    expect(within(footer).getByRole('button', { name: SUBMIT_LABEL })).toBeOnTheScreen();
+    // The chips scroll; the button is outside the scrolling part.
+    const scroll = screen.getByTestId('rate-scroll');
+    expect(within(scroll).getByRole('radio', { name: 'crowd: Packed' })).toBeOnTheScreen();
+    expect(within(scroll).queryByRole('button', { name: SUBMIT_LABEL })).toBeNull();
+  });
+
+  it('keeps the Back button on the result screen', async () => {
+    await render(<RateScreenRoute />);
+    await screen.findByText(PROMPT);
+    await tapThreeRows();
+    await fireEvent.press(screen.getByRole('button', { name: SUBMIT_LABEL }));
+    await screen.findByRole('button', { name: 'Done' });
+    expect(screen.getByRole('button', { name: 'Back' })).toBeOnTheScreen();
+    expect(screen.queryByRole('button', { name: CLOSE_LABEL })).toBeNull();
   });
 });
 

@@ -1,15 +1,13 @@
 /**
- * The round "Back" button from the v3 design: a 44 px circle with a thin grey
- * edge and a left-pointing chevron line icon (spec section 1, "Shape and
- * space"; the icon replaced a "‹" text character in Q4).
+ * The round "Back" button from the v3 design: a 44 px dark circle with a
+ * thin edge and a left-pointing chevron line icon (spec section 1, "Shape
+ * and space"; the icon replaced a "‹" text character in Q4).
  *
- * Why its own component: it will be reused on later screens, and it keeps
- * the 44 px tap size and the "Back" screen-reader label in one place.
+ * Why its own component: it's on many screens, and it keeps the chevron and
+ * the "Back" screen-reader label in one place. Since Q5 the circle itself
+ * comes from CircleIconButton, so Back, Share and Close always match.
  */
-import { Pressable, StyleSheet } from 'react-native';
-
-import { Icon } from '@/components/Icon';
-import { colors, iconSize, minTapTarget } from '@/theme';
+import { CircleIconButton } from '@/components/CircleIconButton';
 
 /** What a BackButton needs. */
 export interface BackButtonProps {
@@ -26,31 +24,6 @@ export interface BackButtonProps {
  */
 export function BackButton({ onPress, disabled }: BackButtonProps) {
   return (
-    <Pressable
-      onPress={onPress}
-      disabled={disabled}
-      accessibilityRole="button"
-      accessibilityLabel="Back"
-      accessibilityState={{ disabled: Boolean(disabled) }}
-      style={({ pressed }) => [styles.circle, pressed && styles.pressed]}
-    >
-      {/* The chevron is decoration; the "Back" label above is what screen
-          readers say. Icons don't grow with text size, so it always fits. */}
-      <Icon name="chevron-left" size={iconSize.md} color={colors.text} />
-    </Pressable>
+    <CircleIconButton icon="chevron-left" label="Back" onPress={onPress} disabled={disabled} />
   );
 }
-
-/** Styles built only from theme tokens. */
-const styles = StyleSheet.create({
-  circle: {
-    width: minTapTarget,
-    height: minTapTarget,
-    borderRadius: minTapTarget / 2,
-    borderWidth: 1,
-    borderColor: colors.fieldBorder,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pressed: { backgroundColor: colors.surface },
-});

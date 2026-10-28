@@ -10,7 +10,10 @@
  *   - movement: the first reading sweeps from empty to the score in 700 ms
  *     and the number counts up; a new score moves without counting; the
  *     colour swaps at the end of a move; with Reduce Motion on nothing
- *     moves at all.
+ *     moves at all;
+ *   - the gold glow (VC-70): only behind a live Hot or Fire score, under
+ *     15% strength, never moving; none for Quiet, Good, stale, early, none
+ *     or the words-only All night view.
  */
 import { act, render, screen } from '@testing-library/react-native';
 import { AccessibilityInfo, processColor } from 'react-native';
@@ -20,7 +23,9 @@ import {
   FIRST_SWEEP_MS,
   MOVE_MS,
   VibeMeter,
+  GLOW_OPACITY,
   dashOffset,
+  showsGlow,
   wordColour,
 } from '@/components/VibeMeter';
 import type { Vibe } from '@/lib/vibe';
@@ -227,5 +232,83 @@ describe('All night view: words only (cto privacy fix)', () => {
     );
     expect(screen.queryByTestId('vibe-meter-word')).toBeNull();
     expect(screen.getByText('No vibe yet')).toBeOnTheScreen();
+  });
+});
+
+describe('gold glow behind the gauge (VC-70)', () => {
+  /** The glow oval, or null when it isn't drawn (it is hidden from screen readers). */
+  const glow = () => screen.queryByTestId('vibe-meter-glow', HIDDEN);
+
+  /**
+   * Reads the glow gradient's strength at its centre and at its edge.
+   * react-native-svg packs each stop as [offset, colour]; the colour is one
+   * number whose top byte is the opacity (0 to 255).
+   *
+   * @returns the [centre, edge] opacities, 0 to 1.
+   */
+  function glowOpacities(): [number, number] {
+    const match = JSON.stringify(screen.toJSON()).match(/"gradient":\[0,(\d+),1,(\d+)\]/);
+    if (!match) throw new Error('no glow gradient drawn');
+    const alpha = (packed: string) => (Number(packed) >>> 24) / 255;
+    return [alpha(match[1]), alpha(match[2])];
+  }
+
+  it('is drawn for a live Hot or Fire score, and stays under 15% strength', async () => {
+    reduceMotion(true);
+    await render(<VibeMeter vibe={makeVibe({ score: 8, label: 'Hot' })} />);
+    expect(glow()).not.toBeNull();
+    await screen.unmount();
+    await render(<VibeMeter vibe={makeVibe({ score: 9.1, label: 'Fire' })} />);
+    expect(glow()).not.toBeNull();
+    expect(GLOW_OPACITY).toBeGreaterThan(0);
+    expect(GLOW_OPACITY).toBeLessThan(0.15);
+    // The gradient really is drawn that faint: about 14% gold in the middle,
+    // fading to nothing at the edge.
+    const [centre, edge] = glowOpacities();
+    expect(centre).toBeCloseTo(GLOW_OPACITY, 2);
+    expect(centre).toBeLessThan(0.15);
+    expect(edge).toBe(0);
+  });
+
+  it('is not drawn for Quiet or Good', async () => {
+    reduceMotion(true);
+    await render(<VibeMeter vibe={makeVibe({ score: 3, label: 'Quiet' })} />);
+    expect(glow()).toBeNull();
+    await screen.unmount();
+    await render(<VibeMeter vibe={makeVibe({ score: 6, label: 'Good' })} />);
+    expect(glow()).toBeNull();
+  });
+
+  it('is not drawn for a stale score, early, none, loading or the All night view', async () => {
+    reduceMotion(true);
+    await render(<VibeMeter vibe={makeVibe({ state: 'stale', label: 'Fire', score: 9 })} />);
+    expect(glow()).toBeNull();
+    await screen.unmount();
+    await render(<VibeMeter vibe={makeVibe({ state: 'early', score: null, label: null })} />);
+    expect(glow()).toBeNull();
+    await screen.unmount();
+    await render(<VibeMeter vibe={makeVibe()} loading />);
+    expect(glow()).toBeNull();
+    await screen.unmount();
+    // All night stays words only, exactly as before: no glow even for Fire.
+    await render(<VibeMeter vibe={makeVibe({ score: null, label: 'Fire' })} view="night" />);
+    expect(glow()).toBeNull();
+    expect(showsGlow(makeVibe({ score: null, label: 'Fire' }), false)).toBe(false);
+  });
+
+  it('is there from the first frame with motion on, and never animates', async () => {
+    reduceMotion(false);
+    jest.useFakeTimers();
+    try {
+      await render(<VibeMeter vibe={makeVibe({ score: 9.1, label: 'Fire' })} />);
+      // Mid-sweep, the glow is already fully drawn: it doesn't fade or grow.
+      await act(async () => {
+        jest.advanceTimersByTime(FIRST_SWEEP_MS / 2);
+      });
+      expect(glow()).not.toBeNull();
+      expect(glowOpacities()[0]).toBeCloseTo(GLOW_OPACITY, 2);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });
