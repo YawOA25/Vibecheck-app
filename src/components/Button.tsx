@@ -1,8 +1,10 @@
 /**
- * The app's button, in three looks (v3 design, spec section 2):
+ * The app's button, in four looks (v3 design, spec section 2):
  *   - 'primary': a gold pill for the main action on a screen ("Continue")
  *   - 'outline': a see-through pill with a grey edge ("Sign out")
  *   - 'text'   : a gold, underlined text link for small actions ("Resend code")
+ *   - 'danger' : an outline pill in the error colour, for an action that
+ *                can't be undone ("Yes, delete my account", VC-B13)
  * and two sizes: 'large' (54 px tall) and 'small' (44 px tall, only as wide
  * as its words; used in the Tonight header).
  *
@@ -21,8 +23,8 @@ export interface ButtonProps {
   label: string;
   /** What happens on tap. */
   onPress: () => void;
-  /** 'primary' (default), 'outline' or 'text'. */
-  variant?: 'primary' | 'outline' | 'text';
+  /** 'primary' (default), 'outline', 'text' or 'danger'. */
+  variant?: 'primary' | 'outline' | 'text' | 'danger';
   /** 'large' (default) or 'small' (compact pill). */
   size?: 'large' | 'small';
   /** Greys the button out and ignores taps. */
@@ -80,6 +82,8 @@ export function Button({
         variant === 'primary' && pressed && styles.primaryPressed,
         variant === 'outline' && styles.outline,
         variant === 'outline' && pressed && styles.outlinePressed,
+        variant === 'danger' && styles.danger,
+        variant === 'danger' && pressed && styles.outlinePressed,
         greyedOut && variant !== 'text' && styles.disabled,
         focused && styles.focused,
       ]}
@@ -117,6 +121,7 @@ function labelStyle(
     size === 'small' ? styles.labelSmall : styles.label,
     variant === 'primary' && styles.onGold,
     variant === 'outline' && styles.onDark,
+    variant === 'danger' && styles.onDanger,
     variant === 'text' && styles.linkLabel,
     variant === 'text' && pressed && styles.linkPressed,
     greyedOut && styles.labelDisabled,
@@ -143,6 +148,9 @@ const styles = StyleSheet.create({
   // A 1 px grey edge plus 1 px margin takes the same space as the 2 px edge.
   outline: { borderWidth: 1, borderColor: colors.fieldBorder, margin: 1 },
   outlinePressed: { backgroundColor: colors.surface },
+  // Same shape as 'outline', in the error colour (8.6 on bg, so it also
+  // passes as the edge of a control).
+  danger: { borderWidth: 1, borderColor: colors.error, margin: 1 },
   disabled: { backgroundColor: colors.disabledBg, borderColor: colors.disabledBg },
   focused: { borderWidth: 2, borderColor: colors.accent, margin: 0 },
   busyRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
@@ -150,6 +158,7 @@ const styles = StyleSheet.create({
   labelSmall: { ...typography.button, fontSize: 14, textAlign: 'center' },
   onGold: { color: colors.onAccent },
   onDark: { color: colors.text },
+  onDanger: { color: colors.error },
   // Links are underlined so they don't rely on colour alone (spec section 3, fix 6).
   linkLabel: {
     ...typography.bodySm,

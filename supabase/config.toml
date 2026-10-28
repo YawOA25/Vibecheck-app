@@ -402,6 +402,13 @@ deno_version = 2
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 
+# Account deletion (VC-B13). verify_jwt = true: Supabase's gateway refuses a
+# call without a valid login token before the function even runs. The
+# function then checks the token again with Supabase Auth and deletes only
+# that token's owner (supabase/functions/delete-account/handler.ts).
+[functions.delete-account]
+verify_jwt = true
+
 [analytics]
 enabled = true
 port = 54327

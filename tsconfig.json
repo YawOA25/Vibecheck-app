@@ -16,5 +16,9 @@
       "@/*": ["./src/*"]
     }
   },
-  "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"]
+  "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"],
+  // Edge Function entry files run on Supabase's servers under Deno, with
+  // Deno-style imports ("npm:...", "./handler.ts") this check can't read.
+  // Their logic lives in handler.ts files, which ARE checked (VC-B13).
+  "exclude": ["node_modules", "supabase/functions/*/index.ts"]
 }

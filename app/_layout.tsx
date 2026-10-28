@@ -12,6 +12,7 @@
  *                                 (VC-B04, VC-34), the report queue and
  *                                 the Moderate screen (VC-47, VC-58)
  *        refused by the 18+ gate -> only the "sorry" screen (VC-30)
+ *        in every state           -> the Terms and Privacy screens (VC-32b)
  *      `Stack.Protected` hides screens whose `guard` is false. If someone is on
  *      a screen that becomes hidden (for example they sign out), expo-router
  *      moves them to the first screen that is allowed. So there is no way to
@@ -137,6 +138,8 @@ function RootNavigator({ fontsReady }: { fontsReady: boolean }) {
         {/* The Me screen with Nights out, and the "Your night" recap (VC-B12). */}
         <Stack.Screen name="me" options={{ title: 'Me' }} />
         <Stack.Screen name="recap" options={{ title: 'Your night' }} />
+        {/* Settings: sign out, delete account, legal links (VC-B13). */}
+        <Stack.Screen name="settings" options={{ title: 'Settings' }} />
       </Stack.Protected>
 
       {/* Admins only (VC-B04, VC-34): the New and Edit event screens. This only keeps the
@@ -166,6 +169,15 @@ function RootNavigator({ fontsReady }: { fontsReady: boolean }) {
       <Stack.Protected guard={status === 'blocked'}>
         <Stack.Screen name="(auth)/blocked" options={{ title: 'Sorry' }} />
       </Stack.Protected>
+
+      {/* Open to everyone (VC-32b): the Terms and the Privacy Policy, linked
+          from the sign-in screen (signed out) and from Settings (signed in).
+          They hold no personal data. They must stay LAST: when a screen
+          becomes hidden (for example on sign-out), expo-router moves the
+          person to the first allowed screen in this list, which must be the
+          one for their state (sign-in, age gate, ...), never these. */}
+      <Stack.Screen name="terms" options={{ title: 'Terms of Service' }} />
+      <Stack.Screen name="privacy" options={{ title: 'Privacy Policy' }} />
     </Stack>
   );
 }

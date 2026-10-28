@@ -13,6 +13,10 @@
  * out. For an under-13 answer the server has already deleted the login and
  * the phone is signed out, so the button just closes this screen.
  *
+ * Contact (VC-32c): a "Contact us" email link sits under the button once
+ * the founder sets SUPPORT_EMAIL (src/lib/contact.ts). While it is empty the
+ * link is simply not there.
+ *
  * Privacy: this screen never shows or logs the birthdate.
  */
 import { useEffect, useRef } from 'react';
@@ -21,6 +25,7 @@ import type { HostInstance } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Button } from '@/components/Button';
+import { SupportEmailLink } from '@/components/SupportEmailLink';
 import { useAuth } from '@/lib/auth-context';
 import { colors, fonts, headlineMaxScale, spacing, typography } from '@/theme';
 
@@ -68,6 +73,7 @@ export default function BlockedScreen() {
         <View style={styles.action}>
           <Button label={label} variant="outline" onPress={signOut} />
         </View>
+        <SupportEmailLink />
       </View>
     </SafeAreaView>
   );

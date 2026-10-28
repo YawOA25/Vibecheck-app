@@ -11,8 +11,10 @@
  * Words only for the room, never a number (the same rule as "All night").
  *
  * Not here on purpose (VC-31, not approved for the MVP): the photo, the
- * stats row, "Your sound" genres, clips and the bottom tab bar. Settings
- * (sign out, delete account) come with VC-B13.
+ * stats row, "Your sound" genres, clips and the bottom tab bar.
+ *
+ * The round gear button next to the name opens Settings (sign out, delete
+ * account, terms and privacy), as in the v3 design (VC-B13).
  *
  * Opened from the "Me" button in the home screen's header.
  */
@@ -20,6 +22,7 @@ import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import Svg, { Circle, Path } from 'react-native-svg';
 
 import { BackButton } from '@/components/BackButton';
 import { Button } from '@/components/Button';
@@ -77,9 +80,12 @@ export default function MeScreen() {
         <BackButton onPress={goBack} />
       </View>
       <ScrollView contentContainerStyle={styles.content}>
-        <Text style={styles.title} accessibilityRole="header">
-          {profile?.display_name || 'Me'}
-        </Text>
+        <View style={styles.header}>
+          <Text style={styles.title} accessibilityRole="header">
+            {profile?.display_name || 'Me'}
+          </Text>
+          <SettingsButton onPress={() => router.push('/settings')} />
+        </View>
 
         {phase.kind === 'loading' ? (
           <View style={styles.centre} accessible accessibilityLabel="Loading">
@@ -129,6 +135,36 @@ export default function MeScreen() {
         ) : null}
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+/**
+ * The round Settings button from the v3 profile design: a 44 px circle with
+ * a thin edge and a gear drawn in lines (the design's own icon).
+ *
+ * @param props.onPress - opens Settings.
+ * @returns the button, read by screen readers as "Settings, button".
+ */
+function SettingsButton({ onPress }: { onPress: () => void }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel="Settings"
+      style={({ pressed }) => [styles.gear, pressed && styles.pressed]}
+    >
+      <Svg
+        width={18}
+        height={18}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke={colors.text}
+        strokeWidth={1.5}
+      >
+        <Circle cx={12} cy={12} r={3} />
+        <Path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1" />
+      </Svg>
+    </Pressable>
   );
 }
 
@@ -193,7 +229,17 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
   topBar: { paddingHorizontal: spacing.gutter, paddingTop: spacing.sm },
   content: { padding: spacing.gutter, gap: 18, paddingBottom: spacing.xl },
-  title: { ...typography.title, color: colors.text },
+  header: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  title: { ...typography.title, color: colors.text, flex: 1 },
+  gear: {
+    width: minTapTarget,
+    height: minTapTarget,
+    borderRadius: minTapTarget / 2,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   centre: { paddingVertical: spacing.xl, alignItems: 'center' },
   block: { gap: spacing.md },
   lastNight: {

@@ -15,9 +15,12 @@
  * No passwords: nothing to forget, nothing to leak. The one exception is the
  * "Reviewer sign-in" link (task B14), which shows only in development
  * builds for now; see src/components/ReviewerSignIn.tsx.
+ * The email step also links to the Terms of Service and the Privacy Policy
+ * (VC-32b); those screens are open while signed out (app/_layout.tsx).
  * Until real email delivery is set up (task VC-B11), Supabase only sends these
  * emails to the founder's Supabase team members.
  */
+import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
   Keyboard,
@@ -68,6 +71,7 @@ interface Notice {
  * @returns the screen view. It takes no inputs.
  */
 export default function SignInScreen() {
+  const router = useRouter();
   // Which step we're on: typing the email, typing the code, or (dev builds
   // only) the reviewer email-and-password form.
   const [step, setStep] = useState<'email' | 'code' | 'reviewer'>('email');
@@ -265,6 +269,23 @@ export default function SignInScreen() {
                       disabled={busy}
                     />
                   ) : null}
+                  {/* The legal pages (VC-32b), readable before signing up. */}
+                  <View style={styles.legal}>
+                    <Button
+                      label="Terms"
+                      accessibilityLabel="Terms of Service"
+                      variant="text"
+                      size="small"
+                      onPress={() => router.push('/terms')}
+                    />
+                    <Button
+                      label="Privacy"
+                      accessibilityLabel="Privacy Policy"
+                      variant="text"
+                      size="small"
+                      onPress={() => router.push('/privacy')}
+                    />
+                  </View>
                 </View>
               </>
             ) : step === 'reviewer' ? (
@@ -356,4 +377,5 @@ const styles = StyleSheet.create({
   body: { ...typography.body, color: colors.muted },
   strong: { fontFamily: fonts.bodySemi, color: colors.text },
   links: { alignItems: 'center' },
+  legal: { flexDirection: 'row', justifyContent: 'center', gap: spacing.md },
 });

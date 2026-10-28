@@ -204,6 +204,16 @@ To remove admin rights later, run the same query with `set role = 'user'`.
 
 **Trying it in Expo Go.** Local notifications work in Expo Go. To check the recap without waiting until 11 AM, rate a test event and open Me; the notification itself is best checked at the real 11 AM.
 
+## Settings, account deletion and legal pages (VC-B13, VC-32b, VC-32c)
+
+**What people see.** The round gear next to your name on **Me** opens **Settings**: who is signed in, **Sign out**, **Terms of Service**, **Privacy Policy**, **Contact us** (only once an address is set) and **Delete account**. Deleting asks twice ("Delete your account?", then "Last step") before anything happens. The sign-in screen also links to Terms and Privacy, and the 18+ gate's "sorry" screen shows Contact us.
+
+**How deletion works.** The app calls the `delete-account` Supabase Edge Function (`supabase/functions/delete-account/`), which checks the login token and calls `public.delete_account` (`supabase/migrations/20261028120000_delete_account.sql`) for that token's owner only. In one transaction it deletes the login and every personal row (profile, check-ins, ratings, heads-ups, reports they made, sign-in history), blanks them out of the moderation log, and republishes the scores of the events they rated without releasing ratings still waiting below the 3-rater gate. The phone then signs out and removes its recap notes. The service key exists only in Supabase's function secrets. Logins locked by the 18+ gate can't be deleted this way (their 12-month mark stays).
+
+**Deploying the function** (PowerShell, dev project only, from `C:\dev\Startup\apps\vibecheck`): `npx supabase functions deploy delete-account --project-ref abzcocmcqmmpfdfgogjr`.
+
+**Still to set.** The legal text in `src/copy/legal.ts` is placeholder (a "Draft" note shows) until the legal-advisor's version is approved; swap it there. The help address is `SUPPORT_EMAIL` in `src/lib/contact.ts`, empty until the founder picks one (the link stays hidden).
+
 ## Moderation (VC-47, VC-58)
 
 **For admins.** Two screens, both admin-only (the app hides them from everyone else, and every `admin_` server function refuses non-admins):

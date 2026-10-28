@@ -10,7 +10,7 @@
  * decides the screens a person can reach.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import * as Notifications from 'expo-notifications';
 import { Pressable, Text } from 'react-native';
 
@@ -25,6 +25,7 @@ jest.mock('@/lib/supabase', () => ({
     auth: { getSession: jest.fn(), onAuthStateChange: jest.fn(), signOut: jest.fn() },
     from: jest.fn(),
     rpc: jest.fn(),
+    functions: { invoke: jest.fn() },
   },
 }));
 jest.mock('@react-native-async-storage/async-storage', () =>
@@ -38,6 +39,7 @@ const auth = supabase.auth as unknown as {
 };
 const from = supabase.from as unknown as jest.Mock;
 const rpc = supabase.rpc as unknown as jest.Mock;
+const invoke = supabase.functions.invoke as unknown as jest.Mock;
 
 // Fakes for the chain supabase.from('profiles').select(...).eq(...).maybeSingle().
 const select = jest.fn();
@@ -68,7 +70,7 @@ beforeEach(async () => {
 
 /** Shows the status and some buttons, so tests can read and press them. */
 function Probe() {
-  const { status, profile, signOut, markAgeBlocked } = useAuth();
+  const { status, profile, signOut, markAgeBlocked, deleteAccount } = useAuth();
   return (
     <>
       <Text>status:{status}</Text>
@@ -83,6 +85,11 @@ function Probe() {
         accessibilityRole="button"
         accessibilityLabel="deleted"
         onPress={() => markAgeBlocked('deleted')}
+      />
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="delete account"
+        onPress={() => void deleteAccount()}
       />
     </>
   );
@@ -198,6 +205,40 @@ describe('AuthProvider', () => {
     expect(fake.dismissNotificationAsync).toHaveBeenCalledWith('recap-2026-10-18');
     expect(fake.dismissNotificationAsync).not.toHaveBeenCalledWith('other');
   });
+  // ---- VC-B13: account deletion clears the phone only after the server ----
+
+  it('deleting the account calls the Edge Function, then removes recap notes and the saved login', async () => {
+    (Notifications as unknown as { __reset: () => void }).__reset();
+    auth.getSession.mockResolvedValue({ data: { session: SESSION } });
+    maybeSingle.mockResolvedValue({ data: PROFILE, error: null });
+    invoke.mockResolvedValue({ data: { deleted: true }, error: null });
+    await offerRecapReminder({ id: 'e1', title: 'Rooftop' }, new Date('2026-10-17T23:00:00-04:00'));
+    await renderProbe();
+    await screen.findByText('status:ready');
+    await fireEvent.press(screen.getByRole('button', { name: 'delete account' }));
+    // The app sends no id: the function deletes the token's owner only.
+    expect(invoke).toHaveBeenCalledWith('delete-account', { method: 'POST' });
+    await waitFor(() => expect(auth.signOut).toHaveBeenCalledWith({ scope: 'local' }));
+    expect(await Notifications.getAllScheduledNotificationsAsync()).toHaveLength(0);
+  });
+
+  it('a failed deletion changes nothing on the phone (still signed in, notes kept)', async () => {
+    (Notifications as unknown as { __reset: () => void }).__reset();
+    auth.getSession.mockResolvedValue({ data: { session: SESSION } });
+    maybeSingle.mockResolvedValue({ data: PROFILE, error: null });
+    invoke.mockResolvedValue({ data: null, error: { context: { status: 500 } } });
+    await offerRecapReminder({ id: 'e1', title: 'Rooftop' }, new Date('2026-10-17T23:00:00-04:00'));
+    await renderProbe();
+    await screen.findByText('status:ready');
+    await fireEvent.press(screen.getByRole('button', { name: 'delete account' }));
+    await waitFor(() => expect(invoke).toHaveBeenCalled());
+    // Let the failed answer finish before checking nothing else happened.
+    await act(async () => {});
+    expect(auth.signOut).not.toHaveBeenCalled();
+    expect(await Notifications.getAllScheduledNotificationsAsync()).toHaveLength(1);
+    expect(screen.getByText('status:ready')).toBeOnTheScreen();
+  });
+
   // ---- VC-30: the lock after an under-18 answer ----------------------------
 
   it('is blocked when the server says this login was refused, and remembers it on the phone', async () => {

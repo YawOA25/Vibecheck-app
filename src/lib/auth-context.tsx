@@ -21,6 +21,8 @@ import type { Session } from '@supabase/supabase-js';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 
+import { requestAccountDeletion } from '@/lib/account-api';
+import type { DeleteAccountResult } from '@/lib/account-api';
 import { checkAgeLock, rememberAgeLock } from '@/lib/age-lock';
 import { cancelRecapReminders } from '@/lib/recap-notifications';
 import { supabase } from '@/lib/supabase';
@@ -55,6 +57,12 @@ export interface AuthState {
   signOut: () => Promise<void>;
   /** Called by the age gate when the server refuses the answer (VC-30). */
   markAgeBlocked: (refusal: AgeRefusal) => Promise<void>;
+  /**
+   * Deletes the account on the server, then signs out and clears this
+   * phone (VC-B13). Resolves with { ok: false, message } if the server
+   * didn't delete it; the person then stays signed in.
+   */
+  deleteAccount: () => Promise<DeleteAccountResult>;
 }
 
 /** What we know about a login after loading: its profile, or why there's none. */
@@ -181,6 +189,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   /**
+   * Deletes the account (Settings, VC-B13): asks the server first, and only
+   * once it says "deleted", clears this phone:
+   *   - the scheduled and shown recap notes (they name the person's events);
+   *   - the saved login in the secure store, through a local sign-out (the
+   *     server has already ended every session, so 'local' is all that's
+   *     left to do, and it works even if the network drops now).
+   * The root layout then shows the sign-in screen by itself.
+   *
+   * @returns { ok: true } after deleting, or { ok: false, message } when the
+   *   server didn't delete it (nothing on the phone is changed then).
+   */
+  const deleteAccount = useCallback(async (): Promise<DeleteAccountResult> => {
+    const result = await requestAccountDeletion();
+    if (!result.ok) return result;
+    await cancelRecapReminders();
+    // signOut can fail if the network drops; the local login is removed
+    // either way (supabase-js clears it before talking to the server).
+    await supabase.auth.signOut({ scope: 'local' }).catch(() => undefined);
+    return result;
+  }, []);
+
+  /**
    * Switches to the "sorry" screen after the server refused an age answer.
    *
    * @param refusal - 'locked' (13-17: remember it on the phone too) or
@@ -224,8 +254,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       refreshProfile,
       signOut,
       markAgeBlocked,
+      deleteAccount,
     };
-  }, [session, userId, loaded, blockedAfterSignOut, refreshProfile, signOut, markAgeBlocked]);
+  }, [
+    session,
+    userId,
+    loaded,
+    blockedAfterSignOut,
+    refreshProfile,
+    signOut,
+    markAgeBlocked,
+    deleteAccount,
+  ]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

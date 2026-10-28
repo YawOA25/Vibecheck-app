@@ -191,3 +191,57 @@ describe('admin-only screens (VC-47, VC-58 moderation)', () => {
     expect(screen.queryByText('Moderate screen')).toBeNull();
   });
 });
+
+describe('Settings and the legal screens (VC-B13, VC-32b)', () => {
+  /**
+   * Builds the pretend app with stand-ins for every state's first screen
+   * plus Settings, Terms and Privacy, and opens it at `url`.
+   *
+   * @param status - the sign-in state to pretend.
+   * @param url - the address to open.
+   */
+  async function openWithLegal(status: string, url: string) {
+    setStatus(status);
+    await renderRouter(
+      {
+        _layout: RootLayout,
+        index: () => <Text>Tonight screen</Text>,
+        '(auth)/sign-in': () => <Text>Sign-in screen</Text>,
+        '(auth)/age-gate': () => <Text>Age gate screen</Text>,
+        '(auth)/blocked': () => <Text>Sorry screen</Text>,
+        settings: () => <Text>Settings screen</Text>,
+        terms: () => <Text>Terms screen</Text>,
+        privacy: () => <Text>Privacy screen</Text>,
+      },
+      { initialUrl: url },
+    );
+  }
+
+  it('lets a signed-out person read the Terms and the Privacy Policy', async () => {
+    await openWithLegal('signedOut', '/terms');
+    expect(await screen.findByText('Terms screen')).toBeOnTheScreen();
+    await screen.unmount();
+    await openWithLegal('signedOut', '/privacy');
+    expect(await screen.findByText('Privacy screen')).toBeOnTheScreen();
+  });
+
+  it('still starts each state on its own screen, never on a legal page', async () => {
+    await openWithLegal('signedOut', '/');
+    expect(await screen.findByText('Sign-in screen')).toBeOnTheScreen();
+    await screen.unmount();
+    await openWithLegal('needsProfile', '/');
+    expect(await screen.findByText('Age gate screen')).toBeOnTheScreen();
+    await screen.unmount();
+    await openWithLegal('blocked', '/');
+    expect(await screen.findByText('Sorry screen')).toBeOnTheScreen();
+  });
+
+  it('opens Settings only for a signed-up person', async () => {
+    await openWithLegal('ready', '/settings');
+    expect(await screen.findByText('Settings screen')).toBeOnTheScreen();
+    await screen.unmount();
+    await openWithLegal('signedOut', '/settings');
+    expect(await screen.findByText('Sign-in screen')).toBeOnTheScreen();
+    expect(screen.queryByText('Settings screen')).toBeNull();
+  });
+});

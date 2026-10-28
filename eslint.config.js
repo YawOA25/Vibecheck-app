@@ -39,6 +39,16 @@ module.exports = defineConfig([
     },
   },
   {
-    ignores: ['node_modules/*', '.expo/*', 'dist/*', 'coverage/*', 'expo-env.d.ts'],
+    // supabase/functions/*/index.ts: Edge Function entry files (Deno, with
+    // "npm:" imports ESLint can't resolve). Their logic is in handler.ts,
+    // which is linted (VC-B13).
+    ignores: [
+      'node_modules/*',
+      '.expo/*',
+      'dist/*',
+      'coverage/*',
+      'expo-env.d.ts',
+      'supabase/functions/*/index.ts',
+    ],
   },
 ]);
