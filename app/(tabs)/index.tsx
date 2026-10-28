@@ -6,10 +6,10 @@
  * This is the first screen people see once signed in. It shows:
  *   - a header with the nights covered in New York time ("SATURDAY TO
  *     FRIDAY", still starting Saturday at 1 AM Sunday; see
- *     src/lib/tonight.ts), the "This week" title, a
- *     "Me" pill opening the Me screen with Nights out (VC-B12), a
- *     "Sign out" pill (VC-B03; it moves to settings in VC-B13), and for
- *     admins only a "New event" pill (VC-B04);
+ *     src/lib/tonight.ts) over the "This week" title, and nothing on the
+ *     right (Q4 "launch look": the Me, New event, Reports and Sign out
+ *     pills are gone. Me and Admin are tabs in the bottom bar now, and
+ *     Sign out lives in Settings);
  *   - the events, one section per night ("Tonight", "Tomorrow", then
  *     weekday names, VC-61), each as a card (src/components/EventCard.tsx).
  *     Tapping a card opens the event page;
@@ -43,10 +43,13 @@
  * Not here on purpose (VC-31, not approved for the MVP): the map, genre
  * filters, the featured host card, photos and clips.
  *
- * expo-router makes `app/index.tsx` the app's home address ("/"). The root
- * layout only allows it for signed-in people who passed the 18+ gate.
+ * expo-router makes `app/(tabs)/index.tsx` the app's home address ("/"):
+ * the "(tabs)" folder doesn't change the address. It is the first tab of
+ * the bottom bar (app/(tabs)/_layout.tsx). The root layout only allows it
+ * for signed-in people who passed the 18+ gate. Tapping the Tonight tab
+ * while already here scrolls the list back to the top (useScrollToTop).
  */
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect, useRouter, useScrollToTop } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -64,7 +67,7 @@ import { Button } from '@/components/Button';
 import { DateFilterBar } from '@/components/DateFilterBar';
 import { EventCard } from '@/components/EventCard';
 import { FormMessage } from '@/components/FormMessage';
-import { useAuth } from '@/lib/auth-context';
+import { Icon } from '@/components/Icon';
 import { takeCreatedEvent } from '@/lib/created-event';
 import {
   FILTER_LABELS,
@@ -82,7 +85,7 @@ import type { PublicEvent } from '@/lib/tonight';
 import { LIST_VIBE_REFRESH_MS } from '@/lib/vibe';
 import { getEventsVibe } from '@/lib/vibe-api';
 import type { Vibe } from '@/lib/vibe';
-import { colors, radius, spacing, typography } from '@/theme';
+import { colors, iconSize, radius, spacing, typography } from '@/theme';
 
 /** "This week"'s empty-state words (exported so tests use the same words). */
 const WEEK_EMPTY = filterEmptyText(THIS_WEEK, new Date());
@@ -115,10 +118,13 @@ type ListState =
  * Returns: the screen's view. It takes no inputs.
  */
 export default function HomeScreen() {
-  const { profile, signOut } = useAuth();
   const router = useRouter();
-  // Only admins create events (the server checks this too, VC-B04).
-  const isAdmin = profile?.role === 'admin';
+  // The list, so a tap on the already-open Tonight tab can scroll it to the top.
+  const listRef = useRef<SectionList<PublicEvent>>(null);
+  // The cast only quiets a typing gap: React Native 0.88's SectionList type
+  // doesn't match the hook's older "scrollable" type, but at run time the
+  // hook finds the list's scroll view (getScrollResponder) and scrolls it.
+  useScrollToTop(listRef as unknown as Parameters<typeof useScrollToTop>[0]);
 
   const [state, setState] = useState<ListState>({ kind: 'loading' });
   // The date filter (VC-63). Kept in memory only, so it resets on restart.
@@ -354,12 +360,12 @@ export default function HomeScreen() {
 
   return (
     // SafeAreaView adds padding so content isn't hidden under the iPhone's notch or clock.
-    // The bottom edge is left to the list, so cards can scroll under the home bar.
+    // No bottom edge: the tab bar below takes care of the home-bar space.
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <View style={styles.header}>
-        <Text style={styles.kicker}>{filterKicker(filter, new Date())}</Text>
-        {/* Title on the left, the header buttons on the right of the same row. */}
-        <View style={styles.headerRow}>
+        {/* The kicker line over the title; nothing on the right (Q4). */}
+        <View style={styles.titleBlock}>
+          <Text style={styles.kicker}>{filterKicker(filter, new Date())}</Text>
           {/* accessibilityRole="header" lets screen readers announce this as a heading.
               Developers only (__DEV__ is false in store builds): a long-press
               on the title sends a test crash report to Sentry (VC-26). */}
@@ -370,33 +376,6 @@ export default function HomeScreen() {
           >
             {filterTitle(filter, new Date())}
           </Text>
-          <View style={styles.headerActions}>
-            {isAdmin ? (
-              <Button
-                label="New event"
-                size="small"
-                onPress={() => router.push('/admin/new-event')}
-              />
-            ) : null}
-            {/* The tag report queue (VC-58), admins only. */}
-            {isAdmin ? (
-              <Button
-                label="Reports"
-                variant="outline"
-                size="small"
-                onPress={() => router.push('/admin/reports')}
-              />
-            ) : null}
-            {/* The Me screen: Nights out and the morning recap (VC-B12). */}
-            <Button
-              label="Me"
-              variant="outline"
-              size="small"
-              accessibilityLabel="Me, your nights out"
-              onPress={() => router.push('/me')}
-            />
-            <Button label="Sign out" variant="outline" size="small" onPress={signOut} />
-          </View>
         </View>
         <DateFilterBar filter={filter} now={new Date()} onChange={chooseFilter} />
         {createdNote ? (
@@ -415,6 +394,7 @@ export default function HomeScreen() {
       {state.kind === 'error' ? <ErrorState message={state.message} onRetry={retry} /> : null}
       {state.kind === 'ready' ? (
         <SectionList
+          ref={listRef}
           testID="tonight-list"
           sections={groupByDay(state.events, state.loadedAt)}
           keyExtractor={(event) => event.id}
@@ -571,6 +551,8 @@ function EmptyState({
   const text = filterEmptyText(filter, new Date());
   return (
     <View style={styles.card}>
+      {/* A quiet moon (Q4 icon set); decoration only. */}
+      <Icon name="moon" size={iconSize.lg} color={colors.muted} />
       <Text style={styles.emptyTitle} accessibilityRole="header">
         {text.title}
       </Text>
@@ -587,34 +569,24 @@ function EmptyState({
 /** Styles for this screen, built only from theme tokens. */
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
+  // Q4 spec 2.5: 20 below the safe area (SafeAreaView adds the inset), 16
+  // at the sides, 12 below, and a 16 gap between the title and the chips.
   header: {
     paddingHorizontal: spacing.gutter,
-    paddingTop: spacing.gutter,
-    paddingBottom: spacing.xs,
-    gap: spacing.xs,
+    paddingTop: 20,
+    paddingBottom: spacing.gap12,
+    gap: spacing.md,
   },
+  titleBlock: { gap: spacing.xs },
   kicker: { ...typography.label, color: colors.muted },
   // The "Saved for ... Switch to ..." note (VC-63b), in the success colour.
   createdNote: { ...typography.bodySm, color: colors.success },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.gap12,
-  },
-  // The header buttons sit together on the right, and wrap if text is very large.
-  headerActions: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'flex-end',
-    gap: spacing.sm,
-    flexShrink: 1,
-  },
-  // flexShrink lets a very large title wrap instead of pushing the button off screen.
-  title: { ...typography.title, color: colors.text, flexShrink: 1 },
+  // Q4 spec 2.5: the title at 32/38 here.
+  title: { ...typography.title, lineHeight: 38, color: colors.text },
   listContent: {
     paddingHorizontal: spacing.gutter,
-    paddingBottom: spacing.xl,
+    // 24 is enough: the tab bar below now covers the home-bar space (Q4).
+    paddingBottom: spacing.lg,
     // flexGrow lets the empty state fill a list that can still be pulled down.
     flexGrow: 1,
   },

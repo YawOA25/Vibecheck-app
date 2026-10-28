@@ -34,6 +34,12 @@ describe('smoke test', () => {
       error: '#FF8A7A',
       success: '#7FD6A0',
       scrim: 'rgba(0, 0, 0, 0.6)',
+      // Q4 "launch look" tokens (audit fix #10 and the VC-71 mark).
+      surfaceSunken: '#0E0E11',
+      divider: '#1F1F24',
+      handle: '#3A3A42',
+      accentTint: '#1D1A14',
+      markTrack: '#2B2B31',
     });
     // Nothing tappable may be smaller than 44 px (spec section 1).
     expect(minTapTarget).toBe(44);

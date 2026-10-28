@@ -130,11 +130,11 @@ $env:VIBECHECK_REQUIRE_DB = "1"; npm run check; Remove-Item Env:VIBECHECK_REQUIR
 2. **Make the emails show a code.** Supabase's standard sign-in email has only a link. Go to **Authentication > Emails** (Templates). In **Confirm signup** and in **Magic Link**, set the subject to `Your VibeCheck code` and replace the message body with the text of `supabase\templates\sign-in-code.html`. Both are needed: the first is sent to new addresses, the second to returning ones.
 3. **Who can get emails, for now.** Until real email delivery is set up (task VC-B11), Supabase only sends sign-in emails to members of your Supabase organization, and only about 2 an hour. To let a teammate test, invite them under **Organization settings > Team**. Anyone else sees "Sign-in emails can only go to the VibeCheck team's addresses for now."
 
-**Try it on your iPhone:** start the app (above), type your email, type the code from the email, then enter a name and a date of birth. A date less than 18 years ago shows "Sorry, VibeCheck is for people 18 and older." and only offers Sign out. An adult date takes you to Tonight, which has a **Sign out** button at the bottom.
+**Try it on your iPhone:** start the app (above), type your email, type the code from the email, then enter a name and a date of birth. A date less than 18 years ago shows "Sorry, VibeCheck is for people 18 and older." and only offers Sign out. An adult date takes you to Tonight. **Sign out** is in Settings (the gear on the **Me** tab).
 
 ## Admins and creating events (VC-B04)
 
-**How it works.** Only admins can create or edit events. The server functions `create_event` and `update_event` check the caller's profile `role`, and refuse everyone else, even with a hand-made request that skips the app. Admins see a gold **New event** button in the Tonight header; nobody else does. The exact location (map pin), the check-in radius and the party code are saved in a private table that no app user can read. Guests only see the title, the area label (neighbourhood, never an address) and the times.
+**How it works.** Only admins can create or edit events. The server functions `create_event` and `update_event` check the caller's profile `role`, and refuse everyone else, even with a hand-made request that skips the app. Admins get a third **Admin** tab in the bottom bar, with **New event** and **Reports**; nobody else sees that tab. The exact location (map pin), the check-in radius and the party code are saved in a private table that no app user can read. Guests only see the title, the area label (neighbourhood, never an address) and the times.
 
 **Make yourself an admin (one time, by hand).** The app has no way to make someone an admin, on purpose: users can't change their own `role`. You do it once in the Supabase dashboard:
 
@@ -155,7 +155,7 @@ returning p.id, p.display_name, p.role;
 ```
 
 4. Check the result shows one row with your name and `admin`. If it shows no rows, the email doesn't match, or you haven't finished the age gate yet.
-5. In the app, sign out and sign back in (or close and reopen it). The **New event** button appears on Tonight.
+5. In the app, sign out and sign back in (or close and reopen it). The **Admin** tab appears in the bottom bar.
 
 To remove admin rights later, run the same query with `set role = 'user'`.
 
@@ -288,12 +288,23 @@ It takes about 10-20 minutes. The build page on expo.dev shows progress and, whe
 
 **Signing key.** EAS created and stores the Android signing key (keystore) for this project. Don't delete it in expo.dev: Android only installs updates signed with the same key.
 
+## App icon and splash (VC-71)
+
+The icon, the Android icon layers and the splash all come from one drawing, `assets/brand/mark.svg` (a gold gauge arc, no letters, so a new app name needs no new art). After changing that file, remake the five PNGs in `assets/images/` (Git Bash; the drawing library is installed outside the app on purpose, so it never becomes an app package):
+
+```bash
+npm i --prefix "$TEMP/resvg" @resvg/resvg-js@2.6.2
+NODE_PATH="$TEMP/resvg/node_modules" node scripts/export-brand-pngs.js
+```
+
+New icons and the splash only show in a new development or EAS build; Expo Go shows its own icon.
+
 ## Where things live
 
 | Path              | What's there                                                                                                 |
 | ----------------- | ------------------------------------------------------------------------------------------------------------ |
 | `app/`            | Screens. Each file is a screen, and its path is its address (expo-router). `_layout.tsx` wraps every screen. |
-| `src/theme.ts`    | Colors, spacing and text sizes from the design (wireframes v1). Use these instead of typing colors by hand.  |
+| `src/theme.ts`    | Colors, spacing and text sizes from the design (v3). Use these instead of typing colors by hand.             |
 | `src/lib/`        | Helpers: the Supabase connection, the sign-in state (`auth-context.tsx`), age maths, error messages.         |
 | `src/components/` | Shared pieces of screens, such as `Button` and `TextField`.                                                  |
 | `__tests__/`      | Automated tests.                                                                                             |
@@ -302,4 +313,4 @@ It takes about 10-20 minutes. The build page on expo.dev shows progress and, whe
 | `supabase/`       | Database tables and security rules (`migrations/`) and their pgTAP tests (`tests/database/`).                |
 | `scripts/`        | Helper scripts, such as `test-db.js`, which runs the database tests or explains why they were skipped.       |
 
-Screens so far: `app/(auth)/sign-in.tsx` (email code), `app/(auth)/age-gate.tsx` (name and date of birth), `app/index.tsx` (the home list: this week's events by night, the date filter, pull down to refresh, and 100 events at a time with **Load more events** / scroll to load the next 100, VC-66), `app/event/[id].tsx` (one event's page, with the live vibe meter, "I'm here" and, for staff picks, "Get tickets"), `app/check-in/[id].tsx` (GPS check-in, task VC-B06), `app/join/[id].tsx` (party-code check-in, task VC-B07), `app/rate/[id].tsx` (the 3-tap rating, task VC-B08) `app/admin/new-event.tsx`, `app/admin/edit-event/[id].tsx`, `app/admin/reports.tsx` (tag report queue, VC-58) and `app/admin/moderate/[id].tsx` (hide ratings, +1s and tags, VC-47) (admins only). A folder or file name in square brackets, like `[id]`, is a changing part of the address (the event's id). A folder name in brackets, like `(auth)`, groups screens without adding to their address.
+Screens so far: `app/(auth)/sign-in.tsx` (email code), `app/(auth)/age-gate.tsx` (name and date of birth), `app/(tabs)/index.tsx` (the home list: this week's events by night, the date filter, pull down to refresh, and 100 events at a time with **Load more events** / scroll to load the next 100, VC-66), `app/event/[id].tsx` (one event's page, with the live vibe meter, "I'm here" and, for staff picks, "Get tickets"), `app/check-in/[id].tsx` (GPS check-in, task VC-B06), `app/join/[id].tsx` (party-code check-in, task VC-B07), `app/rate/[id].tsx` (the 3-tap rating, task VC-B08) `app/admin/new-event.tsx`, `app/admin/edit-event/[id].tsx`, `app/admin/reports.tsx` (tag report queue, VC-58) and `app/admin/moderate/[id].tsx` (hide ratings, +1s and tags, VC-47) (admins only). The bottom tab bar (Q4) lives in `app/(tabs)/`: Tonight (`index.tsx`), Me (`me.tsx`) and, for admins only, the Admin hub (`admin.tsx`); every other screen opens over it, so the bar hides there. A folder or file name in square brackets, like `[id]`, is a changing part of the address (the event's id). A folder name in brackets, like `(auth)`, groups screens without adding to their address.

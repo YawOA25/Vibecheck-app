@@ -11,28 +11,30 @@
  * Words only for the room, never a number (the same rule as "All night").
  *
  * Not here on purpose (VC-31, not approved for the MVP): the photo, the
- * stats row, "Your sound" genres, clips and the bottom tab bar.
+ * stats row, "Your sound" genres and clips.
  *
  * The round gear button next to the name opens Settings (sign out, delete
  * account, terms and privacy), as in the v3 design (VC-B13).
  *
- * Opened from the "Me" button in the home screen's header.
+ * Since Q4 ("launch look") this is the Me tab of the bottom bar
+ * (app/(tabs)/me.tsx, still at "/me"), so it has no Back button. Tapping
+ * the Me tab while already here scrolls back to the top.
  */
-import { useRouter } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useFocusEffect, useRouter, useScrollToTop } from 'expo-router';
+import { useCallback, useRef, useState } from 'react';
+import type { ComponentRef } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import Svg, { Circle, Path } from 'react-native-svg';
 
-import { BackButton } from '@/components/BackButton';
 import { Button } from '@/components/Button';
 import { FormMessage } from '@/components/FormMessage';
+import { Icon } from '@/components/Icon';
 import { wordColour } from '@/components/VibeMeter';
 import { useAuth } from '@/lib/auth-context';
 import { nightWord, recapDateLine } from '@/lib/recap';
 import type { RecapItem } from '@/lib/recap';
 import { getMyRecap } from '@/lib/recap-api';
-import { colors, minTapTarget, radius, spacing, typography } from '@/theme';
+import { colors, iconSize, minTapTarget, radius, spacing, typography } from '@/theme';
 
 /** What the screen is showing. */
 type Phase =
@@ -51,35 +53,46 @@ export default function MeScreen() {
   const [phase, setPhase] = useState<Phase>({ kind: 'loading' });
   // Bumped by "Try again" to load once more.
   const [attempt, setAttempt] = useState(0);
+  // The scroll view, so a tap on the already-open Me tab scrolls to the top.
+  const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
+  useScrollToTop(scrollRef);
 
   // Load the last 36 hours (for the card) and the whole list together. The
   // server decides what counts as "last night", so the app doesn't repeat
-  // the 36-hour rule. State is set only in `.then`, and ignored once closed.
-  useEffect(() => {
-    let active = true;
-    Promise.all([getMyRecap('recent'), getMyRecap('all')]).then(([recent, all]) => {
-      if (!active) return;
-      if (!recent.ok) return setPhase({ kind: 'error', message: recent.message });
-      if (!all.ok) return setPhase({ kind: 'error', message: all.message });
-      setPhase({ kind: 'ready', recent: recent.items, all: all.items });
-    });
-    return () => {
-      active = false;
-    };
-  }, [attempt]);
-
-  /** Back to the home screen. */
-  const goBack = useCallback(() => {
-    if (router.canGoBack()) router.back();
-    else router.replace('/');
-  }, [router]);
+  // the 36-hour rule. State is set only in `.then`, and ignored once the
+  // screen is left.
+  //
+  // Why useFocusEffect and not useEffect (cto, Q4): Me is a tab now, so it
+  // stays open in the background. A plain useEffect would load only once,
+  // and a night rated afterwards would never show. This runs every time the
+  // Me tab comes into view (and again after "Try again"). On a refresh the
+  // old list stays on screen until the new one arrives (no spinner flash),
+  // and if the refresh fails the old list is kept rather than replaced by
+  // an error.
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      Promise.all([getMyRecap('recent'), getMyRecap('all')]).then(([recent, all]) => {
+        if (!active) return;
+        if (!recent.ok || !all.ok) {
+          const message = !recent.ok ? recent.message : !all.ok ? all.message : '';
+          setPhase((current) => (current.kind === 'ready' ? current : { kind: 'error', message }));
+          return;
+        }
+        setPhase({ kind: 'ready', recent: recent.items, all: all.items });
+      });
+      return () => {
+        active = false;
+      };
+      // `attempt` isn't read inside; listing it reloads after "Try again".
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [attempt]),
+  );
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.topBar}>
-        <BackButton onPress={goBack} />
-      </View>
-      <ScrollView contentContainerStyle={styles.content}>
+    // Top edge only: the tab bar below handles the home-bar space.
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+      <ScrollView ref={scrollRef} contentContainerStyle={styles.content}>
         <View style={styles.header}>
           <Text style={styles.title} accessibilityRole="header">
             {profile?.display_name || 'Me'}
@@ -140,7 +153,7 @@ export default function MeScreen() {
 
 /**
  * The round Settings button from the v3 profile design: a 44 px circle with
- * a thin edge and a gear drawn in lines (the design's own icon).
+ * a thin edge and the "gear" line icon (Q4 icon set).
  *
  * @param props.onPress - opens Settings.
  * @returns the button, read by screen readers as "Settings, button".
@@ -153,17 +166,7 @@ function SettingsButton({ onPress }: { onPress: () => void }) {
       accessibilityLabel="Settings"
       style={({ pressed }) => [styles.gear, pressed && styles.pressed]}
     >
-      <Svg
-        width={18}
-        height={18}
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke={colors.text}
-        strokeWidth={1.5}
-      >
-        <Circle cx={12} cy={12} r={3} />
-        <Path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1" />
-      </Svg>
+      <Icon name="gear" size={iconSize.md} color={colors.text} />
     </Pressable>
   );
 }
@@ -191,7 +194,8 @@ function LastNightCard({ item, onPress }: { item: RecapItem; onPress: () => void
         <Text style={styles.goldLabel}>LAST NIGHT, RATED</Text>
         <Text style={styles.body}>{text}</Text>
       </View>
-      <Text style={styles.chevron}>›</Text>
+      {/* "Opens another screen" arrow: decoration, the label says it all. */}
+      <Icon name="chevron-right" size={iconSize.md} color={colors.muted} />
     </Pressable>
   );
 }
@@ -227,8 +231,13 @@ function NightRow({ item, onPress }: { item: RecapItem; onPress: () => void }) {
 /** Styles built only from theme tokens (sizes from the v3 profile design). */
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
-  topBar: { paddingHorizontal: spacing.gutter, paddingTop: spacing.sm },
-  content: { padding: spacing.gutter, gap: 18, paddingBottom: spacing.xl },
+  // Q4 spec 2.5: 20 below the safe area (SafeAreaView adds the inset).
+  content: {
+    paddingHorizontal: spacing.gutter,
+    paddingTop: 20,
+    gap: 18,
+    paddingBottom: spacing.lg,
+  },
   header: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   title: { ...typography.title, color: colors.text, flex: 1 },
   gear: {
@@ -257,7 +266,6 @@ const styles = StyleSheet.create({
   },
   lastNightText: { flex: 1, gap: spacing.xs },
   goldLabel: { ...typography.label, color: colors.accent },
-  chevron: { ...typography.cardTitle, color: colors.muted },
   sectionLabel: { ...typography.label, color: colors.muted, marginBottom: spacing.xs },
   row: {
     flexDirection: 'row',

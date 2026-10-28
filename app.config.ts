@@ -17,21 +17,27 @@
  */
 import type { ExpoConfig } from 'expo/config';
 
-// The app background color, copied from the theme token `bg` in src/theme.ts.
-// It's repeated here because this file is read by Expo's build tools, which run
-// before the app code exists, so it can't import from the app.
-const BACKGROUND = '#0F0B1A';
+// The app background color, copied from the theme token `bg` in src/theme.ts
+// (the v3 design's near-black). It's repeated here because this file is read
+// by Expo's build tools, which run before the app code exists, so it can't
+// import from the app. It used to be the old v1 purple (#0F0B1A), which
+// flashed between the splash screen and the first screen (Q4, VC-71).
+const BACKGROUND = '#0A0A0C';
 
 const config: ExpoConfig = {
   name: 'VibeCheck',
   slug: 'vibecheck',
   version: '0.0.1',
   orientation: 'portrait',
+  // The app icon (VC-71): the gold "vibe gauge" arc on near-black, no
+  // letters, so renaming the app never needs new art. All five icon and
+  // splash PNGs are exported from assets/brand/mark.svg by
+  // scripts/export-brand-pngs.js (see that file).
   icon: './assets/images/icon.png',
   // The URL scheme lets links like vibecheck://event/123 open the app.
   // expo-router needs a scheme to handle deep links.
   scheme: 'vibecheck',
-  // The design is dark-only (wireframes v1), so we force dark mode. This keeps
+  // The design is dark-only (v3), so we force dark mode. This keeps
   // system UI such as the status bar text light on our dark background.
   userInterfaceStyle: 'dark',
   backgroundColor: BACKGROUND,
@@ -81,8 +87,9 @@ const config: ExpoConfig = {
       'expo-splash-screen',
       {
         backgroundColor: BACKGROUND,
+        // The gold mark alone on the dark background (VC-71).
         image: './assets/images/splash-icon.png',
-        imageWidth: 76,
+        imageWidth: 200,
       },
     ],
     // The login is kept in the phone's secure keychain / keystore (batch Q1,

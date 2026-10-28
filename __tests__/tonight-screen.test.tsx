@@ -1,12 +1,12 @@
 /**
- * Tests for the home screen (app/index.tsx), tasks VC-B03c, VC-B04, VC-B05,
- * and the week view VC-61.
+ * Tests for the home screen (app/(tabs)/index.tsx), tasks VC-B03c, VC-B04,
+ * VC-B05, the week view VC-61 and the Q4 header clean-up.
  *
  * React Native Testing Library draws the screen in memory (no phone needed)
  * and lets us look for text the way a user would see it. The sign-in state,
  * the router and the event list read are replaced with fakes. We check:
- *   - the header: "SATURDAY TO FRIDAY" line, "This week" heading, Sign out,
- *     admin-only New event;
+ *   - the header: "SATURDAY TO FRIDAY" line, "This week" heading, and no
+ *     buttons (Q4: they moved to the tab bar, Admin hub and Settings);
  *   - the loading state while the list is on its way;
  *   - the error state, and that "Try again" loads again;
  *   - the empty state when there are no events;
@@ -42,7 +42,7 @@ import HomeScreen, {
   LIST_TITLE,
   LOAD_MORE_LABEL,
   SHOW_WEEK_LABEL,
-} from '../app/index';
+} from '../app/(tabs)/index';
 import { ONE_NIGHT, RANGE_NOTE } from '@/components/CustomDatesPicker';
 import { TEST_LABEL } from '@/components/EventCard';
 import { useAuth } from '@/lib/auth-context';
@@ -60,8 +60,11 @@ jest.mock('@/lib/events-read', () => ({ listHomeEvents: jest.fn() }));
 jest.mock('@/lib/sentry', () => ({ sendTestError: jest.fn(() => true) }));
 // The "mock" prefix lets jest.mock (which runs first) use this fake.
 const mockPush = jest.fn();
+const mockScrollToTop = jest.fn();
 jest.mock('expo-router', () => ({
   useRouter: () => ({ push: mockPush }),
+  // Q4: the list scrolls to the top when its tab is tapped again.
+  useScrollToTop: (ref: unknown) => mockScrollToTop(ref),
   // Outside a real navigator the screen is "in view" once: run the effect
   // like a normal useEffect. (require inside: jest.mock can't use outer imports.)
   useFocusEffect: (effect: () => void | (() => void)) => {
@@ -145,39 +148,26 @@ describe('HomeScreen header', () => {
     expect(screen.getByRole('header', { name: LIST_TITLE })).toBeOnTheScreen();
   });
 
-  it('hides the New event button from normal users', async () => {
-    await render(<HomeScreen />);
-    expect(screen.queryByRole('button', { name: 'New event' })).toBeNull();
-  });
-
-  it('shows admins a New event button that opens the admin screen', async () => {
+  // Q4 "launch look": Me, New event, Reports and Sign out moved to the tab
+  // bar, the Admin hub and Settings, so the header has no buttons at all,
+  // even for an admin.
+  it('shows no header pills, even to an admin (Q4)', async () => {
     (useAuth as jest.Mock).mockReturnValue({
       profile: { id: 'admin-1', display_name: 'Yaw', role: 'admin', is_tester: false },
       signOut,
     });
     await render(<HomeScreen />);
-    await fireEvent.press(screen.getByRole('button', { name: 'New event' }));
-    expect(mockPush).toHaveBeenCalledWith('/admin/new-event');
+    for (const name of ['New event', 'Reports', 'Sign out', 'Me', 'Me, your nights out']) {
+      expect(screen.queryByRole('button', { name })).toBeNull();
+    }
   });
 
-  it('shows admins a Reports button for the tag report queue (VC-58), and nobody else', async () => {
+  it('lets a tap on the open Tonight tab scroll the list to the top', async () => {
     await render(<HomeScreen />);
-    expect(screen.queryByRole('button', { name: 'Reports' })).toBeNull();
-    await screen.unmount();
-
-    (useAuth as jest.Mock).mockReturnValue({
-      profile: { id: 'admin-1', display_name: 'Yaw', role: 'admin', is_tester: false },
-      signOut,
-    });
-    await render(<HomeScreen />);
-    await fireEvent.press(screen.getByRole('button', { name: 'Reports' }));
-    expect(mockPush).toHaveBeenCalledWith('/admin/reports');
-  });
-
-  it('signs out from the Sign out button', async () => {
-    await render(<HomeScreen />);
-    await fireEvent.press(screen.getByRole('button', { name: 'Sign out' }));
-    expect(signOut).toHaveBeenCalled();
+    // useScrollToTop is handed the list, which it scrolls on a tab tap.
+    expect(mockScrollToTop).toHaveBeenCalledWith(
+      expect.objectContaining({ current: expect.anything() }),
+    );
   });
 });
 

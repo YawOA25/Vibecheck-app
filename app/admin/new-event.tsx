@@ -1,8 +1,8 @@
 /**
  * Admin "New event" screen (task VC-B04), in the v3 look.
  *
- * Who sees it: only admins. The Tonight header shows a "New event" button
- * only for them, and the root layout (app/_layout.tsx) only lets admins open
+ * Who sees it: only admins. The Admin tab's hub (app/(tabs)/admin.tsx, Q4)
+ * has the "New event" row, and only admins have that tab, and the root layout (app/_layout.tsx) only lets admins open
  * this address. The real lock is on the server: `create_event` refuses
  * anyone who isn't an admin, even with a hand-made request.
  *

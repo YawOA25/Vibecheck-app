@@ -20,9 +20,10 @@
  *     accessibilityRole="radiogroup" so they are read as one group.
  */
 import { useState } from 'react';
-import { Pressable, StyleSheet, Text } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { colors, minTapTarget, radius, spacing, typography } from '@/theme';
+import { Icon } from '@/components/Icon';
+import { colors, iconSize, minTapTarget, radius, spacing, typography } from '@/theme';
 
 /** What a ChoiceChip needs. */
 export interface ChoiceChipProps {
@@ -93,15 +94,28 @@ export function ChoiceChip({
         focused && styles.focused,
       ]}
     >
-      <Text
-        style={[
-          shape === 'block' ? styles.blockText : styles.pillText,
-          selected && (shape === 'block' ? styles.blockTextSelected : styles.pillTextSelected),
-        ]}
-      >
-        {/* The check mark makes "picked" visible without relying on colour. */}
-        {selected ? `✓ ${label}` : label}
-      </Text>
+      <View style={styles.content}>
+        {/* The check mark (a line icon since Q4) makes "picked" visible
+            without relying on colour. It matches the label's colour: dark
+            on a gold block, gold on a pill. Screen readers skip it and
+            hear "selected" instead. */}
+        {selected ? (
+          <Icon
+            name="check"
+            size={iconSize.sm}
+            color={shape === 'block' ? colors.onAccent : colors.accent}
+          />
+        ) : null}
+        <Text
+          style={[
+            styles.label,
+            shape === 'block' ? styles.blockText : styles.pillText,
+            selected && (shape === 'block' ? styles.blockTextSelected : styles.pillTextSelected),
+          ]}
+        >
+          {label}
+        </Text>
+      </View>
     </Pressable>
   );
 }
@@ -126,8 +140,17 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   // v3: a dark gold-tinted fill with a gold edge for picked pills.
-  pillSelected: { backgroundColor: '#1D1A14', borderColor: colors.accent },
+  pillSelected: { backgroundColor: colors.accentTint, borderColor: colors.accent },
   pressed: { backgroundColor: colors.surfaceRaised },
+  // The check icon and the words side by side, centred in the chip.
+  content: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  // Lets long words wrap inside a narrow block instead of overflowing.
+  label: { flexShrink: 1 },
   focused: { borderWidth: 2, borderColor: colors.accent },
   blockText: {
     ...typography.button,

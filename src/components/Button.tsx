@@ -6,7 +6,7 @@
  *   - 'danger' : an outline pill in the error colour, for an action that
  *                can't be undone ("Yes, delete my account", VC-B13)
  * and two sizes: 'large' (54 px tall) and 'small' (44 px tall, only as wide
- * as its words; used in the Tonight header).
+ * as its words; e.g. "Load more events" on Tonight).
  *
  * Why one shared component: every screen gets the same height (never under
  * 44 px, easy to hit with a thumb), the same colours for pressed, busy and

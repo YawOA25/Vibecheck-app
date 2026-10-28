@@ -28,9 +28,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { BackButton } from '@/components/BackButton';
 import { Button } from '@/components/Button';
 import { FormMessage } from '@/components/FormMessage';
+import { Icon } from '@/components/Icon';
 import { SupportEmailLink } from '@/components/SupportEmailLink';
 import { useAuth } from '@/lib/auth-context';
-import { colors, minTapTarget, radius, spacing, typography } from '@/theme';
+import { colors, iconSize, minTapTarget, radius, spacing, typography } from '@/theme';
 
 /**
  * Where the delete flow is: not started, the first question, the second
@@ -190,7 +191,8 @@ function LinkRow({ label, onPress }: { label: string; onPress: () => void }) {
       style={({ pressed }) => [styles.row, pressed && styles.pressed]}
     >
       <Text style={styles.rowLabel}>{label}</Text>
-      <Text style={styles.chevron}>›</Text>
+      {/* "Opens another screen" arrow: decoration, the label says it all. */}
+      <Icon name="chevron-right" size={iconSize.md} color={colors.muted} />
     </Pressable>
   );
 }
@@ -215,7 +217,6 @@ const styles = StyleSheet.create({
     minHeight: minTapTarget,
   },
   rowLabel: { ...typography.body, color: colors.text },
-  chevron: { ...typography.cardTitle, color: colors.muted },
   panel: {
     gap: spacing.gap12,
     backgroundColor: colors.surface,

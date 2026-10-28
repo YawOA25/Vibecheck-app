@@ -7,12 +7,13 @@
  * is read aloud by screen readers when it appears. Keeping that in one place
  * means every screen gets it right.
  *
- * The icons are drawn with a small circle and a character ("!" or a tick),
- * so we don't need an icon package.
+ * The icons are line icons from src/components/Icon.tsx (Q4): "alert" (a
+ * ring with "!") for errors and "check" (a tick) for confirmations.
  */
 import { StyleSheet, Text, View } from 'react-native';
 
-import { colors, spacing, typography } from '@/theme';
+import { Icon } from '@/components/Icon';
+import { colors, iconSize, spacing, typography } from '@/theme';
 
 /** What a FormMessage needs. */
 export interface FormMessageProps {
@@ -33,14 +34,8 @@ export function FormMessage({ message, tone = 'error' }: FormMessageProps) {
     <View style={styles.row}>
       {/* The icon is decoration for sighted people; screen readers skip it
           (the sentence already says everything). */}
-      <View
-        style={[styles.icon, { borderColor: color }]}
-        accessibilityElementsHidden
-        importantForAccessibility="no-hide-descendants"
-      >
-        <Text style={[styles.iconGlyph, { color }]} allowFontScaling={false}>
-          {tone === 'error' ? '!' : '✓'}
-        </Text>
+      <View style={styles.icon}>
+        <Icon name={tone === 'error' ? 'alert' : 'check'} size={iconSize.sm} color={color} />
       </View>
       {/* role "alert" makes iPhone read the message aloud as soon as it
           appears; accessibilityLiveRegion does the same on Android. */}
@@ -58,16 +53,7 @@ export function FormMessage({ message, tone = 'error' }: FormMessageProps) {
 /** Styles built only from theme tokens. */
 const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
-  // A 16 px ring, nudged down 2 px to line up with the first line of text.
-  icon: {
-    width: 16,
-    height: 16,
-    marginTop: 2,
-    borderRadius: 8,
-    borderWidth: 1.5,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  iconGlyph: { fontSize: 10, lineHeight: 12, fontWeight: '700' },
+  // The 16 px icon, nudged down 2 px to line up with the first line of text.
+  icon: { marginTop: 2 },
   text: { ...typography.bodySm, flex: 1 },
 });

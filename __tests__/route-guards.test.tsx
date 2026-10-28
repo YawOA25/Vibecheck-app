@@ -14,6 +14,7 @@
 import { Text } from 'react-native';
 import { renderRouter, screen } from 'expo-router/testing-library';
 
+import TabsLayout from '../app/(tabs)/_layout';
 import RootLayout from '../app/_layout';
 import { useAuth } from '@/lib/auth-context';
 
@@ -23,6 +24,16 @@ jest.mock('@/lib/auth-context', () => ({
   AuthProvider: ({ children }: { children: React.ReactNode }) => children,
   useAuth: jest.fn(),
 }));
+
+/**
+ * Tonight as it really sits since Q4: the first tab of the "(tabs)" group
+ * (the real tabs layout, with a stand-in Tonight screen). The address is
+ * still "/".
+ */
+const TONIGHT_TAB = {
+  '(tabs)/_layout': TabsLayout,
+  '(tabs)/index': () => <Text>Tonight screen</Text>,
+};
 
 /** Pretends the person is in the given sign-in state. */
 function setStatus(status: string) {
@@ -39,7 +50,7 @@ async function openAt(url: string) {
   await renderRouter(
     {
       _layout: RootLayout,
-      index: () => <Text>Tonight screen</Text>,
+      ...TONIGHT_TAB,
       '(auth)/sign-in': () => <Text>Sign-in screen</Text>,
       '(auth)/age-gate': () => <Text>Age gate screen</Text>,
       '(auth)/blocked': () => <Text>Sorry screen</Text>,
@@ -122,7 +133,7 @@ describe('admin-only screens (VC-34 Edit event)', () => {
     await renderRouter(
       {
         _layout: RootLayout,
-        index: () => <Text>Tonight screen</Text>,
+        ...TONIGHT_TAB,
         'admin/edit-event/[id]': () => <Text>Edit event screen</Text>,
       },
       { initialUrl: '/admin/edit-event/e1' },
@@ -165,7 +176,7 @@ describe('admin-only screens (VC-47, VC-58 moderation)', () => {
     await renderRouter(
       {
         _layout: RootLayout,
-        index: () => <Text>Tonight screen</Text>,
+        ...TONIGHT_TAB,
         'admin/reports': () => <Text>Reports screen</Text>,
         'admin/moderate/[id]': () => <Text>Moderate screen</Text>,
       },
@@ -205,7 +216,7 @@ describe('Settings and the legal screens (VC-B13, VC-32b)', () => {
     await renderRouter(
       {
         _layout: RootLayout,
-        index: () => <Text>Tonight screen</Text>,
+        ...TONIGHT_TAB,
         '(auth)/sign-in': () => <Text>Sign-in screen</Text>,
         '(auth)/age-gate': () => <Text>Age gate screen</Text>,
         '(auth)/blocked': () => <Text>Sorry screen</Text>,

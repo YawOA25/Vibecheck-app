@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- VibeCheck app mark (VC-71, Q4 "launch look"): the master art for the app
+       icon, the Android adaptive icon layers and the splash. The five PNGs in
+       assets/images/ are made from this file by scripts/export-brand-pngs.js.
+       Gold #D6B97B on near-black #0A0A0C (10.4:1). No letters, so a new app
+       name never needs new art. -->
+  <!-- Delete this rect for the transparent files (foreground, splash, monochrome). -->
+  <rect width="1024" height="1024" fill="#0A0A0C"/>
+  <!-- MARK: scale is 1.2 for the iOS icon, 1 for everything else. -->
+  <g id="mark" transform="translate(512 512) scale(1) translate(-512 -512)"
+     fill="none" stroke-linecap="round" stroke-width="64">
+    <path d="M292 622 A220 220 0 0 1 732 622" stroke="#2B2B31"/>   <!-- track -->
+    <path d="M292 622 A220 220 0 0 1 690 492.7" stroke="#D6B97B"/> <!-- 80% gold -->
+    <circle cx="512" cy="622" r="32" fill="#D6B97B" stroke="none"/> <!-- hub -->
+  </g>
+</svg>

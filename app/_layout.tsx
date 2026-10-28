@@ -7,7 +7,10 @@
  *   2. decides which screens exist right now, based on that state:
  *        signed out            -> only the sign-in screen
  *        signed in, no profile -> only the age gate
- *        signed in + profile   -> the app itself (Tonight, event pages)
+ *        signed in + profile   -> the app itself: the bottom tabs (Tonight,
+ *                                 Me, and Admin for admins; app/(tabs)/,
+ *                                 Q4) and the screens that slide in over
+ *                                 them (event pages, check-in, rate...)
  *        ... and an admin      -> also the New and Edit event screens
  *                                 (VC-B04, VC-34), the report queue and
  *                                 the Moderate screen (VC-47, VC-58)
@@ -126,8 +129,10 @@ function RootNavigator({ fontsReady }: { fontsReady: boolean }) {
     >
       {/* Signed in AND passed the 18+ gate: the app itself. */}
       <Stack.Protected guard={status === 'ready'}>
-        {/* index.tsx is the Tonight screen. */}
-        <Stack.Screen name="index" options={{ title: 'Tonight' }} />
+        {/* The bottom tabs (Q4): Tonight ("/"), Me ("/me") and, for admins,
+            the Admin hub ("/admin"). See app/(tabs)/_layout.tsx. Every other
+            screen below opens OVER the tabs, so the tab bar hides there. */}
+        <Stack.Screen name="(tabs)" />
         {/* The event page (VC-B05), GPS check-in (VC-B06) and the
             party-code placeholder (VC-B07 will fill it in). */}
         <Stack.Screen name="event/[id]" options={{ title: 'Event' }} />
@@ -135,8 +140,7 @@ function RootNavigator({ fontsReady }: { fontsReady: boolean }) {
         <Stack.Screen name="join/[id]" options={{ title: 'Party code' }} />
         {/* The 3-tap rating (VC-B08). */}
         <Stack.Screen name="rate/[id]" options={{ title: 'Rate' }} />
-        {/* The Me screen with Nights out, and the "Your night" recap (VC-B12). */}
-        <Stack.Screen name="me" options={{ title: 'Me' }} />
+        {/* The "Your night" recap (VC-B12); Me itself is a tab now. */}
         <Stack.Screen name="recap" options={{ title: 'Your night' }} />
         {/* Settings: sign out, delete account, legal links (VC-B13). */}
         <Stack.Screen name="settings" options={{ title: 'Settings' }} />

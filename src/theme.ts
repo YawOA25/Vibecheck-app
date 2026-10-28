@@ -56,6 +56,16 @@ export const colors = {
   success: '#7FD6A0',
   /** Dimmed layer behind a bottom sheet (the Custom dates picker, VC-63b). */
   scrim: 'rgba(0, 0, 0, 0.6)',
+  /** Recessed panels, e.g. the check-in pin panel (Q4). Decorative only. */
+  surfaceSunken: '#0E0E11',
+  /** Thin edge lines: the tab bar's top edge, the event page's bottom bar (Q4). Decorative (1.2). */
+  divider: '#1F1F24',
+  /** The grab handle on a bottom sheet (Q4). Decorative only. */
+  handle: '#3A3A42',
+  /** Dark gold-tinted fill of a picked multi-select chip (Q4). Gold text on it reads 9.0. */
+  accentTint: '#1D1A14',
+  /** Unfilled track of the app mark (Q4, VC-71). Same value as borderStrong. Decorative. */
+  markTrack: '#2B2B31',
 } as const;
 
 /**
@@ -105,6 +115,30 @@ export const radius = {
   chip: 12,
   /** Fully round ends: buttons and pills. */
   pill: 999,
+} as const;
+
+/**
+ * Line icon sizes in pixels (Q4 icon set, src/components/Icon.tsx):
+ * 16 next to text, 20 inside 44 px round buttons and rows, 22 in the tab
+ * bar, 28 inside 56 px round "feature" circles.
+ */
+export const iconSize = { sm: 16, md: 20, tab: 22, lg: 28 } as const;
+
+/**
+ * Line thickness of the icons. Small 16 px icons use a slightly thicker
+ * line (`small`) so they don't look faint next to text.
+ */
+export const iconStroke = { regular: 1.5, small: 1.75 } as const;
+
+/**
+ * The bottom tab bar's measurements (Q4 spec 2.2): 56 px tall (plus the
+ * phone's home-bar space below), 4 px between icon and label, and the
+ * 24 x 2 gold bar that marks the open tab.
+ */
+export const tabBar = {
+  height: 56,
+  iconLabelGap: 4,
+  indicator: { width: 24, height: 2 },
 } as const;
 
 /** Smallest size a tappable thing may be (44 px), so it's easy to hit with a thumb. */

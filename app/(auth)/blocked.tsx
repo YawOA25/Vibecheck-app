@@ -25,9 +25,10 @@ import type { HostInstance } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Button } from '@/components/Button';
+import { Icon } from '@/components/Icon';
 import { SupportEmailLink } from '@/components/SupportEmailLink';
 import { useAuth } from '@/lib/auth-context';
-import { colors, fonts, headlineMaxScale, spacing, typography } from '@/theme';
+import { colors, headlineMaxScale, iconSize, spacing, typography } from '@/theme';
 
 /**
  * Renders the "sorry" screen.
@@ -51,15 +52,10 @@ export default function BlockedScreen() {
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.content}>
-        {/* A plain "i" in a circle: decoration, hidden from screen readers. */}
-        <View
-          style={styles.icon}
-          accessibilityElementsHidden
-          importantForAccessibility="no-hide-descendants"
-        >
-          <Text style={styles.iconGlyph} allowFontScaling={false}>
-            i
-          </Text>
+        {/* The "info" line icon in a 56 px circle (Q4; it replaced a typed
+            "i"). Decoration only: the Icon is hidden from screen readers. */}
+        <View style={styles.icon}>
+          <Icon name="info" size={iconSize.lg} color={colors.text} />
         </View>
         <Text
           ref={titleRef}
@@ -98,7 +94,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  iconGlyph: { fontFamily: fonts.bodyBold, fontSize: 22, lineHeight: 26, color: colors.text },
   title: { ...typography.h1, color: colors.text, textAlign: 'center' },
   body: { ...typography.body, color: colors.muted, textAlign: 'center' },
   // The button spans the content width.

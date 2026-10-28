@@ -1,13 +1,15 @@
 /**
  * The round "Back" button from the v3 design: a 44 px circle with a thin grey
- * edge and a left-pointing arrow (spec section 1, "Shape and space").
+ * edge and a left-pointing chevron line icon (spec section 1, "Shape and
+ * space"; the icon replaced a "‹" text character in Q4).
  *
  * Why its own component: it will be reused on later screens, and it keeps
  * the 44 px tap size and the "Back" screen-reader label in one place.
  */
-import { Pressable, StyleSheet, Text } from 'react-native';
+import { Pressable, StyleSheet } from 'react-native';
 
-import { colors, minTapTarget } from '@/theme';
+import { Icon } from '@/components/Icon';
+import { colors, iconSize, minTapTarget } from '@/theme';
 
 /** What a BackButton needs. */
 export interface BackButtonProps {
@@ -32,11 +34,9 @@ export function BackButton({ onPress, disabled }: BackButtonProps) {
       accessibilityState={{ disabled: Boolean(disabled) }}
       style={({ pressed }) => [styles.circle, pressed && styles.pressed]}
     >
-      {/* "‹" drawn as text: no icon package needed. allowFontScaling is off
-          so the arrow can't outgrow its fixed-size circle. */}
-      <Text style={styles.arrow} allowFontScaling={false}>
-        {'‹'}
-      </Text>
+      {/* The chevron is decoration; the "Back" label above is what screen
+          readers say. Icons don't grow with text size, so it always fits. */}
+      <Icon name="chevron-left" size={iconSize.md} color={colors.text} />
     </Pressable>
   );
 }
@@ -53,6 +53,4 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   pressed: { backgroundColor: colors.surface },
-  // Nudged up 2 px: the glyph sits low in its line box.
-  arrow: { color: colors.text, fontSize: 28, lineHeight: 30, marginTop: -2 },
 });

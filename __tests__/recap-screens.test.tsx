@@ -11,9 +11,9 @@
  *   - Me shows the "Last night, rated" card and the Nights out list, and
  *     their taps open the right recap.
  */
-import { fireEvent, render, screen } from '@testing-library/react-native';
+import { act, fireEvent, render, screen } from '@testing-library/react-native';
 
-import MeScreen from '../app/me';
+import MeScreen from '../app/(tabs)/me';
 import RecapScreen from '../app/recap';
 import { useAuth } from '@/lib/auth-context';
 import { parseRecap } from '@/lib/recap';
@@ -25,8 +25,27 @@ jest.mock('@/lib/auth-context', () => ({ useAuth: jest.fn() }));
 // The "mock" prefix lets jest.mock (which runs first) use these fakes.
 const mockPush = jest.fn();
 let mockParams: Record<string, string> = {};
+/** Re-runs the focus effect: the Me tab losing and regaining focus. */
+let mockRefocus: () => void = () => {};
 jest.mock('expo-router', () => ({
   useRouter: () => ({ push: mockPush, back: jest.fn(), replace: jest.fn(), canGoBack: () => true }),
+  // Me is a tab (Q4): its list scrolls to the top on a tab tap; a no-op here.
+  useScrollToTop: () => undefined,
+  // Outside a real navigator the screen comes "into view" once, like a
+  // normal useEffect. `mockRefocus` lets a test leave and re-open the tab.
+  useFocusEffect: (effect: () => void | (() => void)) => {
+    const { useEffect } = require('react');
+    useEffect(() => {
+      let cleanup = effect();
+      mockRefocus = () => {
+        if (typeof cleanup === 'function') cleanup();
+        cleanup = effect();
+      };
+      return () => {
+        if (typeof cleanup === 'function') cleanup();
+      };
+    }, [effect]);
+  },
   useLocalSearchParams: () => mockParams,
 }));
 
@@ -165,6 +184,35 @@ describe('Me (Nights out)', () => {
     await render(<MeScreen />);
     expect(await screen.findByText(/No nights yet/)).toBeOnTheScreen();
     expect(screen.queryByText('LAST NIGHT, RATED')).toBeNull();
+  });
+
+  // cto must-fix (Q4): Me is a tab that stays mounted, so it must reload
+  // each time it comes back into view, or a night rated meanwhile is missing.
+  it('reloads Nights out when the Me tab regains focus', async () => {
+    recap.mockResolvedValue({ ok: true, items: [] });
+    await render(<MeScreen />);
+    expect(await screen.findByText(/No nights yet/)).toBeOnTheScreen();
+    expect(recap).toHaveBeenCalledTimes(2); // 'recent' and 'all'
+
+    // The guest rates a night elsewhere, then comes back to the Me tab.
+    recap.mockImplementation(async (scope: string) =>
+      scope === 'recent' ? { ok: true, items: [ROOFTOP] } : { ok: true, items: [ROOFTOP] },
+    );
+    await act(() => mockRefocus());
+    expect(await screen.findByText('You called Fire. The room said Good.')).toBeOnTheScreen();
+    expect(screen.getByText('Rooftop Sundown')).toBeOnTheScreen();
+    expect(screen.queryByText(/No nights yet/)).toBeNull();
+    expect(recap).toHaveBeenCalledTimes(4);
+  });
+
+  it('keeps the list on screen if a refresh on focus fails', async () => {
+    recap.mockResolvedValue({ ok: true, items: [ROOFTOP] });
+    await render(<MeScreen />);
+    expect(await screen.findByText('Rooftop Sundown')).toBeOnTheScreen();
+    recap.mockResolvedValue({ ok: false, message: 'Oops.' });
+    await act(() => mockRefocus());
+    expect(screen.getByText('Rooftop Sundown')).toBeOnTheScreen();
+    expect(screen.queryByText('Oops.')).toBeNull();
   });
 
   it('error: "Try again" loads again', async () => {

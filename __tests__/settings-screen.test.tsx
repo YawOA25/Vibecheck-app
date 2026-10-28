@@ -14,7 +14,7 @@
 import { fireEvent, render, screen } from '@testing-library/react-native';
 import { AccessibilityInfo } from 'react-native';
 
-import MeScreen from '../app/me';
+import MeScreen from '../app/(tabs)/me';
 import SettingsScreen from '../app/settings';
 import { useAuth } from '@/lib/auth-context';
 import { SUPPORT_EMAIL } from '@/lib/contact';
@@ -26,6 +26,14 @@ jest.mock('@/lib/recap-api', () => ({ getMyRecap: jest.fn() }));
 const mockPush = jest.fn();
 jest.mock('expo-router', () => ({
   useRouter: () => ({ push: mockPush, back: jest.fn(), replace: jest.fn(), canGoBack: () => true }),
+  // Me is a tab (Q4): its list scrolls to the top on a tab tap; a no-op here.
+  useScrollToTop: () => undefined,
+  // Outside a real navigator the screen is "in view" once: run the effect
+  // like a normal useEffect.
+  useFocusEffect: (effect: () => void | (() => void)) => {
+    const { useEffect } = require('react');
+    useEffect(effect, [effect]);
+  },
 }));
 
 const signOut = jest.fn();

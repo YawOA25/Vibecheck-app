@@ -38,13 +38,14 @@ import { BackButton } from '@/components/BackButton';
 import { Button } from '@/components/Button';
 import { FormMessage } from '@/components/FormMessage';
 import { Headline } from '@/components/Headline';
+import { Icon } from '@/components/Icon';
 import { submitCheckIn } from '@/lib/check-in-api';
 import { readLocationForCheckIn } from '@/lib/check-in-location';
 import { resultScreen } from '@/lib/check-in-screens';
 import type { CheckInAction, CheckInView } from '@/lib/check-in-screens';
 import { getEvent } from '@/lib/events-read';
 import type { PublicEvent } from '@/lib/tonight';
-import { colors, radius, spacing, typography } from '@/theme';
+import { colors, iconSize, radius, spacing, typography } from '@/theme';
 
 /** The words on this screen (exported so tests use the same text). */
 export const CHECK_IN_LABEL = 'CHECK IN';
@@ -205,14 +206,11 @@ export default function CheckInScreen() {
           <Headline lead="You at" highlight={`${phase.event.title}?`} />
           <Text style={styles.muted}>{phase.event.area_label}</Text>
           <View style={styles.note}>
-            {/* A small diamond mark, drawn with text so we need no icon package. */}
-            <Text
-              style={styles.noteIcon}
-              accessibilityElementsHidden
-              importantForAccessibility="no"
-            >
-              {'◈'}
-            </Text>
+            {/* A small gold map pin (Q4 line icon; it replaced a "◈" text
+                character). Decoration only: screen readers read the note. */}
+            <View style={styles.noteIcon}>
+              <Icon name="pin" size={iconSize.sm} color={colors.accent} />
+            </View>
             <Text style={styles.noteText}>{PRIVACY_NOTE}</Text>
           </View>
           <Button
@@ -360,6 +358,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.gap12,
     paddingHorizontal: 14,
   },
-  noteIcon: { ...typography.bodySm, color: colors.accent },
+  // Nudged down 1 px to line up with the note's first line.
+  noteIcon: { marginTop: 1 },
   noteText: { ...typography.caption, color: colors.muted, flex: 1 },
 });
