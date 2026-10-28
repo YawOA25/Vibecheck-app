@@ -21,7 +21,9 @@
  *      people don't see the sign-in screen flash, or text jump from the
  *      phone's font to ours. If the fonts fail to load, the app carries on
  *      with the phone's own font;
- *   4. starts crash reports (Sentry, VC-26) if EXPO_PUBLIC_SENTRY_DSN is set.
+ *   4. starts crash reports (Sentry, VC-26) if EXPO_PUBLIC_SENTRY_DSN is set;
+ *   5. opens the "Your night" recap when the guest taps the 11 AM recap
+ *      notification (VC-B12), once they're signed in and past the gate.
  */
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
@@ -34,6 +36,7 @@ import { Button } from '@/components/Button';
 import { AuthProvider, useAuth } from '@/lib/auth-context';
 import { useAppFonts } from '@/lib/fonts';
 import { initSentry } from '@/lib/sentry';
+import { showRecapWhileOpen, useRecapNotificationTaps } from '@/lib/recap-notifications';
 import { isSupabaseConfigured } from '@/lib/supabase';
 import { colors, spacing, typography } from '@/theme';
 
@@ -45,6 +48,9 @@ SplashScreen.preventAutoHideAsync().catch(() => {});
 // Start crash reports as early as possible, so errors while the app starts
 // are caught too. Does nothing when .env has no EXPO_PUBLIC_SENTRY_DSN.
 initSentry();
+
+// If the app is open when the 11 AM recap note fires, still show it (VC-B12).
+showRecapWhileOpen();
 
 /**
  * The app's outermost component.
@@ -82,6 +88,9 @@ export default function RootLayout() {
 function RootNavigator({ fontsReady }: { fontsReady: boolean }) {
   const { status, profile, refreshProfile, signOut } = useAuth();
   const loading = status === 'loading' || !fontsReady;
+  // A tap on the recap notification opens the recap, but only once the
+  // recap screen exists (signed in, past the 18+ gate). VC-B12.
+  useRecapNotificationTaps(!loading && status === 'ready');
 
   // Hide the splash screen once the sign-in check and the fonts are done.
   useEffect(() => {
@@ -125,6 +134,9 @@ function RootNavigator({ fontsReady }: { fontsReady: boolean }) {
         <Stack.Screen name="join/[id]" options={{ title: 'Party code' }} />
         {/* The 3-tap rating (VC-B08). */}
         <Stack.Screen name="rate/[id]" options={{ title: 'Rate' }} />
+        {/* The Me screen with Nights out, and the "Your night" recap (VC-B12). */}
+        <Stack.Screen name="me" options={{ title: 'Me' }} />
+        <Stack.Screen name="recap" options={{ title: 'Your night' }} />
       </Stack.Protected>
 
       {/* Admins only (VC-B04, VC-34): the New and Edit event screens. This only keeps the

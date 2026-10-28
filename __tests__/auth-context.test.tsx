@@ -11,10 +11,12 @@
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import * as Notifications from 'expo-notifications';
 import { Pressable, Text } from 'react-native';
 
 import { AuthProvider, useAuth } from '@/lib/auth-context';
 import { ageLockKey } from '@/lib/age-lock';
+import { offerRecapReminder } from '@/lib/recap-notifications';
 import { supabase } from '@/lib/supabase';
 
 jest.mock('@/lib/supabase', () => ({
@@ -152,6 +154,49 @@ describe('AuthProvider', () => {
     await screen.findByText('status:ready');
     await fireEvent.press(screen.getByRole('button', { name: 'out' }));
     expect(auth.signOut).toHaveBeenCalledWith({ scope: 'local' });
+  });
+
+  // ---- VC-B12: recap notes name the user's events; sign-out removes them ----
+
+  it('sign-out removes every waiting recap note before signing out (next person never sees them)', async () => {
+    (Notifications as unknown as { __reset: () => void }).__reset();
+    auth.getSession.mockResolvedValue({ data: { session: SESSION } });
+    maybeSingle.mockResolvedValue({ data: PROFILE, error: null });
+    await offerRecapReminder({ id: 'e1', title: 'Rooftop' }, new Date('2026-10-17T23:00:00-04:00'));
+    expect(await Notifications.getAllScheduledNotificationsAsync()).toHaveLength(1);
+    // When Supabase signs out, the note must already be gone.
+    auth.signOut.mockImplementation(async () => {
+      expect(await Notifications.getAllScheduledNotificationsAsync()).toHaveLength(0);
+      return { error: null };
+    });
+    await renderProbe();
+    await screen.findByText('status:ready');
+    await fireEvent.press(screen.getByRole('button', { name: 'out' }));
+    expect(auth.signOut).toHaveBeenCalled();
+    expect(await Notifications.getAllScheduledNotificationsAsync()).toHaveLength(0);
+  });
+
+  it('any other sign-out (expired login, age gate) also removes recap notes, delivered ones too', async () => {
+    const fake = Notifications as unknown as {
+      __reset: () => void;
+      getPresentedNotificationsAsync: jest.Mock;
+      dismissNotificationAsync: jest.Mock;
+    };
+    fake.__reset();
+    fake.getPresentedNotificationsAsync.mockResolvedValue([
+      { request: { identifier: 'recap-2026-10-18', content: { data: { kind: 'recap' } } } },
+      { request: { identifier: 'other', content: { data: { kind: 'other' } } } },
+    ]);
+    auth.getSession.mockResolvedValue({ data: { session: SESSION } });
+    maybeSingle.mockResolvedValue({ data: PROFILE, error: null });
+    await offerRecapReminder({ id: 'e1', title: 'Rooftop' }, new Date('2026-10-17T23:00:00-04:00'));
+    await renderProbe();
+    await screen.findByText('status:ready');
+    await act(async () => emitAuthChange('SIGNED_OUT', null));
+    expect(await screen.findByText('status:signedOut')).toBeOnTheScreen();
+    expect(await Notifications.getAllScheduledNotificationsAsync()).toHaveLength(0);
+    expect(fake.dismissNotificationAsync).toHaveBeenCalledWith('recap-2026-10-18');
+    expect(fake.dismissNotificationAsync).not.toHaveBeenCalledWith('other');
   });
   // ---- VC-30: the lock after an under-18 answer ----------------------------
 

@@ -92,6 +92,12 @@ const config: ExpoConfig = {
     // decrypted anyway (the key never leaves the old phone), so the guest
     // simply signs in again there.
     'expo-secure-store',
+    // The 11 AM recap note (VC-B12) is a LOCAL notification: the phone sets
+    // it itself, with no server and no push. Expo would otherwise add this
+    // plugin with push turned on, which gives the iPhone build a push
+    // permission ("aps-environment") we don't use. Turning it off keeps the
+    // build free of push, and local notes still work.
+    ['expo-notifications', { enableRemoteNotifications: false }],
   ],
   // EAS (Expo Application Services) builds the app on Expo's servers (task
   // VC-B10). `owner` is the founder's Expo account and `projectId` is the ID

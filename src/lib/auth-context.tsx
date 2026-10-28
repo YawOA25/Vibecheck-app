@@ -22,6 +22,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import type { ReactNode } from 'react';
 
 import { checkAgeLock, rememberAgeLock } from '@/lib/age-lock';
+import { cancelRecapReminders } from '@/lib/recap-notifications';
 import { supabase } from '@/lib/supabase';
 
 /** The profile fields the app reads. birthdate is never readable by the app. */
@@ -125,11 +126,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // A broken saved login is treated as "signed out".
         if (active) setSession(null);
       });
-    const { data } = supabase.auth.onAuthStateChange((_event, newSession) => {
+    const { data } = supabase.auth.onAuthStateChange((event, newSession) => {
       // Supabase warns against calling it again from inside this callback
       // (it can lock up), so we only store the session here. The effect below
       // loads the profile.
       if (active) setSession(newSession);
+      // Any sign-out (the button, the age gate, an expired login): remove
+      // the recap notes, which name the last person's events (VC-B12). This
+      // isn't a Supabase call, so it's safe in here.
+      if (event === 'SIGNED_OUT') void cancelRecapReminders();
     });
     return () => {
       active = false;
@@ -168,6 +173,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signOut = useCallback(async () => {
     // Dismisses the under-13 "sorry" screen too (see blockedAfterSignOut).
     setBlockedAfterSignOut(false);
+    // The recap notes name this person's events: remove them first, so the
+    // next person on this phone never sees them (VC-B12, cto privacy fix).
+    await cancelRecapReminders();
     // scope 'local' signs out only this phone, which also works offline.
     await supabase.auth.signOut({ scope: 'local' });
   }, []);

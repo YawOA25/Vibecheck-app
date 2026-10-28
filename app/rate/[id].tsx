@@ -34,6 +34,10 @@
  *   4. Send the rating (submit_rating) and show the result: the payoff
  *      ("You and 4 others have rated ..., your vibe, update after ..."),
  *      or why not (too soon, check in again, outside the window).
+ *   5. After a saved rating, offer the next-morning recap note (VC-B12):
+ *      this is the moment the phone asks for notification permission. The
+ *      payoff then says when the recap arrives, or, if notifications are
+ *      off, that it will be under Me. A "no" changes nothing else.
  *
  * Privacy: the quiet reading goes straight from the reader to check_in. It
  * is never put in screen state, shown, or logged (VC-20).
@@ -74,6 +78,8 @@ import { getMyRatingStatus, submitRating } from '@/lib/ratings-api';
 import type { MyRatingStatus } from '@/lib/ratings-api';
 import { rateResultScreen, tooSoonScreen } from '@/lib/rating-screens';
 import type { RateAction, RateScreen } from '@/lib/rating-screens';
+import { offerRecapReminder } from '@/lib/recap-notifications';
+import type { RecapReminderResult } from '@/lib/recap-notifications';
 import type { PublicEvent } from '@/lib/tonight';
 import { colors, spacing, typography } from '@/theme';
 
@@ -99,7 +105,23 @@ type Phase =
       error: string | null;
     }
   /** A result (payoff or a reason why not). */
-  | { kind: 'result'; event: PublicEvent; screen: RateScreen };
+  | {
+      kind: 'result';
+      event: PublicEvent;
+      screen: RateScreen;
+      /** After a save: what happened with the 11 AM recap note (VC-B12). */
+      reminder?: RecapReminderResult;
+    };
+
+/**
+ * The line under the payoff about the next-morning recap (VC-B12). No
+ * score here either; it just says where the recap will be.
+ */
+const RECAP_REMINDER_TEXT: Record<RecapReminderResult, string> = {
+  scheduled: "We'll let you know at 11 AM when your night's recap is ready.",
+  denied: 'Notifications are off, so no reminder. Your recap is under Me any time.',
+  unavailable: 'Your recap is under Me any time.',
+};
 
 /**
  * Renders the rating screen.
@@ -225,6 +247,17 @@ export default function RateScreenRoute() {
           event,
           screen: rateResultScreen({ source: 'server', result: outcome.result }, event.title),
         });
+        // Saved: now (and only now) offer the next-morning recap note. The
+        // payoff is already on screen; the answer adds one line under it.
+        if (outcome.result.status === 'saved') {
+          void offerRecapReminder(event).then((reminder) =>
+            setPhase((current) =>
+              current.kind === 'result' && current.event.id === event.id
+                ? { ...current, reminder }
+                : current,
+            ),
+          );
+        }
       } else if (outcome.kind === 'notFound') {
         setPhase({ kind: 'notFound' });
       } else if (outcome.kind === 'staff') {
@@ -315,6 +348,11 @@ export default function RateScreenRoute() {
           <Text style={styles.body} accessibilityLiveRegion="polite">
             {phase.screen.body}
           </Text>
+          {phase.reminder ? (
+            <Text style={styles.reminder} accessibilityLiveRegion="polite">
+              {RECAP_REMINDER_TEXT[phase.reminder]}
+            </Text>
+          ) : null}
           {phase.screen.actions.map((button, index) => (
             <Button
               key={button.action}
@@ -492,6 +530,8 @@ const styles = StyleSheet.create({
   notFoundTitle: { ...typography.h1, color: colors.text, textAlign: 'center' },
   muted: { ...typography.bodySm, color: colors.muted },
   body: { ...typography.body, color: colors.muted },
+  // The recap note line under the payoff (VC-B12).
+  reminder: { ...typography.bodySm, color: colors.muted },
   checkedInRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.accent },
   label: { ...typography.label, color: colors.muted, flexShrink: 1 },

@@ -29,6 +29,7 @@ import { submitCheckIn } from '@/lib/check-in-api';
 import { readLocationQuietly } from '@/lib/check-in-location';
 import { getEvent } from '@/lib/events-read';
 import { getMyRatingStatus, submitRating } from '@/lib/ratings-api';
+import { offerRecapReminder } from '@/lib/recap-notifications';
 import type { PublicEvent } from '@/lib/tonight';
 
 jest.mock('@/lib/events-read', () => ({ getEvent: jest.fn() }));
@@ -36,6 +37,8 @@ jest.mock('@/lib/ratings-api', () => ({ getMyRatingStatus: jest.fn(), submitRati
 jest.mock('@/lib/check-in-location', () => ({ readLocationQuietly: jest.fn() }));
 jest.mock('@/lib/check-in-api', () => ({ submitCheckIn: jest.fn() }));
 jest.mock('@/lib/auth-context', () => ({ useAuth: jest.fn() }));
+// The 11 AM recap note (VC-B12); its own rules are in recap-notifications.test.ts.
+jest.mock('@/lib/recap-notifications', () => ({ offerRecapReminder: jest.fn() }));
 // The "mock" prefix lets jest.mock (which runs first) use these fakes.
 const mockBack = jest.fn();
 const mockReplace = jest.fn();
@@ -116,6 +119,7 @@ beforeEach(() => {
     result: { status: 'passed', firstAt: '2026-10-31T02:00:00Z', alreadyCheckedIn: true },
   });
   rate.mockResolvedValue(SAVED);
+  (offerRecapReminder as jest.Mock).mockResolvedValue('scheduled');
   consoleSpies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((name) =>
     jest.spyOn(console, name).mockImplementation(() => {}),
   );
@@ -416,5 +420,44 @@ describe('RateScreen server answers', () => {
     await tapThreeRows();
     await fireEvent.press(screen.getByRole('button', { name: SUBMIT_LABEL }));
     expect(await screen.findByText(/admins can't rate events/)).toBeOnTheScreen();
+  });
+});
+
+describe('RateScreen next-morning recap note (VC-B12)', () => {
+  it('after a save, offers the 11 AM note (the permission moment) and says so', async () => {
+    await render(<RateScreenRoute />);
+    await screen.findByText(PROMPT);
+    await tapThreeRows();
+    await fireEvent.press(screen.getByRole('button', { name: SUBMIT_LABEL }));
+    expect(
+      await screen.findByText("We'll let you know at 11 AM when your night's recap is ready."),
+    ).toBeOnTheScreen();
+    expect(offerRecapReminder).toHaveBeenCalledWith(EVENT);
+  });
+
+  it('notifications refused: no nagging, just where the recap lives', async () => {
+    (offerRecapReminder as jest.Mock).mockResolvedValue('denied');
+    await render(<RateScreenRoute />);
+    await screen.findByText(PROMPT);
+    await tapThreeRows();
+    await fireEvent.press(screen.getByRole('button', { name: SUBMIT_LABEL }));
+    expect(
+      await screen.findByText(
+        'Notifications are off, so no reminder. Your recap is under Me any time.',
+      ),
+    ).toBeOnTheScreen();
+  });
+
+  it('a refused save (too soon) never asks for notifications', async () => {
+    rate.mockResolvedValue({
+      ok: true,
+      result: { status: 'too_soon', minutesLeft: 12, nextUpdateAt: '2026-10-31T03:05:00Z' },
+    });
+    await render(<RateScreenRoute />);
+    await screen.findByText(PROMPT);
+    await tapThreeRows();
+    await fireEvent.press(screen.getByRole('button', { name: SUBMIT_LABEL }));
+    await screen.findByText(/update your rating in 12 minutes/);
+    expect(offerRecapReminder).not.toHaveBeenCalled();
   });
 });

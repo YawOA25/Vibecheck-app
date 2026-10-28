@@ -7,6 +7,7 @@
  *   - a header with the nights covered in New York time ("SATURDAY TO
  *     FRIDAY", still starting Saturday at 1 AM Sunday; see
  *     src/lib/tonight.ts), the "This week" title, a
+ *     "Me" pill opening the Me screen with Nights out (VC-B12), a
  *     "Sign out" pill (VC-B03; it moves to settings in VC-B13), and for
  *     admins only a "New event" pill (VC-B04);
  *   - the events, one section per night ("Tonight", "Tomorrow", then
@@ -386,6 +387,14 @@ export default function HomeScreen() {
                 onPress={() => router.push('/admin/reports')}
               />
             ) : null}
+            {/* The Me screen: Nights out and the morning recap (VC-B12). */}
+            <Button
+              label="Me"
+              variant="outline"
+              size="small"
+              accessibilityLabel="Me, your nights out"
+              onPress={() => router.push('/me')}
+            />
             <Button label="Sign out" variant="outline" size="small" onPress={signOut} />
           </View>
         </View>

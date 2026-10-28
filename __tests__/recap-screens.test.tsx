@@ -1,0 +1,180 @@
+/**
+ * Screen tests for "Your night" (app/recap.tsx) and the Me screen with Nights
+ * out (app/me.tsx), task VC-B12.
+ *
+ * The server call (src/lib/recap-api.ts) is faked. These tests check that:
+ *   - the recap shows your word next to the room's final WORD (never a night
+ *     number), the last published score and the top reaction;
+ *   - an early snapshot (under 5 raters) shows no number and no word;
+ *   - one event from Nights out opens on its own (`?event=`);
+ *   - loading, error with "Try again", and empty states work;
+ *   - Me shows the "Last night, rated" card and the Nights out list, and
+ *     their taps open the right recap.
+ */
+import { fireEvent, render, screen } from '@testing-library/react-native';
+
+import MeScreen from '../app/me';
+import RecapScreen from '../app/recap';
+import { useAuth } from '@/lib/auth-context';
+import { parseRecap } from '@/lib/recap';
+import type { RecapItem } from '@/lib/recap';
+import { getMyRecap } from '@/lib/recap-api';
+
+jest.mock('@/lib/recap-api', () => ({ getMyRecap: jest.fn() }));
+jest.mock('@/lib/auth-context', () => ({ useAuth: jest.fn() }));
+// The "mock" prefix lets jest.mock (which runs first) use these fakes.
+const mockPush = jest.fn();
+let mockParams: Record<string, string> = {};
+jest.mock('expo-router', () => ({
+  useRouter: () => ({ push: mockPush, back: jest.fn(), replace: jest.fn(), canGoBack: () => true }),
+  useLocalSearchParams: () => mockParams,
+}));
+
+const recap = getMyRecap as jest.Mock;
+
+/**
+ * Builds a recap item the way the server would send it, then parses it.
+ *
+ * @param id - the event id.
+ * @param title - the event name.
+ * @param vibe - changes to a live published vibe.
+ * @returns the parsed item.
+ */
+function item(id: string, title: string, vibe: Record<string, unknown> = {}): RecapItem {
+  const parsed = parseRecap([
+    {
+      event_id: id,
+      title,
+      area_label: 'Navy Yard',
+      starts_at: '2026-10-17T22:00:00-04:00',
+      rated_at: '2026-10-17T23:30:00-04:00',
+      mine: { crowd: 3, music: 3, energy: 3, reaction: 'fire', label: 'Fire' },
+      vibe: {
+        state: 'stale',
+        raters: 12,
+        here: 0,
+        score: 8.7,
+        label: 'Hot',
+        minutes_since_last: 600,
+        reactions: [{ reaction: 'dancing', count: 5 }],
+        breakdown: null,
+        night: { label: 'Good', raters: 12, over: true, breakdown: null },
+        ...vibe,
+      },
+    },
+  ]);
+  if (!parsed?.[0]) throw new Error('test item did not parse');
+  return parsed[0];
+}
+
+const ROOFTOP = item('e1', 'Rooftop Sundown');
+const EARLY = item('e2', 'Basement Disco', {
+  state: 'early',
+  raters: 3,
+  score: null,
+  label: null,
+  reactions: [],
+  night: null,
+});
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockParams = {};
+  (useAuth as jest.Mock).mockReturnValue({
+    profile: { id: 'p1', display_name: 'Ava', role: 'user' },
+  });
+});
+
+describe('Your night (recap)', () => {
+  it("shows your word next to the room's night word, last score and top reaction", async () => {
+    recap.mockResolvedValue({ ok: true, items: [ROOFTOP] });
+    await render(<RecapScreen />);
+    expect(await screen.findByText('Rooftop Sundown')).toBeOnTheScreen();
+    expect(recap).toHaveBeenCalledWith('recent');
+    expect(screen.getByText('Fire')).toBeOnTheScreen();
+    expect(screen.getByText('Packed crowd · Fire music · Fire energy')).toBeOnTheScreen();
+    expect(screen.getByText('Good')).toBeOnTheScreen();
+    expect(screen.getByText('12 ratings all night')).toBeOnTheScreen();
+    expect(screen.getByText('Last score 8.7')).toBeOnTheScreen();
+    expect(screen.getByText('Top reaction: 💃 Dancing (5)')).toBeOnTheScreen();
+    // Screen readers hear your own reaction too (cto review).
+    expect(
+      screen.getByLabelText(
+        'You called Fire. Packed crowd · Fire music · Fire energy Your reaction: Fire.',
+      ),
+    ).toBeOnTheScreen();
+  });
+
+  it('early snapshot: no number and no word for the room', async () => {
+    recap.mockResolvedValue({ ok: true, items: [EARLY] });
+    await render(<RecapScreen />);
+    expect(await screen.findByText("Only 3 people rated, so there's no score.")).toBeOnTheScreen();
+    expect(screen.queryByText(/Last score/)).toBeNull();
+    expect(screen.queryByText(/Top reaction/)).toBeNull();
+  });
+
+  it('one night from Nights out: loads the full list and shows just that event', async () => {
+    mockParams = { event: 'e2' };
+    recap.mockResolvedValue({ ok: true, items: [ROOFTOP, EARLY] });
+    await render(<RecapScreen />);
+    expect(await screen.findByText('Basement Disco')).toBeOnTheScreen();
+    expect(recap).toHaveBeenCalledWith('all');
+    expect(screen.queryByText('Rooftop Sundown')).toBeNull();
+  });
+
+  it('empty: says when the recap comes, and links to Nights out', async () => {
+    recap.mockResolvedValue({ ok: true, items: [] });
+    await render(<RecapScreen />);
+    expect(await screen.findByText('Nothing to recap yet')).toBeOnTheScreen();
+    await fireEvent.press(screen.getByRole('button', { name: 'See your nights out' }));
+    expect(mockPush).toHaveBeenCalledWith('/me');
+  });
+
+  it('error: shows the message and "Try again" loads again', async () => {
+    recap
+      .mockResolvedValueOnce({ ok: false, message: "We couldn't load your nights out." })
+      .mockResolvedValueOnce({ ok: true, items: [ROOFTOP] });
+    await render(<RecapScreen />);
+    expect(await screen.findByText("We couldn't load your nights out.")).toBeOnTheScreen();
+    await fireEvent.press(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByText('Rooftop Sundown')).toBeOnTheScreen();
+  });
+});
+
+describe('Me (Nights out)', () => {
+  it('shows the name, the last-night card (words only) and the list', async () => {
+    recap.mockImplementation(async (scope: string) =>
+      scope === 'recent' ? { ok: true, items: [ROOFTOP] } : { ok: true, items: [ROOFTOP, EARLY] },
+    );
+    await render(<MeScreen />);
+    expect(await screen.findByText('YOUR NIGHTS OUT')).toBeOnTheScreen();
+    expect(screen.getByText('Ava')).toBeOnTheScreen();
+    expect(screen.getByText('You called Fire. The room said Good.')).toBeOnTheScreen();
+    expect(screen.getByText('Basement Disco')).toBeOnTheScreen();
+    // No number anywhere on Me: the room is a word (or a dash when withheld).
+    expect(screen.queryByText(/8\.7/)).toBeNull();
+
+    await fireEvent.press(screen.getByRole('button', { name: /^Last night, rated/ }));
+    expect(mockPush).toHaveBeenCalledWith('/recap');
+    await fireEvent.press(screen.getByRole('button', { name: /^Basement Disco/ }));
+    expect(mockPush).toHaveBeenCalledWith({ pathname: '/recap', params: { event: 'e2' } });
+  });
+
+  it('nothing rated yet: no card, and an empty note', async () => {
+    recap.mockResolvedValue({ ok: true, items: [] });
+    await render(<MeScreen />);
+    expect(await screen.findByText(/No nights yet/)).toBeOnTheScreen();
+    expect(screen.queryByText('LAST NIGHT, RATED')).toBeNull();
+  });
+
+  it('error: "Try again" loads again', async () => {
+    recap.mockResolvedValueOnce({ ok: false, message: 'Oops.' }).mockResolvedValue({
+      ok: true,
+      items: [],
+    });
+    await render(<MeScreen />);
+    expect(await screen.findByText('Oops.')).toBeOnTheScreen();
+    await fireEvent.press(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByText(/No nights yet/)).toBeOnTheScreen();
+  });
+});
