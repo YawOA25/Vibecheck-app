@@ -33,6 +33,7 @@ describe('smoke test', () => {
       disabledText: '#8A8A92',
       error: '#FF8A7A',
       success: '#7FD6A0',
+      scrim: 'rgba(0, 0, 0, 0.6)',
     });
     // Nothing tappable may be smaller than 44 px (spec section 1).
     expect(minTapTarget).toBe(44);

@@ -33,7 +33,8 @@
  *   - the developer-only "send a Sentry test error" long-press (VC-26).
  */
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
-import { Alert } from 'react-native';
+import { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
+import { Alert, Platform } from 'react-native';
 
 import HomeScreen, {
   EMPTY_BODY,
@@ -42,8 +43,10 @@ import HomeScreen, {
   LOAD_MORE_LABEL,
   SHOW_WEEK_LABEL,
 } from '../app/index';
-import { RANGE_NOTE } from '@/components/DateFilterBar';
+import { ONE_NIGHT, RANGE_NOTE } from '@/components/CustomDatesPicker';
+import { TEST_LABEL } from '@/components/EventCard';
 import { useAuth } from '@/lib/auth-context';
+import { noteCreatedEvent, takeCreatedEvent } from '@/lib/created-event';
 import { listHomeEvents } from '@/lib/events-read';
 import { sendTestError } from '@/lib/sentry';
 import { groupByDay } from '@/lib/tonight';
@@ -122,6 +125,8 @@ function makeEvent(overrides: Partial<PublicEvent>, startsInHours = 1): PublicEv
 
 beforeEach(() => {
   jest.clearAllMocks();
+  // Start each test with no leftover "new event" note (VC-63b).
+  takeCreatedEvent();
   (useAuth as jest.Mock).mockReturnValue({
     profile: { id: 'user-1', display_name: 'Ava', role: 'user', is_tester: false },
     signOut,
@@ -443,15 +448,24 @@ describe('HomeScreen date filter (VC-63)', () => {
   /** The filter the list was last loaded with. */
   const lastFilter = () => list.mock.calls[list.mock.calls.length - 1][1];
 
-  it('shows four radio chips in a "Dates" group, This week picked first', async () => {
+  it('shows Tonight, This weekend, This week, Custom as radio chips, This week picked', async () => {
     await render(<HomeScreen />);
     expect(screen.getByLabelText('Dates')).toBeOnTheScreen();
-    for (const name of ['This week', 'This weekend', 'Pick a date', 'Custom']) {
-      expect(screen.getByRole('radio', { name })).toBeOnTheScreen();
-    }
+    const names = screen.getAllByRole('radio').map((chip) => chip.props.accessibilityLabel);
+    expect(names).toEqual(['Tonight', 'This weekend', 'This week', 'Custom']);
+    expect(screen.queryByRole('radio', { name: 'Pick a date' })).toBeNull();
     expect(screen.getByRole('radio', { name: 'This week' })).toBeChecked();
-    expect(screen.getByRole('radio', { name: 'This weekend' })).not.toBeChecked();
+    expect(screen.getByRole('radio', { name: 'Tonight' })).not.toBeChecked();
     expect(lastFilter()).toEqual({ kind: 'week' });
+  });
+
+  it('Tonight: loads tonight only, with its own title and empty state', async () => {
+    await render(<HomeScreen />);
+    await fireEvent.press(screen.getByRole('radio', { name: 'Tonight' }));
+    expect(lastFilter()).toEqual({ kind: 'tonight' });
+    expect(screen.getByRole('header', { name: 'Tonight' })).toBeOnTheScreen();
+    expect(await screen.findByText('Nothing on tonight yet')).toBeOnTheScreen();
+    expect(screen.getByRole('button', { name: SHOW_WEEK_LABEL })).toBeOnTheScreen();
   });
 
   it('This weekend: loads the weekend, has its own empty state and a way back', async () => {
@@ -471,43 +485,6 @@ describe('HomeScreen date filter (VC-63)', () => {
     expect(screen.queryByRole('button', { name: SHOW_WEEK_LABEL })).toBeNull();
   });
 
-  it('Pick a date: a "Night" date box, and the picked night loads', async () => {
-    await render(<HomeScreen />);
-    await fireEvent.press(screen.getByRole('radio', { name: 'Pick a date' }));
-    // Starts on tonight.
-    expect(lastFilter()).toEqual({ kind: 'date', night: expect.any(Object) });
-
-    const box = screen.getByRole('button', { name: 'Night' });
-    expect(box.props.accessibilityValue.text).toMatch(/^[A-Z][a-z]{2}, [A-Z][a-z]{2} \d+$/);
-    // Open the iPhone wheel and spin it to 20 days from now (noon New York).
-    await fireEvent.press(box);
-    const wheel = screen.getByTestId('night-picker');
-    expect(wheel.props.accessibilityLabel).toBe('Night date picker');
-    const later = new Date(Date.now() + 20 * 24 * HOUR);
-    await fireEvent(wheel, 'valueChange', {}, later);
-
-    const picked = lastFilter();
-    expect(picked.kind).toBe('date');
-    // The title is that night's short date, e.g. "Sat, Nov 21".
-    const title = screen.getByRole('header', { name: /^[A-Z][a-z]{2}, [A-Z][a-z]{2} \d+$/ });
-    expect(title).toBeOnTheScreen();
-    expect(await screen.findByText(/^Nothing on [A-Z][a-z]{2}, .+ yet$/)).toBeOnTheScreen();
-  });
-
-  it('Custom: From and To boxes, the 60-night note, and a range title', async () => {
-    await render(<HomeScreen />);
-    await fireEvent.press(screen.getByRole('radio', { name: 'Custom' }));
-    expect(lastFilter().kind).toBe('range');
-    expect(screen.getByRole('button', { name: 'From' })).toBeOnTheScreen();
-    expect(screen.getByRole('button', { name: 'To' })).toBeOnTheScreen();
-    expect(screen.getByText(RANGE_NOTE)).toBeOnTheScreen();
-    // Two weeks to start with, e.g. "Oct 31 – Nov 13".
-    expect(
-      screen.getByRole('header', { name: /^[A-Z][a-z]{2} \d+ – [A-Z][a-z]{2} \d+$/ }),
-    ).toBeOnTheScreen();
-    expect(screen.getByText('14 NIGHTS')).toBeOnTheScreen();
-  });
-
   it('pull to refresh and the vibes call follow the filter', async () => {
     await render(<HomeScreen />);
     list.mockResolvedValue({ ok: true, events: [makeEvent({ id: 'e9' }, -1)] });
@@ -520,6 +497,200 @@ describe('HomeScreen date filter (VC-63)', () => {
       await scroll.props.refreshControl.props.onRefresh();
     });
     expect(lastFilter()).toEqual({ kind: 'weekend' });
+  });
+});
+
+describe('HomeScreen Custom dates (VC-63 revised, picker bug fix)', () => {
+  /** The filter the list was last loaded with. */
+  const lastFilter = () => list.mock.calls[list.mock.calls.length - 1][1];
+  /** A moment some days from now (the picker hands back moments). */
+  const daysAhead = (days: number) => new Date(Date.now() + days * 24 * HOUR);
+  /** "Nov 6 – Nov 9" style words. */
+  const RANGE_WORDS = /^[A-Z][a-z]{2} \d+ – [A-Z][a-z]{2} \d+$/;
+  /** "Sat, Nov 21" style words. */
+  const ONE_DATE_WORDS = /^[A-Z][a-z]{2}, [A-Z][a-z]{2} \d+$/;
+
+  it('iPhone: a sheet with an inline calendar; nothing changes until Done', async () => {
+    await render(<HomeScreen />);
+    // No picker anywhere before Custom is tapped.
+    expect(screen.queryByTestId('custom-picker')).toBeNull();
+    await fireEvent.press(screen.getByRole('radio', { name: 'Custom' }));
+
+    expect(screen.getByRole('header', { name: 'Choose dates' })).toBeOnTheScreen();
+    const picker = screen.getByTestId('custom-picker');
+    // Compact calendar in a sheet, never the old wheel left in the list.
+    expect(picker.props.display).toBe('inline');
+    expect(picker.props.timeZoneName).toBe('America/New_York');
+    expect(screen.getByText(RANGE_NOTE)).toBeOnTheScreen();
+    // The list hasn't changed yet: still This week.
+    expect(lastFilter()).toEqual({ kind: 'week' });
+    expect(screen.getByRole('radio', { name: 'This week' })).toBeChecked();
+  });
+
+  it('iPhone: start then end date, Done closes the picker and shows a tappable summary', async () => {
+    await render(<HomeScreen />);
+    await fireEvent.press(screen.getByRole('radio', { name: 'Custom' }));
+
+    // Pick the start: the sheet moves straight on to the (optional) end.
+    await fireEvent(screen.getByTestId('custom-picker'), 'valueChange', {}, daysAhead(20));
+    const endBox = screen.getByRole('button', { name: 'End (optional)' });
+    expect(endBox.props.accessibilityState.selected).toBe(true);
+    expect(endBox.props.accessibilityValue.text).toBe(ONE_NIGHT);
+    // The end can't be before the start.
+    const startMoment = screen.getByTestId('custom-picker').props.minimumDate as Date;
+    expect(startMoment.getTime()).toBeGreaterThan(daysAhead(19).getTime());
+
+    // Pick the end (3 nights later), then Done.
+    await fireEvent(screen.getByTestId('custom-picker'), 'valueChange', {}, daysAhead(23));
+    await fireEvent.press(screen.getByRole('button', { name: 'Done' }));
+
+    // The picker is gone: closed, not sitting in the list.
+    expect(screen.queryByTestId('custom-picker')).toBeNull();
+    expect(screen.queryByRole('header', { name: 'Choose dates' })).toBeNull();
+    const picked = lastFilter();
+    expect(picked.kind).toBe('custom');
+    expect(screen.getByRole('radio', { name: 'Custom' })).toBeChecked();
+    expect(screen.getByText('4 NIGHTS')).toBeOnTheScreen();
+    expect(screen.getByRole('header', { name: RANGE_WORDS })).toBeOnTheScreen();
+
+    // The summary text reopens the picker, starting on the chosen dates.
+    const summary = screen.getByRole('button', { name: 'Custom dates' });
+    expect(summary.props.accessibilityValue.text).toMatch(RANGE_WORDS);
+    await fireEvent.press(summary);
+    expect(screen.getByTestId('custom-picker')).toBeOnTheScreen();
+    expect(
+      screen.getByRole('button', { name: 'End (optional)' }).props.accessibilityValue.text,
+    ).toMatch(ONE_DATE_WORDS);
+  });
+
+  it('iPhone: one date only (no end) gives a one-night list', async () => {
+    await render(<HomeScreen />);
+    await fireEvent.press(screen.getByRole('radio', { name: 'Custom' }));
+    await fireEvent(screen.getByTestId('custom-picker'), 'valueChange', {}, daysAhead(20));
+    await fireEvent.press(screen.getByRole('button', { name: 'Done' }));
+
+    const picked = lastFilter();
+    expect(picked.kind).toBe('custom');
+    expect(picked.from).toEqual(picked.to);
+    expect(screen.getByRole('header', { name: ONE_DATE_WORDS })).toBeOnTheScreen();
+    expect(screen.getByText(/^[A-Z]+DAY NIGHT$/)).toBeOnTheScreen();
+    expect(await screen.findByText(/^Nothing on [A-Z][a-z]{2}, .+ yet$/)).toBeOnTheScreen();
+  });
+
+  it('iPhone: Cancel and the dimmed area close the sheet and keep the old filter', async () => {
+    await render(<HomeScreen />);
+    await fireEvent.press(screen.getByRole('radio', { name: 'Custom' }));
+    await fireEvent(screen.getByTestId('custom-picker'), 'valueChange', {}, daysAhead(20));
+    await fireEvent.press(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByTestId('custom-picker')).toBeNull();
+    expect(lastFilter()).toEqual({ kind: 'week' });
+
+    await fireEvent.press(screen.getByRole('radio', { name: 'Custom' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Close date picker' }));
+    expect(screen.queryByTestId('custom-picker')).toBeNull();
+    expect(lastFilter()).toEqual({ kind: 'week' });
+  });
+
+  describe('on Android', () => {
+    const realOS = Platform.OS;
+    const open = DateTimePickerAndroid.open as jest.Mock;
+    beforeEach(() => {
+      Platform.OS = 'android';
+    });
+    afterEach(() => {
+      Platform.OS = realOS;
+    });
+    /** The options of the n-th dialog opened (0 = first). */
+    const dialog = (n: number) => open.mock.calls[n][0];
+
+    it('start dialog, then end dialog; each closes itself and no picker is drawn', async () => {
+      await render(<HomeScreen />);
+      await fireEvent.press(screen.getByRole('radio', { name: 'Custom' }));
+      expect(screen.queryByTestId('custom-picker')).toBeNull();
+      expect(open).toHaveBeenCalledTimes(1);
+      expect(dialog(0)).toMatchObject({
+        mode: 'date',
+        title: 'Start date',
+        timeZoneName: 'America/New_York',
+      });
+
+      await act(async () => dialog(0).onValueChange({}, daysAhead(20)));
+      expect(open).toHaveBeenCalledTimes(2);
+      expect(dialog(1)).toMatchObject({
+        title: 'End date (optional)',
+        negativeButton: { label: ONE_NIGHT },
+      });
+      // The end dialog can't go before the start or past 60 nights.
+      expect(dialog(1).minimumDate.getTime()).toBeGreaterThan(daysAhead(19).getTime());
+      expect(dialog(1).maximumDate.getTime()).toBeLessThan(daysAhead(80).getTime());
+
+      await act(async () => dialog(1).onValueChange({}, daysAhead(23)));
+      expect(lastFilter().kind).toBe('custom');
+      expect(screen.getByText('4 NIGHTS')).toBeOnTheScreen();
+      expect(screen.getByRole('button', { name: 'Custom dates' })).toBeOnTheScreen();
+    });
+
+    it('"One night" on the end dialog keeps just the start date', async () => {
+      await render(<HomeScreen />);
+      await fireEvent.press(screen.getByRole('radio', { name: 'Custom' }));
+      await act(async () => dialog(0).onValueChange({}, daysAhead(20)));
+      await act(async () => dialog(1).onDismiss());
+      const picked = lastFilter();
+      expect(picked.kind).toBe('custom');
+      expect(picked.from).toEqual(picked.to);
+    });
+
+    it('cancelling the start dialog changes nothing', async () => {
+      await render(<HomeScreen />);
+      await fireEvent.press(screen.getByRole('radio', { name: 'Custom' }));
+      // The guest backs out: the first dialog's onValueChange never runs.
+      expect(open).toHaveBeenCalledTimes(1);
+      expect(lastFilter()).toEqual({ kind: 'week' });
+    });
+  });
+});
+
+describe('HomeScreen after creating an event (VC-63b)', () => {
+  it('reloads the list and says where to find an event the filter hides', async () => {
+    // A party 20 days out: not in "This week".
+    noteCreatedEvent({
+      id: 'new-1',
+      startsAt: new Date(Date.now() + 20 * 24 * HOUR).toISOString(),
+    });
+    await render(<HomeScreen />);
+    expect(
+      await screen.findByText(
+        /^Saved for [A-Z][a-z]{2}, [A-Z][a-z]{2} \d+\. Switch to Custom to see it\.$/,
+      ),
+    ).toBeOnTheScreen();
+    // The first load plus the reload for the new event.
+    expect(list).toHaveBeenCalledTimes(2);
+
+    // Picking another filter clears the note (it was about the old one).
+    await fireEvent.press(screen.getByRole('radio', { name: 'Tonight' }));
+    expect(screen.queryByText(/^Saved for /)).toBeNull();
+  });
+
+  it('reloads but says nothing extra when the event is already in the list', async () => {
+    noteCreatedEvent({ id: 'new-2', startsAt: new Date(Date.now() + 2 * HOUR).toISOString() });
+    await render(<HomeScreen />);
+    await screen.findByText(EMPTY_TITLE);
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText(/^Saved for /)).toBeNull();
+  });
+
+  it('marks a test event with a TEST chip (admins and testers only ever see these)', async () => {
+    list.mockResolvedValue({ ok: true, events: [makeEvent({ is_test: true }, 2)] });
+    await render(<HomeScreen />);
+    expect(await screen.findByText(TEST_LABEL)).toBeOnTheScreen();
+    const card = screen.getByRole('button', { name: /^Saturday rooftop, Test event, / });
+    expect(card).toBeOnTheScreen();
+  });
+
+  it('acts on the note only once', async () => {
+    await render(<HomeScreen />);
+    await screen.findByText(EMPTY_TITLE);
+    expect(list).toHaveBeenCalledTimes(1);
   });
 });
 

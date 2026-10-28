@@ -9,9 +9,11 @@
  *   - daylight saving: in 2026 the clocks go back on Sunday 1 November and
  *     forward on Sunday 8 March, so 5 AM is 09:00 UTC on one side and
  *     10:00 UTC on the other;
- *   - "Pick a date" for tonight, a later night, and a past night;
- *   - "Custom": crossing a month, picked backwards, starting in the past,
- *     and cut to 60 nights;
+ *   - "Tonight": just tonight, until 5 AM New York (also at 2 AM);
+ *   - "Custom": one date (tonight, later, past), crossing a month, picked
+ *     backwards, starting in the past, and cut to 60 nights;
+ *   - the Custom flow (start date, optional end date) and the note shown
+ *     after an admin creates an event the filter hides (VC-63b);
  *   - the words shown: titles, the small line above, the empty states.
  *
  * Moments are written in UTC with Date.UTC (months count from 0, so 10 is
@@ -19,13 +21,22 @@
  * (jest.global-setup.js), proving nothing uses the phone's own zone.
  */
 import {
+  FILTER_LABELS,
+  FILTER_ORDER,
   MAX_RANGE_NIGHTS,
   THIS_WEEK,
+  createdNotice,
+  customFromDraft,
+  draftFor,
+  filterCoversNight,
   filterEmptyText,
   filterKicker,
   filterNights,
   filterTitle,
   filterWindow,
+  latestEnd,
+  pickEnd,
+  pickStart,
 } from '@/lib/date-filter';
 import type { DateFilter } from '@/lib/date-filter';
 
@@ -42,6 +53,48 @@ const SAT_8PM = utc(2026, 10, 1, 0);
 const TUE_8PM = utc(2026, 10, 4, 1);
 
 const WEEKEND: DateFilter = { kind: 'weekend' };
+const TONIGHT: DateFilter = { kind: 'tonight' };
+
+describe('the chips', () => {
+  it('are Tonight, This weekend, This week, Custom, in that order', () => {
+    expect(FILTER_ORDER.map((kind) => FILTER_LABELS[kind])).toEqual([
+      'Tonight',
+      'This weekend',
+      'This week',
+      'Custom',
+    ]);
+    expect(THIS_WEEK).toEqual({ kind: 'week' });
+  });
+});
+
+describe('Tonight', () => {
+  it('covers tonight only, up to 5 AM New York, keeping parties already going', () => {
+    expect(filterNights(TONIGHT, SAT_8PM)).toEqual({
+      first: day(2026, 10, 31),
+      last: day(2026, 10, 31),
+    });
+    expect(filterWindow(TONIGHT, SAT_8PM)).toEqual({
+      endsAfter: SAT_8PM,
+      startsFrom: null,
+      // Sunday 1 Nov, 5 AM EST (after the clocks went back) = 10:00 UTC.
+      startsBefore: utc(2026, 10, 1, 10),
+    });
+    expect(filterTitle(TONIGHT, SAT_8PM)).toBe('Tonight');
+    expect(filterKicker(TONIGHT, SAT_8PM)).toBe('SAT, OCT 31');
+  });
+
+  it('at 2 AM is still the night before (until 5 AM)', () => {
+    // Wednesday 4 Nov, 2 AM EST = 07:00 UTC: still Tuesday night.
+    const late = utc(2026, 10, 4, 7);
+    expect(filterNights(TONIGHT, late).first).toEqual(day(2026, 11, 3));
+    expect(filterWindow(TONIGHT, late).startsBefore).toEqual(utc(2026, 10, 4, 10));
+  });
+
+  it("from 5 AM is the new day's night", () => {
+    // Wednesday 4 Nov, 5 AM EST = 10:00 UTC.
+    expect(filterNights(TONIGHT, utc(2026, 10, 4, 10)).first).toEqual(day(2026, 11, 4));
+  });
+});
 
 describe('This week', () => {
   it('covers tonight and the next 6 nights, with no start limit', () => {
@@ -133,9 +186,9 @@ describe('This weekend', () => {
   });
 });
 
-describe('Pick a date', () => {
+describe('Custom, one date', () => {
   it('covers one later night, from its 5 AM to the next 5 AM', () => {
-    const sunday: DateFilter = { kind: 'date', night: day(2026, 11, 8) };
+    const sunday: DateFilter = { kind: 'custom', from: day(2026, 11, 8), to: day(2026, 11, 8) };
     expect(filterWindow(sunday, SAT_8PM)).toEqual({
       endsAfter: SAT_8PM,
       startsFrom: utc(2026, 10, 8, 10),
@@ -146,7 +199,7 @@ describe('Pick a date', () => {
   });
 
   it('for tonight, keeps parties already going (no start limit)', () => {
-    const tonight: DateFilter = { kind: 'date', night: day(2026, 10, 31) };
+    const tonight: DateFilter = { kind: 'custom', from: day(2026, 10, 31), to: day(2026, 10, 31) };
     expect(filterWindow(tonight, SAT_8PM)).toEqual({
       endsAfter: SAT_8PM,
       startsFrom: null,
@@ -156,7 +209,7 @@ describe('Pick a date', () => {
   });
 
   it('never covers a night already past: it becomes tonight', () => {
-    const past: DateFilter = { kind: 'date', night: day(2026, 10, 20) };
+    const past: DateFilter = { kind: 'custom', from: day(2026, 10, 20), to: day(2026, 10, 20) };
     expect(filterNights(past, SAT_8PM)).toEqual({
       first: day(2026, 10, 31),
       last: day(2026, 10, 31),
@@ -166,7 +219,7 @@ describe('Pick a date', () => {
 
 describe('Custom range', () => {
   it('can cross a month and reach past a week', () => {
-    const range: DateFilter = { kind: 'range', from: day(2026, 11, 28), to: day(2026, 12, 3) };
+    const range: DateFilter = { kind: 'custom', from: day(2026, 11, 28), to: day(2026, 12, 3) };
     expect(filterWindow(range, SAT_8PM)).toEqual({
       endsAfter: SAT_8PM,
       // Saturday 28 Nov, 5 AM EST = 10:00 UTC, to Friday 4 Dec, 5 AM EST.
@@ -180,7 +233,7 @@ describe('Custom range', () => {
   it('follows the March clock change', () => {
     // Sunday 1 March 2026, 8 PM EST = 2 Mar 01:00 UTC.
     const now = utc(2026, 2, 2, 1);
-    const range: DateFilter = { kind: 'range', from: day(2026, 3, 7), to: day(2026, 3, 9) };
+    const range: DateFilter = { kind: 'custom', from: day(2026, 3, 7), to: day(2026, 3, 9) };
     expect(filterWindow(range, now)).toEqual({
       endsAfter: now,
       // Saturday 7 March, 5 AM EST = 10:00 UTC ...
@@ -191,7 +244,7 @@ describe('Custom range', () => {
   });
 
   it('puts a backwards range in order', () => {
-    const backwards: DateFilter = { kind: 'range', from: day(2026, 11, 10), to: day(2026, 11, 3) };
+    const backwards: DateFilter = { kind: 'custom', from: day(2026, 11, 10), to: day(2026, 11, 3) };
     expect(filterNights(backwards, SAT_8PM)).toEqual({
       first: day(2026, 11, 3),
       last: day(2026, 11, 10),
@@ -199,7 +252,7 @@ describe('Custom range', () => {
   });
 
   it('starts no earlier than tonight', () => {
-    const range: DateFilter = { kind: 'range', from: day(2026, 10, 25), to: day(2026, 11, 2) };
+    const range: DateFilter = { kind: 'custom', from: day(2026, 10, 25), to: day(2026, 11, 2) };
     expect(filterNights(range, SAT_8PM)).toEqual({
       first: day(2026, 10, 31),
       last: day(2026, 11, 2),
@@ -209,7 +262,7 @@ describe('Custom range', () => {
 
   it(`is cut to ${MAX_RANGE_NIGHTS} nights`, () => {
     expect(MAX_RANGE_NIGHTS).toBe(60);
-    const huge: DateFilter = { kind: 'range', from: day(2026, 11, 1), to: day(2027, 3, 1) };
+    const huge: DateFilter = { kind: 'custom', from: day(2026, 11, 1), to: day(2027, 3, 1) };
     // 1 Nov + 59 days = 30 Dec: 60 nights counting both ends.
     expect(filterNights(huge, SAT_8PM)).toEqual({
       first: day(2026, 11, 1),
@@ -219,9 +272,9 @@ describe('Custom range', () => {
   });
 
   it('a one-night range reads like a single date', () => {
-    const one: DateFilter = { kind: 'range', from: day(2026, 11, 8), to: day(2026, 11, 8) };
+    const one: DateFilter = { kind: 'custom', from: day(2026, 11, 8), to: day(2026, 11, 8) };
     expect(filterTitle(one, SAT_8PM)).toBe('Sun, Nov 8');
-    expect(filterKicker(one, SAT_8PM)).toBe('1 NIGHT');
+    expect(filterKicker(one, SAT_8PM)).toBe('SUNDAY NIGHT');
   });
 });
 
@@ -229,12 +282,113 @@ describe('empty states', () => {
   it('has its own words for each filter', () => {
     expect(filterEmptyText(THIS_WEEK, SAT_8PM).title).toBe('Nothing on this week yet');
     expect(filterEmptyText(WEEKEND, SAT_8PM).title).toBe('Nothing on this weekend yet');
-    expect(filterEmptyText({ kind: 'date', night: day(2026, 11, 8) }, SAT_8PM).title).toBe(
-      'Nothing on Sun, Nov 8 yet',
+    expect(filterEmptyText(TONIGHT, SAT_8PM).title).toBe('Nothing on tonight yet');
+    const one = filterEmptyText(
+      { kind: 'custom', from: day(2026, 11, 8), to: day(2026, 11, 8) },
+      SAT_8PM,
     );
+    expect(one.title).toBe('Nothing on Sun, Nov 8 yet');
+    expect(one.body).toMatch(/^No events that night yet\./);
     expect(
-      filterEmptyText({ kind: 'range', from: day(2026, 11, 6), to: day(2026, 11, 15) }, SAT_8PM)
+      filterEmptyText({ kind: 'custom', from: day(2026, 11, 6), to: day(2026, 11, 15) }, SAT_8PM)
         .title,
     ).toBe('Nothing on Nov 6 – Nov 15 yet');
+  });
+});
+
+describe('the Custom flow (start date, optional end date)', () => {
+  const picked = { start: day(2026, 11, 6), end: day(2026, 11, 9) };
+
+  it('starts from tonight with no end, or from the current Custom dates', () => {
+    expect(draftFor(THIS_WEEK, SAT_8PM)).toEqual({ start: day(2026, 10, 31), end: null });
+    expect(
+      draftFor({ kind: 'custom', from: day(2026, 11, 6), to: day(2026, 11, 9) }, SAT_8PM),
+    ).toEqual(picked);
+    // One night: no end.
+    expect(
+      draftFor({ kind: 'custom', from: day(2026, 11, 6), to: day(2026, 11, 6) }, SAT_8PM),
+    ).toEqual({ start: day(2026, 11, 6), end: null });
+  });
+
+  it('keeps the end when a new start still fits before it', () => {
+    expect(pickStart(picked, day(2026, 11, 7))).toEqual({
+      start: day(2026, 11, 7),
+      end: day(2026, 11, 9),
+    });
+  });
+
+  it('clears the end when the new start is on or after it, or too far before it', () => {
+    expect(pickStart(picked, day(2026, 11, 9)).end).toBeNull();
+    expect(pickStart(picked, day(2026, 11, 12)).end).toBeNull();
+    const far = { start: day(2026, 11, 6), end: day(2027, 1, 3) };
+    // 5 Nov to 3 Jan is 60 nights counting both ends: kept.
+    expect(pickStart(far, day(2026, 11, 5)).end).toEqual(day(2027, 1, 3));
+    // 4 Nov to 3 Jan would be 61: cleared.
+    expect(pickStart(far, day(2026, 11, 4)).end).toBeNull();
+  });
+
+  it('an end on the start night (or before it) means one night', () => {
+    expect(pickEnd(picked, day(2026, 11, 6)).end).toBeNull();
+    expect(pickEnd(picked, day(2026, 11, 2)).end).toBeNull();
+    expect(pickEnd(picked, day(2026, 11, 20)).end).toEqual(day(2026, 11, 20));
+  });
+
+  it('the latest end is 60 nights counting both ends', () => {
+    expect(latestEnd(day(2026, 11, 1))).toEqual(day(2026, 12, 30));
+  });
+
+  it('turns the draft into a tidy Custom filter', () => {
+    expect(customFromDraft(picked, SAT_8PM)).toEqual({
+      kind: 'custom',
+      from: day(2026, 11, 6),
+      to: day(2026, 11, 9),
+    });
+    expect(customFromDraft({ start: day(2026, 11, 6), end: null }, SAT_8PM)).toEqual({
+      kind: 'custom',
+      from: day(2026, 11, 6),
+      to: day(2026, 11, 6),
+    });
+    // A start already in the past becomes tonight.
+    expect(customFromDraft({ start: day(2026, 10, 1), end: null }, SAT_8PM)).toEqual({
+      kind: 'custom',
+      from: day(2026, 10, 31),
+      to: day(2026, 10, 31),
+    });
+  });
+});
+
+describe('after creating an event (VC-63b)', () => {
+  // Friday 13 Nov 2026, 10 PM EST = 14 Nov 03:00 UTC (two weeks out).
+  const fri13 = utc(2026, 10, 14, 3).toISOString();
+  // Sunday 1 Nov 2026, 10 PM EST = 2 Nov 03:00 UTC (tomorrow night).
+  const sun1 = utc(2026, 10, 2, 3).toISOString();
+
+  it('knows which nights a filter covers', () => {
+    expect(filterCoversNight(THIS_WEEK, day(2026, 11, 6), SAT_8PM)).toBe(true);
+    expect(filterCoversNight(THIS_WEEK, day(2026, 11, 7), SAT_8PM)).toBe(false);
+    expect(filterCoversNight(TONIGHT, day(2026, 10, 31), SAT_8PM)).toBe(true);
+  });
+
+  it('says nothing when the list already shows the event', () => {
+    expect(createdNotice(sun1, THIS_WEEK, SAT_8PM)).toBeNull();
+  });
+
+  it('points to This week when that would show it', () => {
+    expect(createdNotice(sun1, TONIGHT, SAT_8PM)).toBe(
+      'Saved for Sun, Nov 1. Switch to This week to see it.',
+    );
+  });
+
+  it('points to Custom for a night beyond this week', () => {
+    expect(createdNotice(fri13, THIS_WEEK, SAT_8PM)).toBe(
+      'Saved for Fri, Nov 13. Switch to Custom to see it.',
+    );
+  });
+
+  it("uses the party's night: a 1 AM start belongs to the evening before", () => {
+    // Saturday 14 Nov, 1 AM EST = 06:00 UTC: Friday 13's night.
+    expect(createdNotice(utc(2026, 10, 14, 6), THIS_WEEK, SAT_8PM)).toBe(
+      'Saved for Fri, Nov 13. Switch to Custom to see it.',
+    );
   });
 });

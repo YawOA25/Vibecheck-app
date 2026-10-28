@@ -4,7 +4,9 @@
  *
  * What it shows: title, neighbourhood label (never an address), when it is
  * ("Today · 10 PM", or "On now · until 2 AM"), a "Staff pick" chip for
- * venue events the team picked (VC-29/VC-14), a "21+" chip when set, and
+ * venue events the team picked (VC-29/VC-14), a "21+" chip when set, a
+ * "TEST" chip on test events (VC-63b: only testers and admins ever see
+ * those, and the chip makes sure nobody mistakes one for a real party), and
  * the vibe (task VC-B09) on the right:
  *   live   the score and its word, e.g. "8.0 Hot" (gold);
  *   stale  the last score and word in grey, with "quiet" under it;
@@ -44,6 +46,8 @@ export interface EventCardProps {
 /** The chip words for the vibe states without a number (exported for tests). */
 export const EARLY_LABEL = 'Early';
 export const NO_VIBE_LABEL = 'No vibe yet';
+/** The chip on test events (VC-63b), exported for tests. */
+export const TEST_LABEL = 'TEST';
 
 /**
  * Renders the card.
@@ -64,6 +68,7 @@ export function EventCard({ event, now, onPress, vibe: given }: EventCardProps) 
   // every small piece of the card.
   const spoken = [
     event.title,
+    event.is_test ? 'Test event' : null,
     event.area_label,
     when,
     staffPick ? 'Staff pick' : null,
@@ -88,8 +93,9 @@ export function EventCard({ event, now, onPress, vibe: given }: EventCardProps) 
           {event.area_label} · {when}
           {here ? ` · ${here}` : ''}
         </Text>
-        {staffPick || event.is_21_plus ? (
+        {staffPick || event.is_21_plus || event.is_test ? (
           <View style={styles.tags}>
+            {event.is_test ? <Tag label={TEST_LABEL} tone="gold" /> : null}
             {staffPick ? <Tag label="Staff pick" tone="gold" /> : null}
             {event.is_21_plus ? <Tag label="21+" /> : null}
           </View>

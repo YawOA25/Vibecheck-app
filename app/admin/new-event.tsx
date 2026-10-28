@@ -17,6 +17,10 @@
  *   6. taps "Create event", then sees the party code to print, with an
  *      option to swap it for a new one ("code rotate").
  *
+ * After saving (VC-63b), it leaves a note for the home list
+ * (src/lib/created-event.ts) so the list reloads when the admin goes back,
+ * and says where to find the event if the date filter hides it.
+ *
  * The form's boxes are shared with Edit event (src/components/EventForm.tsx,
  * VC-34); its rules live in src/lib/event-form.ts (tested on their own).
  */
@@ -33,6 +37,7 @@ import { Headline } from '@/components/Headline';
 import { PartyCodeCard } from '@/components/PartyCodeCard';
 import { dateInputFor, DEFAULT_RADIUS_M, validateEventForm } from '@/lib/event-form';
 import type { EventFormValues } from '@/lib/event-form';
+import { noteCreatedEvent } from '@/lib/created-event';
 import { createEvent, rotateEventCode } from '@/lib/events-api';
 import type { EventSaveResult } from '@/lib/events-api';
 import { colors, spacing, typography } from '@/theme';
@@ -96,8 +101,13 @@ export default function NewEventScreen() {
     setSaving(true);
     const outcome = await createEvent(checked.input);
     setSaving(false);
-    if (outcome.ok) setSaved(outcome.result);
-    else setMessage(outcome.message);
+    if (outcome.ok) {
+      // Tell the home list to reload (and maybe say where the event is).
+      noteCreatedEvent({ id: outcome.result.eventId, startsAt: checked.input.p_starts_at });
+      setSaved(outcome.result);
+    } else {
+      setMessage(outcome.message);
+    }
   }
 
   /** Swaps the party code for a new one ("code rotate"). Returns nothing. */

@@ -202,6 +202,19 @@ describe('EventScreen details', () => {
     expect(getEventVibe).toHaveBeenCalledWith('e1');
   });
 
+  it('marks a test event with a TEST chip, and a real one without (VC-63b)', async () => {
+    get.mockResolvedValue({ ok: true, event: makeEvent({ is_test: true }) });
+    await render(<EventScreen />);
+    await screen.findByRole('header', { name: 'Rooftop Sundown' });
+    expect(screen.getByText('TEST')).toBeOnTheScreen();
+    await screen.unmount();
+
+    get.mockResolvedValue({ ok: true, event: makeEvent({ is_test: false }) });
+    await render(<EventScreen />);
+    await screen.findByRole('header', { name: 'Rooftop Sundown' });
+    expect(screen.queryByText('TEST')).toBeNull();
+  });
+
   it('shows no staff-pick tag or ticket link for a host party, even with a stored link', async () => {
     get.mockResolvedValue({ ok: true, event: makeEvent({ ticket_url: TICKET_URL }) });
     await render(<EventScreen />);

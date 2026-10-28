@@ -17,7 +17,9 @@ import { Platform } from 'react-native';
 
 import NewEventScreen from '../app/admin/new-event';
 import { pickDateTime } from '../test-utils/pick-date-time';
+import { TEST_EVENT_HINT } from '@/components/EventForm';
 import { todayInZone } from '@/lib/age';
+import { takeCreatedEvent } from '@/lib/created-event';
 import { END_BEFORE_START } from '@/lib/event-form';
 import { zonedMoment } from '@/lib/tonight';
 import { getCurrentPin } from '@/lib/location';
@@ -45,6 +47,8 @@ const endDayAfter = zonedMoment(dayAfter, 2);
 
 beforeEach(() => {
   jest.clearAllMocks();
+  // Start each test with no leftover "new event" note (VC-63b).
+  takeCreatedEvent();
   pin.mockResolvedValue({ status: 'ok', pin: { lat: 38.91, lng: -77.02, accuracyM: 9 } });
   rpc.mockResolvedValue({
     data: { event_id: 'event-1', check_in_code: 'K7MX2Q' },
@@ -133,6 +137,9 @@ describe('NewEventScreen', () => {
       }),
     );
     expect(screen.getByText('K7MX2Q')).toBeOnTheScreen();
+    // VC-63b: a note for the home list, so it reloads and can say where the
+    // event is (tomorrow 10 PM New York).
+    expect(takeCreatedEvent()).toEqual({ id: 'event-1', startsAt: startTomorrow.toISOString() });
 
     rpc.mockResolvedValue({ data: { event_id: 'event-1', check_in_code: 'P3RT9W' }, error: null });
     await fireEvent.press(screen.getByRole('button', { name: 'Get a new code' }));
@@ -181,6 +188,16 @@ describe('NewEventScreen', () => {
     await fireEvent.press(screen.getByRole('button', { name: 'Create event' }));
 
     expect(screen.getByText('Only admins can create or edit events.')).toBeOnTheScreen();
+    // Nothing was saved, so no note for the home list.
+    expect(takeCreatedEvent()).toBeNull();
+  });
+
+  it('starts with Test event OFF and says who sees test events (VC-63b)', async () => {
+    await render(<NewEventScreen />);
+    const toggle = screen.getByRole('switch', { name: 'Test event' });
+    expect(toggle).not.toBeChecked();
+    expect(toggle.props.accessibilityHint).toBe(TEST_EVENT_HINT);
+    expect(screen.getByText('Only testers and admins see test events.')).toBeOnTheScreen();
   });
 
   it('sends the "How to get in" link for a host event, and hides the box for staff picks', async () => {

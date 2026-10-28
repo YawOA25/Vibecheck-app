@@ -1,28 +1,31 @@
 /**
- * The date filter on the home list (VC-63): a compact row of chips, "This
- * week" (the default), "This weekend", "Pick a date" and "Custom", in the
- * v3 pill look. "Pick a date" adds one date box under the row; "Custom"
- * adds "From" and "To" boxes. The boxes open the phone's own date picker
- * (src/components/DateField.tsx).
+ * The date filter on the home list (VC-63, revised by the founder
+ * 2026-10-27): a compact row of chips, "Tonight", "This weekend", "This
+ * week" (the default) and "Custom", in the v3 pill look.
+ *
+ * Custom: tapping the chip opens the date picker (src/components/
+ * CustomDatesPicker.tsx): a bottom sheet on iPhone, the phone's calendar
+ * dialogs on Android. The list only switches to Custom once the guest
+ * finishes (Done); cancelling keeps the filter they had. While Custom is
+ * picked, the chosen dates show under the chips as tappable text ("Nov 6 –
+ * Nov 9") that opens the picker again. No picker ever stays in the list.
  *
  * Accessibility: the chips are radio buttons in one group ("Dates"), so
- * screen readers say "This week, radio button, checked, 1 of 4". The date
- * boxes are buttons named "Night", "From" and "To" with the date as their
- * value.
+ * screen readers say "This week, radio button, checked, 3 of 4". The dates
+ * summary is a button named "Custom dates" with the dates as its value.
  *
  * The rules for which nights each filter covers live in
  * src/lib/date-filter.ts; this component only draws the choices and hands
  * a tidy filter (in order, within the cap) back to the screen.
  */
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useState } from 'react';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { ChoiceChip } from '@/components/ChoiceChip';
-import { DateField } from '@/components/DateField';
-import { FILTER_LABELS, MAX_RANGE_NIGHTS, filterNights } from '@/lib/date-filter';
-import type { DateFilter } from '@/lib/date-filter';
-import { addDays, nightOf } from '@/lib/tonight';
-import type { CivilDate } from '@/lib/tonight';
-import { colors, spacing, typography } from '@/theme';
+import { CustomDatesSheet, openAndroidCustomFlow } from '@/components/CustomDatesPicker';
+import { FILTER_LABELS, FILTER_ORDER, draftFor, filterNights, rangeText } from '@/lib/date-filter';
+import type { CustomDraft, DateFilter } from '@/lib/date-filter';
+import { colors, minTapTarget, spacing, typography } from '@/theme';
 
 /** What a DateFilterBar needs. */
 export interface DateFilterBarProps {
@@ -34,57 +37,39 @@ export interface DateFilterBarProps {
   onChange: (filter: DateFilter) => void;
 }
 
-/** The note under the Custom boxes (exported so tests use the same words). */
-export const RANGE_NOTE = `Up to ${MAX_RANGE_NIGHTS} nights at a time.`;
-
-/** How many nights a new Custom range covers before the guest changes it. */
-const DEFAULT_RANGE_NIGHTS = 14;
-
 /**
- * Renders the chips and, for "Pick a date" and "Custom", the date boxes.
+ * Renders the chips, the Custom dates summary, and (iPhone, while open)
+ * the Custom dates sheet.
  *
  * @returns the filter view.
  */
 export function DateFilterBar({ filter, now, onChange }: DateFilterBarProps) {
-  const tonight = nightOf(now);
+  // iPhone only: where the open sheet started, or null while it's closed.
+  const [sheet, setSheet] = useState<CustomDraft | null>(null);
 
-  /**
-   * Hands back a range in order, starting no earlier than tonight and cut
-   * to the cap, so the boxes always show what the list really covers.
-   *
-   * @param from - the picked start night.
-   * @param to - the picked end night.
-   */
-  function changeRange(from: CivilDate, to: CivilDate) {
-    const { first, last } = filterNights({ kind: 'range', from, to }, now);
-    onChange({ kind: 'range', from: first, to: last });
+  /** Opens the Custom picker, starting from the current Custom dates or tonight. */
+  function openCustom() {
+    const initial = draftFor(filter, now);
+    if (Platform.OS === 'android') openAndroidCustomFlow(initial, now, onChange);
+    else setSheet(initial);
   }
 
-  /** The four chips: what each one picks when tapped. */
-  const chips: { kind: DateFilter['kind']; pick: () => void }[] = [
-    { kind: 'week', pick: () => onChange({ kind: 'week' }) },
-    { kind: 'weekend', pick: () => onChange({ kind: 'weekend' }) },
-    // Starting on tonight; the box below changes it. Tapping the chip again
-    // keeps the date already picked.
-    {
-      kind: 'date',
-      pick: () => {
-        if (filter.kind !== 'date') onChange({ kind: 'date', night: tonight });
-      },
-    },
-    {
-      kind: 'range',
-      pick: () => {
-        if (filter.kind !== 'range') {
-          onChange({
-            kind: 'range',
-            from: tonight,
-            to: addDays(tonight, DEFAULT_RANGE_NIGHTS - 1),
-          });
-        }
-      },
-    },
-  ];
+  /**
+   * A chip was tapped.
+   *
+   * @param kind - which chip.
+   */
+  function pick(kind: DateFilter['kind']) {
+    if (kind === 'custom') openCustom();
+    else onChange({ kind });
+  }
+
+  // The Custom summary words, e.g. "Nov 6 – Nov 9" (tidied like the list).
+  let summary: string | null = null;
+  if (filter.kind === 'custom') {
+    const { first, last } = filterNights(filter, now);
+    summary = rangeText(first, last);
+  }
 
   return (
     <View style={styles.wrapper}>
@@ -96,47 +81,43 @@ export function DateFilterBar({ filter, now, onChange }: DateFilterBarProps) {
         accessibilityRole="radiogroup"
         accessibilityLabel="Dates"
       >
-        {chips.map((chip) => (
+        {FILTER_ORDER.map((kind) => (
           <ChoiceChip
-            key={chip.kind}
-            label={FILTER_LABELS[chip.kind]}
-            selected={filter.kind === chip.kind}
-            onPress={chip.pick}
+            key={kind}
+            label={FILTER_LABELS[kind]}
+            selected={filter.kind === kind}
+            onPress={() => pick(kind)}
             shape="pill"
             role="radio"
           />
         ))}
       </ScrollView>
 
-      {filter.kind === 'date' ? (
-        <DateField
-          label="Night"
-          value={filter.night}
-          minimum={tonight}
-          onChange={(night) => onChange({ kind: 'date', night })}
-          testID="night-picker"
-        />
+      {summary ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Custom dates"
+          accessibilityValue={{ text: summary }}
+          accessibilityHint="Opens the date picker."
+          onPress={openCustom}
+          hitSlop={8}
+          style={styles.summary}
+        >
+          <Text style={styles.summaryText}>{summary}</Text>
+          <Text style={styles.change}>Change</Text>
+        </Pressable>
       ) : null}
 
-      {filter.kind === 'range' ? (
-        <View style={styles.range}>
-          <DateField
-            label="From"
-            value={filter.from}
-            minimum={tonight}
-            onChange={(from) => changeRange(from, filter.to)}
-            testID="from-picker"
-          />
-          <DateField
-            label="To"
-            value={filter.to}
-            minimum={filter.from}
-            maximum={addDays(filter.from, MAX_RANGE_NIGHTS - 1)}
-            onChange={(to) => changeRange(filter.from, to)}
-            testID="to-picker"
-          />
-          <Text style={styles.note}>{RANGE_NOTE}</Text>
-        </View>
+      {sheet ? (
+        <CustomDatesSheet
+          initial={sheet}
+          now={now}
+          onCancel={() => setSheet(null)}
+          onDone={(next) => {
+            setSheet(null);
+            onChange(next);
+          }}
+        />
       ) : null}
     </View>
   );
@@ -144,8 +125,16 @@ export function DateFilterBar({ filter, now, onChange }: DateFilterBarProps) {
 
 /** Styles built only from theme tokens. */
 const styles = StyleSheet.create({
-  wrapper: { gap: spacing.sm },
+  wrapper: { gap: spacing.xs },
   row: { flexDirection: 'row', gap: spacing.sm },
-  range: { gap: spacing.sm },
-  note: { ...typography.caption, color: colors.muted },
+  // The dates line: the dates in plain text, then a gold "Change" link.
+  summary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: spacing.sm,
+    minHeight: minTapTarget,
+  },
+  summaryText: { ...typography.bodySm, color: colors.text },
+  change: { ...typography.label, color: colors.accent },
 });

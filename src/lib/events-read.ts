@@ -19,7 +19,8 @@
  *
  * Who sees what is decided by the server, not the app: the `events` RLS
  * policy (migration 20261026150100_events.sql) only returns events to
- * signed-up adults, and test events (`is_test`) only to testers.
+ * signed-up adults, and test events (`is_test`) only to testers and admins
+ * (VC-63b, migration 20261027220000_admins_read_test_events.sql).
  */
 import type { ErrorLike } from '@/lib/auth-errors';
 import { supabase } from '@/lib/supabase';

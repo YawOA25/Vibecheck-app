@@ -7,8 +7,8 @@
  *   - when (e.g. "TODAY · 9 PM – 2 AM"), the event name and its neighbourhood
  *     label. Never the exact address or a map pin: the app can't even read
  *     them (they live in `event_private`, VC-20);
- *   - chips: "Staff pick" for venue events the team picked (VC-29/VC-14) and
- *     "21+" when set (VC-10);
+ *   - chips: "TEST" on test events (VC-63b), "Staff pick" for venue events
+ *     the team picked (VC-29/VC-14) and "21+" when set (VC-10);
  *   - our own short summary, if there is one;
  *   - the "Live vibe" card (task VC-B09): the meter with the live score
  *     and its word (or "Early reading" / "No vibe yet"), refreshed every 20
@@ -60,6 +60,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { BackButton } from '@/components/BackButton';
 import { Button } from '@/components/Button';
 import { EntryLink } from '@/components/EntryLink';
+import { TEST_LABEL } from '@/components/EventCard';
 import { FormMessage } from '@/components/FormMessage';
 import { HeadsUpCard } from '@/components/HeadsUpCard';
 import { LiveVibeCard } from '@/components/LiveVibeCard';
@@ -341,8 +342,9 @@ function EventDetails({
           <Button label={SHARE_LABEL} variant="outline" size="small" onPress={share} />
         </View>
 
-        {staffPick || event.is_21_plus ? (
+        {staffPick || event.is_21_plus || event.is_test ? (
           <View style={styles.tags}>
+            {event.is_test ? <Tag label={TEST_LABEL} tone="gold" /> : null}
             {staffPick ? <Tag label="Staff pick" tone="gold" /> : null}
             {event.is_21_plus ? <Tag label="21+" /> : null}
           </View>

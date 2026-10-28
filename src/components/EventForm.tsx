@@ -54,6 +54,12 @@ import { colors, spacing, typography } from '@/theme';
 /** The four date and time boxes, which are checked together. */
 const TIME_BOXES: EventFormField[] = ['startDate', 'startTime', 'endDate', 'endTime'];
 
+/**
+ * The one-line hint under the "Test event" switch (VC-63b: admins now see
+ * test events too, so the words say so). Exported so tests use the same words.
+ */
+export const TEST_EVENT_HINT = 'Only testers and admins see test events.';
+
 /** Shown in edit mode while the event keeps its current pin (exported for tests). */
 export const KEEPING_LOCATION = 'Keeping the current location. Set a new one only if it moved.';
 
@@ -419,9 +425,7 @@ export function EventFormFields({ form, mode, saving }: EventFormFieldsProps) {
       <ToggleRow
         label="Test event"
         helper={
-          editing
-            ? "Only testers see it. Can't change once people have checked in."
-            : 'Only testers see it. Use for trying things out.'
+          editing ? `${TEST_EVENT_HINT} Can't change once people have checked in.` : TEST_EVENT_HINT
         }
         value={values.isTest}
         onValueChange={(on) => update('isTest', on)}

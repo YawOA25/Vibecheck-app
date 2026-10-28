@@ -54,6 +54,8 @@ export const colors = {
   error: '#FF8A7A',
   /** "New code sent" confirmation (11.3 on bg). */
   success: '#7FD6A0',
+  /** Dimmed layer behind a bottom sheet (the Custom dates picker, VC-63b). */
+  scrim: 'rgba(0, 0, 0, 0.6)',
 } as const;
 
 /**

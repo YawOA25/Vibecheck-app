@@ -18,10 +18,11 @@
  *     refresh, and every minute while it's on screen. Cards for events that
  *     haven't started show the details only (VC-61); an event that starts
  *     while the list is open gets its vibe at the next minute's refresh;
- *   - a date filter under the title (VC-63): "This week" (the default),
- *     "This weekend", "Pick a date" or "Custom" (src/components/
- *     DateFilterBar.tsx). The title shows the filter ("This weekend", "Sat,
- *     Nov 7", "Nov 6 – Nov 15"); the list, pull to refresh and the minute
+ *   - a date filter under the title (VC-63, revised 2026-10-27): "Tonight",
+ *     "This weekend", "This week" (the default) or "Custom" (one date or a
+ *     range, picked in a sheet or dialog; src/components/DateFilterBar.tsx).
+ *     The title shows the filter ("Tonight", "This weekend", "Sat, Nov 7",
+ *     "Nov 6 – Nov 15"); the list, pull to refresh and the minute
  *     vibe refresh all follow it; each filter has its own empty state with
  *     a "Show this week" button. The filter isn't saved anywhere: it is
  *     back to "This week" when the app restarts;
@@ -31,6 +32,10 @@
  *     loading more failed). Pages always use the date window of the first
  *     page, and an answer for an older filter or an older refresh is
  *     ignored. Pull to refresh starts again from the first page;
+ *   - after an admin creates an event (VC-63b): coming back here reloads
+ *     the list, and if the date filter doesn't cover the new event's night
+ *     a short note says where to find it ("Saved for Fri, Nov 14. Switch to
+ *     Custom to see it."). The note goes away when the filter changes;
  *   - pull down to refresh;
  *   - a loading state, an error state with "Try again", and an empty state.
  *
@@ -59,9 +64,11 @@ import { DateFilterBar } from '@/components/DateFilterBar';
 import { EventCard } from '@/components/EventCard';
 import { FormMessage } from '@/components/FormMessage';
 import { useAuth } from '@/lib/auth-context';
+import { takeCreatedEvent } from '@/lib/created-event';
 import {
   FILTER_LABELS,
   THIS_WEEK,
+  createdNotice,
   filterEmptyText,
   filterKicker,
   filterTitle,
@@ -140,6 +147,8 @@ export default function HomeScreen() {
   // decide "has it started?" (VC-61), so an event that starts while the
   // list is open shows its vibe without a pull to refresh.
   const [clock, setClock] = useState<Date | null>(null);
+  // VC-63b: after creating an event that the filter hides, where to find it.
+  const [createdNote, setCreatedNote] = useState<string | null>(null);
 
   // The events on screen as "id|start time" pairs, joined into one string so
   // the effect below only restarts when the list of events really changes.
@@ -232,6 +241,8 @@ export default function HomeScreen() {
     setFilter(next);
     setState({ kind: 'loading' });
     setRefreshError(null);
+    // The "where to find your new event" note was about the old filter.
+    setCreatedNote(null);
   }, []);
 
   /** "Try again" after a failed first load: back to the spinner, then reload. */
@@ -320,6 +331,20 @@ export default function HomeScreen() {
     });
   }, [state, filter]);
 
+  // VC-63b: back from New event with a new event saved? Reload the list (the
+  // screen stayed open underneath, so it wouldn't reload by itself), and if
+  // the filter doesn't cover the event's night, say where to find it. The
+  // note is taken once, so opening other pages and coming back does nothing.
+  useFocusEffect(
+    useCallback(() => {
+      const created = takeCreatedEvent();
+      if (!created) return undefined;
+      setCreatedNote(createdNotice(created.startsAt, filter, new Date()));
+      void refresh();
+      return undefined;
+    }, [filter, refresh]),
+  );
+
   /** Opens an event's page, e.g. /event/1234. */
   const openEvent = useCallback(
     (id: string) => router.push({ pathname: '/event/[id]', params: { id } }),
@@ -365,6 +390,16 @@ export default function HomeScreen() {
           </View>
         </View>
         <DateFilterBar filter={filter} now={new Date()} onChange={chooseFilter} />
+        {createdNote ? (
+          // Read out as soon as it appears, so screen-reader users hear it too.
+          <Text
+            style={styles.createdNote}
+            accessibilityLiveRegion="polite"
+            accessibilityRole="alert"
+          >
+            {createdNote}
+          </Text>
+        ) : null}
       </View>
 
       {state.kind === 'loading' ? <LoadingState /> : null}
@@ -550,6 +585,8 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
   },
   kicker: { ...typography.label, color: colors.muted },
+  // The "Saved for ... Switch to ..." note (VC-63b), in the success colour.
+  createdNote: { ...typography.bodySm, color: colors.success },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
