@@ -85,6 +85,8 @@ function makeVibe(overrides: Partial<Vibe> = {}): Vibe {
     nightAverage: null,
     minutesSinceLast: 2,
     reactions: [],
+    breakdown: null,
+    night: null,
     ...overrides,
   };
 }

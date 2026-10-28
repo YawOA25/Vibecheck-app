@@ -7,15 +7,23 @@
  *     the app's own rule, never lets a number through before 5 ratings, and
  *     refuses broken answers (unknown state, "live" without a score);
  *   - the wording: "Early reading: 3 people so far", "1 person", "updated 4
- *     min ago", "Quiet for 2 hrs · night average 7.4", "74 here" / "74 were
- *     here", the reaction line and what screen readers hear.
+ *     min ago", "Quiet for 2 hrs" (the night average moved to the All night
+ *     view, VC-54), "74 here" / "74 were here", the reaction line and what
+ *     screen readers hear;
+ *   - VC-53/54: the tile words and the All night view are read only next to
+ *     a score, unknown words drop the whole row, and their wording.
  */
 import {
+  NIGHT_WITHHELD_BODY,
   agoText,
+  breakdownSpoken,
+  breakdownTiles,
   cardVibeSpoken,
   formatScore,
   hereText,
   meterSpoken,
+  nightAsVibe,
+  nightDetail,
   parseVibe,
   quietForText,
   reactionLine,
@@ -56,6 +64,8 @@ function vibe(overrides: Partial<Vibe> = {}): Vibe {
     nightAverage: null,
     minutesSinceLast: 4,
     reactions: [],
+    breakdown: null,
+    night: null,
     ...overrides,
   };
 }
@@ -75,13 +85,16 @@ describe('parseVibe', () => {
         { reaction: 'fire', count: 3 },
         { reaction: 'dancing', count: 1 },
       ],
+      // Not sent in this answer: no tiles, no night view.
+      breakdown: null,
+      night: null,
     });
   });
 
-  it('reads the night average only in the stale state', () => {
-    expect(parseVibe({ ...LIVE_JSON, state: 'stale', minutes_since_last: 95 })?.nightAverage).toBe(
-      7.4,
-    );
+  it('never reads a night average, even if one is sent (no night number, cto)', () => {
+    expect(
+      parseVibe({ ...LIVE_JSON, state: 'stale', minutes_since_last: 95 })?.nightAverage,
+    ).toBeNull();
   });
 
   it('reads none and early answers without a number', () => {
@@ -163,8 +176,9 @@ describe('vibe words', () => {
       'Early reading: 1 person so far',
     );
     expect(vibeDetail(vibe())).toBe('5 people · updated 4 min ago');
+    // The night average isn't on this line any more (it's the All night view).
     expect(vibeDetail(vibe({ state: 'stale', minutesSinceLast: 130, nightAverage: 7.4 }))).toBe(
-      'Quiet for 2 hrs · night average 7.4',
+      'Quiet for 2 hrs',
     );
   });
 
@@ -241,5 +255,96 @@ describe('published snapshots (VC-51) and the 3-hour headcount (VC-55)', () => {
 
   it('after the end the same count reads "were here"', () => {
     expect(hereText(40, true)).toBe('40 were here');
+  });
+});
+
+describe('tiles (VC-53) and the All night view (VC-54)', () => {
+  const NIGHT_JSON = {
+    label: 'Hot',
+    raters: 112,
+    breakdown: { crowd: 'good', music: 'fire', energy: 'good' },
+    over: false,
+  };
+
+  it('reads the tile words and the night view next to a score', () => {
+    const parsed = parseVibe({
+      ...LIVE_JSON,
+      breakdown: { crowd: 'packed', music: 'meh', energy: 'low' },
+      night: NIGHT_JSON,
+    });
+    expect(parsed?.breakdown).toEqual({ crowd: 'packed', music: 'meh', energy: 'low' });
+    expect(parsed?.night).toEqual(NIGHT_JSON);
+  });
+
+  it('ignores tiles and the night view in early and none (no score, no tiles)', () => {
+    const parsed = parseVibe({
+      state: 'early',
+      raters: 4,
+      breakdown: { crowd: 'packed', music: 'fire', energy: 'fire' },
+      night: NIGHT_JSON,
+    });
+    expect(parsed?.breakdown).toBeNull();
+    expect(parsed?.night).toBeNull();
+  });
+
+  it('drops the whole tile row if any word is unknown or a number', () => {
+    expect(
+      parseVibe({ ...LIVE_JSON, breakdown: { crowd: 'packed', music: 'loud', energy: 'low' } })
+        ?.breakdown,
+    ).toBeNull();
+    expect(
+      parseVibe({ ...LIVE_JSON, breakdown: { crowd: 2.6, music: 'fire', energy: 'low' } })
+        ?.breakdown,
+    ).toBeNull();
+  });
+
+  it('never reads a night number, even if a server sent one', () => {
+    const parsed = parseVibe({ ...LIVE_JSON, night: { ...NIGHT_JSON, score: 7.4 } });
+    expect(parsed?.night).toEqual(NIGHT_JSON);
+    expect(parsed?.night).not.toHaveProperty('score');
+  });
+
+  it('a withheld night word comes with no night tiles', () => {
+    const parsed = parseVibe({
+      ...LIVE_JSON,
+      night: { ...NIGHT_JSON, label: null },
+    });
+    expect(parsed?.night).toEqual({
+      label: null,
+      raters: 112,
+      breakdown: null,
+      over: false,
+    });
+  });
+
+  it('words the tiles, the night line and the night meter', () => {
+    const tiles = { crowd: 'packed', music: 'fire', energy: 'good' } as const;
+    expect(breakdownTiles(tiles)).toEqual([
+      { label: 'CROWD', word: 'Packed' },
+      { label: 'MUSIC', word: 'Fire' },
+      { label: 'ENERGY', word: 'Good' },
+    ]);
+    expect(breakdownSpoken(tiles, false)).toBe('Crowd Packed, Music Fire, Energy Good');
+    expect(breakdownSpoken(tiles, true)).toBe(
+      'Last reading: Crowd Packed, Music Fire, Energy Good',
+    );
+
+    const night = {
+      ...NIGHT_JSON,
+      label: 'Hot' as const,
+      breakdown: { crowd: 'good', music: 'fire', energy: 'good' } as const,
+    };
+    expect(nightDetail(night)).toBe('112 ratings tonight');
+    expect(nightDetail({ ...night, raters: 1 })).toBe('1 rating tonight');
+    expect(nightDetail({ ...night, label: null })).toBe(NIGHT_WITHHELD_BODY);
+    expect(NIGHT_WITHHELD_BODY).toBe('The night vibe will show a little later.');
+
+    // The night as the gauge draws it: the word, and never a number.
+    const shown = nightAsVibe(vibe({ state: 'stale' }), night);
+    expect(shown).toMatchObject({ state: 'live', score: null, label: 'Hot', raters: 112 });
+    expect(meterSpoken(shown, 'night')).toBe('All night vibe: Hot');
+    const hidden = nightAsVibe(vibe(), { ...night, label: null });
+    expect(hidden.state).toBe('none');
+    expect(meterSpoken(hidden, 'night')).toBe('No vibe yet');
   });
 });

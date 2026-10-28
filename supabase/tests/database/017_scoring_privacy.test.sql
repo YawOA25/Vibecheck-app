@@ -42,7 +42,7 @@
 begin;
 create extension if not exists pgtap with schema extensions;
 
-select plan(49);
+select plan(50);
 
 -- ---- Setup (as owner) -------------------------------------------------------
 -- A test-only helper (pg_temp: gone when the session ends; inside this
@@ -82,7 +82,9 @@ insert into public.events (id, title, area_label, starts_at, ends_at, is_test) v
   ('17171717-0000-4000-8000-0000000000a1', 'Floor', 'Shaw, DC', now() - interval '4 hours', now() + interval '3 hours', false),
   ('17171717-0000-4000-8000-0000000000a2', 'Above floor', 'Shaw, DC', now() - interval '4 hours', now() + interval '3 hours', false),
   ('17171717-0000-4000-8000-0000000000a3', 'Outside window', 'Shaw, DC', now() - interval '4 hours', now() + interval '3 hours', false),
-  ('17171717-0000-4000-8000-0000000000b1', 'Gate', 'Shaw, DC', now() - interval '1 hour', now() + interval '3 hours', false),
+  -- b1 never starts before tonight's 5 AM New York, so its night (VC-54) holds
+  -- every rating whatever time of day the tests run.
+  ('17171717-0000-4000-8000-0000000000b1', 'Gate', 'Shaw, DC', greatest(now() - interval '1 hour', private.night_start(now())), now() + interval '3 hours', false),
   ('17171717-0000-4000-8000-0000000000c1', 'Here on', 'Shaw, DC', now() - interval '5 hours', now() + interval '1 hour', false),
   ('17171717-0000-4000-8000-0000000000c2', 'Here ended', 'Shaw, DC', now() - interval '5 hours', now() - interval '30 minutes', false),
   ('17171717-0000-4000-8000-0000000000d1', 'Heads-ups', 'Shaw, DC', now() - interval '5 hours', now() + interval '2 hours', false);
@@ -187,7 +189,10 @@ select ok((select relrowsecurity from pg_class where oid = 'private.vibe_snapsho
 select is((select array_agg(column_name::text order by column_name::text)
            from information_schema.columns
            where table_schema = 'private' and table_name = 'vibe_snapshots'),
-  array['event_id', 'night_average', 'published_at', 'raters', 'reactions', 'score', 'scored_at'],
+  -- VC-53/54 (20261027200000) added row averages and the night count: totals, not ids.
+  array['crowd_average', 'energy_average', 'event_id', 'music_average', 'night_average',
+        'night_crowd_average', 'night_energy_average', 'night_music_average', 'night_raters',
+        'published_at', 'raters', 'reactions', 'score', 'scored_at'],
   'vibe_snapshots holds totals only: no user id column');
 
 -- ---- 2. VC-50: the 0.25 floor (3) -------------------------------------------
@@ -207,7 +212,7 @@ set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"17171717-9999-4999-8999-000000000001","role":"authenticated"}', true);
 select is(public.submit_rating('17171717-0000-4000-8000-0000000000b1', 3, 3, 3, 'fire') ->> 'status', 'saved',
   'gate: guest 1 rates');
-select is(public.get_event_vibe('17171717-0000-4000-8000-0000000000b1') - 'here',
+select is(public.get_event_vibe('17171717-0000-4000-8000-0000000000b1') - 'here' - 'breakdown' - 'night',
   jsonb_build_object('state', 'none', 'raters', 0, 'score', null, 'label', null,
     'night_average', null, 'minutes_since_last', null, 'reactions', '[]'::jsonb),
   'privacy: ONE new rating publishes nothing (still none, 0 raters)');
@@ -229,7 +234,7 @@ select pg_temp.rewind('17171717-0000-4000-8000-0000000000b1', 1);
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"17171717-9999-4999-8999-000000000003","role":"authenticated"}', true);
 select public.submit_rating('17171717-0000-4000-8000-0000000000b1', 3, 3, 2, 'dancing');
-select is(public.get_event_vibe('17171717-0000-4000-8000-0000000000b1') - 'here',
+select is(public.get_event_vibe('17171717-0000-4000-8000-0000000000b1') - 'here' - 'breakdown' - 'night',
   jsonb_build_object('state', 'early', 'raters', 3, 'score', null, 'label', null,
     'night_average', null, 'minutes_since_last', 0, 'reactions', '[]'::jsonb),
   'the third new rater publishes: early, 3 raters (no number under 5)');
@@ -259,10 +264,11 @@ select set_config('request.jwt.claims', '{"sub":"17171717-9999-4999-8999-0000000
 select public.submit_rating('17171717-0000-4000-8000-0000000000b1', 3, 3, 3, 'fire');
 reset role;
 -- What the app sees now must be exactly the fresh vibe at this moment.
-select is(private.published_vibe('17171717-0000-4000-8000-0000000000b1', now()),
+-- ("breakdown" and "night", VC-53/54, are checked with a fixed clock in 023.)
+select is(private.published_vibe('17171717-0000-4000-8000-0000000000b1', now()) - 'breakdown' - 'night',
   private.event_vibe('17171717-0000-4000-8000-0000000000b1', now()),
   'guest 6 publishes: the snapshot equals the fresh vibe at that moment');
-select is(private.published_vibe('17171717-0000-4000-8000-0000000000b1', now()) - 'score' - 'label' - 'here',
+select is(private.published_vibe('17171717-0000-4000-8000-0000000000b1', now()) - 'score' - 'label' - 'here' - 'breakdown' - 'night',
   jsonb_build_object('state', 'live', 'raters', 6, 'night_average', null, 'minutes_since_last', 0,
     'reactions', '[{"reaction": "fire", "count": 4}, {"reaction": "dancing", "count": 1}]'::jsonb),
   'live with 6 raters and the tally (fire 4, dancing 1)');
@@ -336,11 +342,16 @@ select ok(public.get_event_vibe('17171717-0000-4000-8000-0000000000b1')::text !~
 -- Stale: 90 minutes after the snapshot's newest rating.
 reset role;
 select pg_temp.rewind('17171717-0000-4000-8000-0000000000b1', 90);
-select is(private.published_vibe('17171717-0000-4000-8000-0000000000b1', now()) - 'reactions' - 'here' - 'score' - 'label',
-  jsonb_build_object('state', 'stale', 'raters', 9, 'minutes_since_last', 90,
-    'night_average', (select round(avg(r.score), 1) from public.ratings r
-                      where r.event_id = '17171717-0000-4000-8000-0000000000b1' and r.hidden_at is null)),
-  'a snapshot 90 minutes old is stale, with the night average of its ratings');
+select is(private.published_vibe('17171717-0000-4000-8000-0000000000b1', now()) - 'reactions' - 'here' - 'score' - 'label' - 'breakdown' - 'night',
+  jsonb_build_object('state', 'stale', 'raters', 9, 'minutes_since_last', 90, 'night_average', null),
+  'a snapshot 90 minutes old is stale; the night average is never sent (20261027210000)');
+-- The night average is still worked out and kept inside the database (the
+-- All night word comes from it); it just never leaves.
+select is((select night_average from private.vibe_snapshots
+           where event_id = '17171717-0000-4000-8000-0000000000b1'),
+  (select round(avg(r.score), 1) from public.ratings r
+   where r.event_id = '17171717-0000-4000-8000-0000000000b1' and r.hidden_at is null),
+  'the snapshot keeps the night average of its ratings, inside the database only');
 select ok(query_to_xml('select * from private.vibe_snapshots', true, false, '')::text !~ '17171717-9999',
   'no user id is stored in the snapshots');
 

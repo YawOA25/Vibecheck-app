@@ -1,16 +1,29 @@
 /**
  * The "Live vibe" card on the event page (task VC-B09, first drawn in
- * VC-B05), v3 look (design/v3/Detail.dc.html).
+ * VC-B05), v3 look (design/v3/Detail.dc.html), with the VC-52 arc gauge, the
+ * VC-53 breakdown tiles and the VC-54 "Live / All night" switch.
  *
- * What it shows:
- *   - the gold "LIVE VIBE" label;
- *   - the meter (src/components/VibeMeter.tsx): the score and its word, or
+ * What it shows, top to bottom (design/score-visuals-and-tags-spec.md):
+ *   - a header row: the label ("LIVE VIBE" with a gold dot, "LAST VIBE"
+ *     with a grey dot when quiet, "TONIGHT'S VIBE" in the All night view,
+ *     "LAST NIGHT'S VIBE" after 5 AM) and, once there is a score, the
+ *     Live / All night switch;
+ *   - the gauge (src/components/VibeMeter.tsx): the score and its word, or
  *     "Early reading" / "No vibe yet";
  *   - one line under it: "5 people · updated 4 min ago", "Early reading: 3
- *     people so far", "Quiet for 2 hrs · night average 7.4" or "No vibe yet.
- *     Be the first.";
+ *     people so far", "Quiet for 2 hrs", "No vibe yet. Be the first." or, in
+ *     the All night view, "112 ratings tonight";
+ *   - the Crowd / Music / Energy tiles (words only), when a score shows;
  *   - the headcount, "74 here" (proposal VC-42: a number only, never names);
  *   - the reaction tally, e.g. "🔥 3 · 💃 1", once there are 5+ ratings.
+ *
+ * The switch (VC-54): hidden until there's a score; starts on Live every
+ * time the page opens (never remembered). "All night" shows the night's
+ * vibe WORD and tiles, never a number (cto privacy fix; the night ends 5 AM
+ * New York). After that 5 AM, Live means
+ * nothing any more, so the switch hides and the night view shows alone.
+ * The gauge, word, tiles and line switch together; "N here" and the tally
+ * stay the same in both views.
  *
  * How it stays fresh: it loads when the event page comes into view, then asks
  * again every 20 seconds while the page is on screen and the app is open
@@ -20,12 +33,23 @@
  */
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { ActivityIndicator, AppState, StyleSheet, Text, View } from 'react-native';
+import { AccessibilityInfo, AppState, StyleSheet, Text, View } from 'react-native';
 
+import { BreakdownTiles } from '@/components/BreakdownTiles';
+import { TwoWaySwitch } from '@/components/TwoWaySwitch';
 import { VibeMeter } from '@/components/VibeMeter';
-import { VIBE_LOAD_ERROR, VIBE_REFRESH_MS, hereText, reactionLine, vibeDetail } from '@/lib/vibe';
+import {
+  VIBE_LOAD_ERROR,
+  VIBE_REFRESH_MS,
+  hereText,
+  meterSpoken,
+  nightAsVibe,
+  nightDetail,
+  reactionLine,
+  vibeDetail,
+} from '@/lib/vibe';
 import { getEventVibe } from '@/lib/vibe-api';
-import type { Vibe } from '@/lib/vibe';
+import type { Vibe, VibeView } from '@/lib/vibe';
 import { colors, radius, spacing, typography } from '@/theme';
 
 /** What a LiveVibeCard needs. */
@@ -41,6 +65,91 @@ export interface LiveVibeCardProps {
 /** What the card is showing: loading, an error (nothing loaded yet), or a vibe. */
 type CardState = { kind: 'loading' } | { kind: 'error' } | { kind: 'ready'; vibe: Vibe };
 
+/** The switch's two options (VC-54), with what screen readers say. */
+const VIEW_OPTIONS = [
+  { key: 'live', label: 'Live', spoken: 'Live score' },
+  { key: 'night', label: 'All night', spoken: 'All night score' },
+] as const;
+
+/** An empty vibe, for drawing the bare gauge while loading or after a failed load. */
+const EMPTY_VIBE: Vibe = {
+  state: 'none',
+  raters: 0,
+  here: 0,
+  score: null,
+  label: null,
+  nightAverage: null,
+  minutesSinceLast: null,
+  reactions: [],
+  breakdown: null,
+  night: null,
+};
+
+/** What the card draws for one answer: which view, and the vibe to draw. */
+export interface Shown {
+  /** The view on screen (the picked one, unless only one makes sense). */
+  view: VibeView;
+  /** The vibe the gauge and tiles draw (the night's, in the night view). */
+  vibe: Vibe;
+  /** Whether the switch is offered. */
+  showSwitch: boolean;
+  /** The header words. */
+  label: string;
+  /** The dot before the header: gold, grey, or none. */
+  dot: 'gold' | 'grey' | null;
+}
+
+/** What the card draws before an answer has arrived (or after a failed first load). */
+const SHOWN_BEFORE_LOAD: Shown = {
+  view: 'live',
+  vibe: EMPTY_VIBE,
+  showSwitch: false,
+  label: 'LIVE VIBE',
+  dot: 'gold',
+};
+
+/**
+ * Works out what to draw for a vibe and the picked view.
+ *
+ * @param vibe - the server's answer.
+ * @param picked - the option the guest picked on the switch.
+ * @returns the view, the vibe to draw, whether the switch shows, and the
+ *   header. Rules (spec, section 4): the switch shows only with a score and
+ *   a night that isn't over; after 5 AM New York, a night with a word shows
+ *   alone ("LAST NIGHT'S VIBE"); otherwise the live view.
+ */
+export function shownFor(vibe: Vibe, picked: VibeView): Shown {
+  const night = vibe.night;
+  const hasScore = vibe.state === 'live' || vibe.state === 'stale';
+  if (hasScore && night && night.over && night.label !== null) {
+    return {
+      view: 'night',
+      vibe: nightAsVibe(vibe, night),
+      showSwitch: false,
+      label: "LAST NIGHT'S VIBE",
+      dot: null,
+    };
+  }
+  const showSwitch = hasScore && night !== null && !night.over;
+  if (showSwitch && picked === 'night' && night) {
+    return {
+      view: 'night',
+      vibe: nightAsVibe(vibe, night),
+      showSwitch,
+      label: "TONIGHT'S VIBE",
+      dot: null,
+    };
+  }
+  const stale = vibe.state === 'stale';
+  return {
+    view: 'live',
+    vibe,
+    showSwitch,
+    label: stale ? 'LAST VIBE' : 'LIVE VIBE',
+    dot: stale ? 'grey' : 'gold',
+  };
+}
+
 /**
  * Renders the card.
  *
@@ -48,6 +157,8 @@ type CardState = { kind: 'loading' } | { kind: 'error' } | { kind: 'ready'; vibe
  */
 export function LiveVibeCard({ eventId, ended, refreshKey }: LiveVibeCardProps) {
   const [state, setState] = useState<CardState>({ kind: 'loading' });
+  // The switch's choice. Starts on Live each time the card (page) opens.
+  const [picked, setPicked] = useState<VibeView>('live');
 
   // Load now, then every 20 seconds while the page is in view. State is only
   // set when an answer arrives, and late answers are ignored once the page
@@ -82,41 +193,73 @@ export function LiveVibeCard({ eventId, ended, refreshKey }: LiveVibeCardProps) 
     }, [eventId, refreshKey]),
   );
 
+  const shown = state.kind === 'ready' ? shownFor(state.vibe, picked) : SHOWN_BEFORE_LOAD;
+
+  /**
+   * Switches the view and tells screen-reader users what the gauge says now.
+   *
+   * @param next - the newly picked view.
+   */
+  function pick(next: VibeView) {
+    setPicked(next);
+    if (state.kind === 'ready') {
+      const after = shownFor(state.vibe, next);
+      AccessibilityInfo.announceForAccessibility(meterSpoken(after.vibe, after.view));
+    }
+  }
+
   return (
     <View style={styles.card}>
-      <View style={styles.labelRow}>
-        {/* The small gold dot is decoration; the words carry the meaning. */}
-        <View style={styles.dot} />
-        <Text style={styles.label} accessibilityRole="header">
-          LIVE VIBE
-        </Text>
+      <View style={styles.headerRow}>
+        <View style={styles.labelRow}>
+          {/* The small dot is decoration; the words carry the meaning. */}
+          {shown.dot ? <View style={[styles.dot, shown.dot === 'grey' && styles.dotGrey]} /> : null}
+          <Text
+            style={[styles.label, shown.dot !== 'gold' && styles.labelPlain]}
+            accessibilityRole="header"
+          >
+            {shown.label}
+          </Text>
+        </View>
+        {shown.showSwitch ? (
+          <TwoWaySwitch options={VIEW_OPTIONS} value={shown.view} onChange={pick} />
+        ) : null}
       </View>
 
-      {state.kind === 'loading' ? (
-        <ActivityIndicator color={colors.accent} accessibilityLabel="Loading the vibe" />
-      ) : null}
+      <VibeMeter
+        vibe={shown.vibe}
+        view={shown.view}
+        loading={state.kind === 'loading'}
+        blank={state.kind === 'error'}
+      />
 
       {state.kind === 'error' ? <Text style={styles.body}>{VIBE_LOAD_ERROR}</Text> : null}
 
-      {state.kind === 'ready' ? <VibeBody vibe={state.vibe} ended={ended} /> : null}
+      {state.kind === 'ready' ? <VibeLines vibe={state.vibe} shown={shown} ended={ended} /> : null}
     </View>
   );
 }
 
 /**
- * The card's body once a vibe has loaded.
+ * The lines under the gauge once a vibe has loaded.
  *
- * @param props.vibe - the event's vibe.
+ * @param props.vibe - the event's vibe (for "N here" and the tally, the same
+ *   in both views).
+ * @param props.shown - what the card is drawing (view and its vibe).
  * @param props.ended - whether the event is over (for "were here").
- * @returns the meter and the lines under it.
+ * @returns the detail line, the tiles, the headcount and the tally.
  */
-function VibeBody({ vibe, ended }: { vibe: Vibe; ended: boolean }) {
+function VibeLines({ vibe, shown, ended }: { vibe: Vibe; shown: Shown; ended: boolean }) {
   const here = hereText(vibe.here, ended);
   const reactions = reactionLine(vibe.reactions);
+  const detail =
+    shown.view === 'night' && shown.vibe.night ? nightDetail(shown.vibe.night) : vibeDetail(vibe);
   return (
     <>
-      <VibeMeter vibe={vibe} />
-      <Text style={styles.body}>{vibeDetail(vibe)}</Text>
+      <Text style={styles.body}>{detail}</Text>
+      {shown.vibe.breakdown ? (
+        <BreakdownTiles breakdown={shown.vibe.breakdown} stale={shown.vibe.state === 'stale'} />
+      ) : null}
       {here ? <Text style={styles.here}>{here}</Text> : null}
       {reactions ? (
         <Text style={styles.body} accessibilityLabel={reactions.spoken}>
@@ -140,9 +283,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.xs,
   },
-  labelRow: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 6 },
+  // Label on the left, switch on the right; wraps under large text.
+  headerRow: {
+    alignSelf: 'stretch',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+  },
+  labelRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.accent },
+  dotGrey: { backgroundColor: colors.muted },
   label: { ...typography.label, color: colors.accent },
+  labelPlain: { color: colors.muted },
   body: { ...typography.caption, color: colors.muted, textAlign: 'center' },
   here: { ...typography.bodySm, color: colors.text, textAlign: 'center' },
 });

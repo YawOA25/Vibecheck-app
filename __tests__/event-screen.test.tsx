@@ -147,6 +147,8 @@ beforeEach(() => {
       nightAverage: null,
       minutesSinceLast: 1,
       reactions: [],
+      breakdown: null,
+      night: null,
     },
   });
 });

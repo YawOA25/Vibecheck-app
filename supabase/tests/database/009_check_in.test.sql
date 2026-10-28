@@ -315,7 +315,14 @@ select is_empty(
          ('public', 'event_private', 'lng'),
          ('public', 'ratings', 'score'),
          ('private', 'vibe_snapshots', 'score'),
-         ('private', 'vibe_snapshots', 'night_average')) $$,
+         ('private', 'vibe_snapshots', 'night_average'),
+         -- VC-53/54: average taps (1 to 3) per row, not coordinates.
+         ('private', 'vibe_snapshots', 'crowd_average'),
+         ('private', 'vibe_snapshots', 'music_average'),
+         ('private', 'vibe_snapshots', 'energy_average'),
+         ('private', 'vibe_snapshots', 'night_crowd_average'),
+         ('private', 'vibe_snapshots', 'night_music_average'),
+         ('private', 'vibe_snapshots', 'night_energy_average')) $$,
   'no table has a column that could hold a guest''s coordinates');
 -- (b) The distinctive reading from section 9 (38.9001234, -77.0004321)
 --     appears in no row of any table in public or private. query_to_xml

@@ -22,6 +22,15 @@
  * people have rated, so watching the meter can't reveal one person's
  * rating. The JSON shape is unchanged, so nothing here had to change; only
  * the meaning of two fields did (see `here` and `minutesSinceLast` below).
+ *
+ * Since VC-53 / VC-54 (migration 20261027200000_score_visuals.sql) the
+ * snapshot also carries, only when a score shows:
+ *   - `breakdown`: the Crowd / Music / Energy tile WORDS (never numbers);
+ *   - `night`: the "All night" view, WORDS ONLY (the night's vibe word,
+ *     count and tiles; the night ends at 5 AM New York). No night number is
+ *     ever sent (cto, migration 20261027210000: an average next to its exact
+ *     count could be subtracted across snapshots). The server leaves the night
+ *     word out when showing it could single out a few people's ratings.
  */
 import { REACTIONS, vibeLabel } from '@/lib/rating';
 import type { ReactionKey, VibeLabel } from '@/lib/rating';
@@ -39,6 +48,42 @@ export type VibeState = 'none' | 'early' | 'stale' | 'live';
 export interface ReactionCount {
   reaction: ReactionKey;
   count: number;
+}
+
+/** The words a Crowd tile can show (VC-53). */
+export type CrowdWord = 'quiet' | 'good' | 'packed';
+/** The words a Music tile can show. */
+export type MusicWord = 'meh' | 'good' | 'fire';
+/** The words an Energy tile can show. */
+export type EnergyWord = 'low' | 'good' | 'fire';
+
+/**
+ * The three breakdown tiles (VC-53): one word each, worked out by the server
+ * from the same ratings as the score. Never a number, so a tile can't reveal
+ * one person's tap.
+ */
+export interface Breakdown {
+  crowd: CrowdWord;
+  music: MusicWord;
+  energy: EnergyWord;
+}
+
+/**
+ * The "All night" view (VC-54): every rating of this event's night (it ends
+ * at 5 AM New York), as a plain average.
+ */
+export interface NightVibe {
+  /**
+   * The night's vibe word, or null when the server withheld it. There is no
+   * night number: the app only ever gets the word (cto privacy fix).
+   */
+  label: VibeLabel | null;
+  /** How many ratings the night holds ("112 ratings tonight"). */
+  raters: number;
+  /** The night's tile words, or null (withheld together with the word). */
+  breakdown: Breakdown | null;
+  /** true once the night's 5 AM New York has passed ("LAST NIGHT'S VIBE"). */
+  over: boolean;
 }
 
 /** One event's vibe, tidied up from the server's answer. */
@@ -59,7 +104,10 @@ export interface Vibe {
   score: number | null;
   /** The word for the score, or null when there is no score. */
   label: VibeLabel | null;
-  /** stale only: the plain average of the night's ratings; otherwise null (privacy). */
+  /**
+   * Read by builds from before VC-54. The server sends null since migration
+   * 20261027210000 (no night number leaves the database), so this is null.
+   */
   nightAverage: number | null;
   /**
    * Whole minutes since the newest rating in the published score (worked out
@@ -68,7 +116,14 @@ export interface Vibe {
   minutesSinceLast: number | null;
   /** stale and live: the reaction tally, most first. Empty otherwise. */
   reactions: ReactionCount[];
+  /** stale and live: the live tile words (VC-53); otherwise null. */
+  breakdown: Breakdown | null;
+  /** stale and live: the "All night" view (VC-54); otherwise null. */
+  night: NightVibe | null;
 }
+
+/** Which view of the score the event page shows (VC-54 switch). */
+export type VibeView = 'live' | 'night';
 
 /** What {@link getEventVibe} returns. */
 export type VibeOutcome = { ok: true; vibe: Vibe } | { ok: false; message: string };
@@ -91,6 +146,30 @@ export const NO_VIBE_TITLE = 'No vibe yet';
 export const NO_VIBE_BODY = 'No vibe yet. Be the first.';
 export const EARLY_TITLE = 'Early reading';
 export const VIBE_LOAD_ERROR = "We couldn't load the vibe.";
+/** All night view with no word (withheld for privacy, or hidden ratings). */
+export const NIGHT_WITHHELD_BODY = 'The night vibe will show a little later.';
+
+/** The tiles, in the order they're shown: caps label and each word's display form. */
+export const BREAKDOWN_TILES = [
+  {
+    key: 'crowd',
+    label: 'CROWD',
+    spoken: 'Crowd',
+    words: { quiet: 'Quiet', good: 'Good', packed: 'Packed' },
+  },
+  {
+    key: 'music',
+    label: 'MUSIC',
+    spoken: 'Music',
+    words: { meh: 'Meh', good: 'Good', fire: 'Fire' },
+  },
+  {
+    key: 'energy',
+    label: 'ENERGY',
+    spoken: 'Energy',
+    words: { low: 'Low', good: 'Good', fire: 'Fire' },
+  },
+] as const;
 
 const STATES: readonly string[] = ['none', 'early', 'stale', 'live'];
 const LABELS: readonly string[] = ['Quiet', 'Good', 'Hot', 'Fire'];
@@ -119,6 +198,61 @@ function score(value: unknown): number | null {
 }
 
 /**
+ * Reads the tile words.
+ *
+ * @param value - the server's "breakdown" (or a night's).
+ * @returns the three words, or null if missing or any word is unknown (then
+ *   no tiles show at all, rather than a half row).
+ */
+function parseBreakdown(value: unknown): Breakdown | null {
+  if (!value || typeof value !== 'object') return null;
+  const v = value as Record<string, unknown>;
+  const ok = BREAKDOWN_TILES.every((tile) => {
+    const word = v[tile.key];
+    return typeof word === 'string' && Object.keys(tile.words).includes(word);
+  });
+  return ok ? ({ crowd: v.crowd, music: v.music, energy: v.energy } as Breakdown) : null;
+}
+
+/**
+ * Reads a score's word, preferring the server's (one source of truth), but
+ * falling back to the app's own copy of the same rule if it is missing.
+ *
+ * @param shown - the score (or null).
+ * @param label - the server's word.
+ * @returns the word, or null with no score.
+ */
+function labelFor(shown: number | null, label: unknown): VibeLabel | null {
+  if (shown === null) return null;
+  return typeof label === 'string' && LABELS.includes(label)
+    ? (label as VibeLabel)
+    : vibeLabel(shown);
+}
+
+/**
+ * Reads the "All night" view.
+ *
+ * @param value - the server's "night".
+ * @returns the night view, or null if missing or not understood.
+ */
+function parseNight(value: unknown): NightVibe | null {
+  if (!value || typeof value !== 'object') return null;
+  const v = value as Record<string, unknown>;
+  const raters = count(v.raters);
+  if (raters === null) return null;
+  // Only the server's word counts; a number is never read, even if one is sent.
+  const label =
+    typeof v.label === 'string' && LABELS.includes(v.label) ? (v.label as VibeLabel) : null;
+  return {
+    label,
+    raters,
+    // Tiles only ever come with the night's word (the server withholds both together).
+    breakdown: label === null ? null : parseBreakdown(v.breakdown),
+    over: v.over === true,
+  };
+}
+
+/**
  * Checks the server's vibe JSON and tidies it up.
  *
  * @param data - whatever the server returned for one event.
@@ -139,14 +273,7 @@ export function parseVibe(data: unknown): Vibe | null {
   const shown = state === 'live' || state === 'stale' ? score(value.score) : null;
   if ((state === 'live' || state === 'stale') && shown === null) return null;
 
-  // Prefer the server's word (one source of truth), but fall back to the
-  // app's own copy of the same rule if the word is missing or unknown.
-  const label =
-    shown === null
-      ? null
-      : typeof value.label === 'string' && LABELS.includes(value.label)
-        ? (value.label as VibeLabel)
-        : vibeLabel(shown);
+  const label = labelFor(shown, value.label);
 
   const reactions: ReactionCount[] = [];
   if (Array.isArray(value.reactions)) {
@@ -166,11 +293,15 @@ export function parseVibe(data: unknown): Vibe | null {
     here,
     score: shown,
     label,
-    // The server only sends the night average when quiet (stale); sent while
-    // live it would give away each new rating, so ignore it in any other state.
-    nightAverage: state === 'stale' ? score(value.night_average) : null,
+    // Never shown any more: the server sends null (20261027210000), and the
+    // app ignores anything else, so no night number reaches the screen.
+    nightAverage: null,
     minutesSinceLast: count(value.minutes_since_last),
     reactions,
+    // Tiles and the night view only exist alongside a score (VC-53 rule 1);
+    // if the server ever sent them in 'none' or 'early', ignore them.
+    breakdown: shown === null ? null : parseBreakdown(value.breakdown),
+    night: shown === null ? null : parseNight(value.night),
   };
 }
 
@@ -259,11 +390,73 @@ export function vibeDetail(vibe: Vibe): string {
         vibe.minutesSinceLast === null
           ? 'Quiet for a while'
           : `Quiet for ${quietForText(vibe.minutesSinceLast)}`;
-      return vibe.nightAverage === null
-        ? quiet
-        : `${quiet} · night average ${formatScore(vibe.nightAverage)}`;
+      // The night average used to follow here; since VC-54 it is the All
+      // night view's own score instead (design spec, section 2).
+      return quiet;
     }
   }
+}
+
+/**
+ * The line under the gauge in the All night view.
+ *
+ * @param night - the night view.
+ * @returns e.g. "112 ratings tonight", or, when the server withheld the
+ *   word, "The night vibe will show a little later."
+ */
+export function nightDetail(night: NightVibe): string {
+  if (night.label === null) return NIGHT_WITHHELD_BODY;
+  return `${night.raters} ${night.raters === 1 ? 'rating' : 'ratings'} tonight`;
+}
+
+/**
+ * The vibe as the All night view shows it, in the same shape as the live
+ * one, so the gauge and tiles can draw either.
+ *
+ * @param vibe - the event's vibe.
+ * @param night - its night view.
+ * @returns a Vibe whose word, count and tiles are the night's, and whose
+ *   score is always null (the night has no number). Its state is 'live'
+ *   with a word (the gauge draws the word-only treatment), 'none' without.
+ */
+export function nightAsVibe(vibe: Vibe, night: NightVibe): Vibe {
+  return {
+    ...vibe,
+    state: night.label === null ? 'none' : 'live',
+    raters: night.raters,
+    score: null,
+    label: night.label,
+    nightAverage: null,
+    breakdown: night.breakdown,
+    night,
+  };
+}
+
+/**
+ * The tiles as the screen shows them.
+ *
+ * @param breakdown - the tile words.
+ * @returns three { label, word } pairs, e.g. { label: 'CROWD', word: 'Packed' }.
+ */
+export function breakdownTiles(breakdown: Breakdown): { label: string; word: string }[] {
+  return BREAKDOWN_TILES.map((tile) => ({
+    label: tile.label,
+    word: (tile.words as Record<string, string>)[breakdown[tile.key]],
+  }));
+}
+
+/**
+ * What a screen reader says for the tile row (one element).
+ *
+ * @param breakdown - the tile words.
+ * @param stale - true when the score is old (prefix "Last reading:").
+ * @returns e.g. "Crowd Packed, Music Fire, Energy Good".
+ */
+export function breakdownSpoken(breakdown: Breakdown, stale: boolean): string {
+  const parts = breakdownTiles(breakdown)
+    .map((tile, i) => `${BREAKDOWN_TILES[i].spoken} ${tile.word}`)
+    .join(', ');
+  return stale ? `Last reading: ${parts}` : parts;
 }
 
 /**
@@ -288,11 +481,15 @@ export function reactionLine(reactions: ReactionCount[]): { text: string; spoken
 /**
  * What a screen reader says for the meter.
  *
- * @param vibe - the event's vibe.
+ * @param vibe - the event's vibe (for the night view, from nightAsVibe).
+ * @param view - which view it is (default live).
  * @returns e.g. "Vibe 8.0 out of 10, Hot", "Last vibe 8.0 out of 10, Hot",
+ *   "All night vibe: Hot" (words only, no number),
  *   "Early reading, no score yet" or "No vibe yet".
  */
-export function meterSpoken(vibe: Vibe): string {
+export function meterSpoken(vibe: Vibe, view: VibeView = 'live'): string {
+  // The All night view has a word and never a number.
+  if (view === 'night') return vibe.label ? `All night vibe: ${vibe.label}` : NO_VIBE_TITLE;
   if (vibe.score !== null && vibe.label) {
     const lead = vibe.state === 'stale' ? 'Last vibe' : 'Vibe';
     return `${lead} ${formatScore(vibe.score)} out of 10, ${vibe.label}`;

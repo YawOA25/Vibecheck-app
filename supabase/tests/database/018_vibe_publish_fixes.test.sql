@@ -31,9 +31,12 @@ select ('18181818-9999-4999-8999-0000000000' || lpad(n::text, 2, '0'))::uuid,
 from generate_series(1, 10) n;
 
 -- Events (all on now): …e1 the backwards case, …e2 to …e5 the night average.
+-- Start: 7 hours ago, but never before the 5 AM New York that began
+-- tonight's night, so the night (VC-54: it ends at the next 5 AM) always
+-- holds every rating below, whatever time of day the tests run.
 insert into public.events (id, title, area_label, starts_at, ends_at, is_test)
 select ('18181818-0000-4000-8000-0000000000e' || n)::uuid, 'Fix ' || n, 'Shaw, DC',
-       now() - interval '7 hours', now() + interval '2 hours', false
+       greatest(now() - interval '7 hours', private.night_start(now())), now() + interval '2 hours', false
 from generate_series(1, 5) n;
 
 -- A test-only helper to add ratings: guests from_n..to_n rate the event
@@ -87,15 +90,18 @@ from (values ('18181818-0000-4000-8000-0000000000e2'::uuid), ('18181818-0000-400
              ('18181818-0000-4000-8000-0000000000e4'::uuid), ('18181818-0000-4000-8000-0000000000e5'::uuid)) e(id);
 
 -- e2: without the fix, 6 x 8.3 - 5 x 10.0 = -0.2, so the oldest is clearly a 0.
-select is(private.published_vibe('18181818-0000-4000-8000-0000000000e2', now()) - 'here' - 'reactions',
+-- ("breakdown" and "night", VC-53/54, are checked with a fixed clock in 023.)
+select is(private.published_vibe('18181818-0000-4000-8000-0000000000e2', now()) - 'here' - 'reactions' - 'breakdown' - 'night',
   jsonb_build_object('state', 'stale', 'raters', 6, 'score', 10.0, 'label', 'Fire',
     'night_average', null, 'minutes_since_last', 240),
   'privacy: 6 raters, score from the 5 newest: no night average (it would reveal the oldest rating)');
-select is(private.published_vibe('18181818-0000-4000-8000-0000000000e5', now()) -> 'night_average', 'null'::jsonb,
+-- Since 20261027210000 the night average never leaves the database, so the
+-- rule is checked on the value the snapshot stores.
+select is((select night_average from private.vibe_snapshots where event_id = '18181818-0000-4000-8000-0000000000e5'), null,
   'privacy: 5 in the window plus 1 older: no night average either');
-select is(private.published_vibe('18181818-0000-4000-8000-0000000000e3', now()) -> 'night_average', '10.0'::jsonb,
+select is((select night_average from private.vibe_snapshots where event_id = '18181818-0000-4000-8000-0000000000e3'), 10.0,
   'the score uses every rating (none left out): the night average is shown');
-select is(private.published_vibe('18181818-0000-4000-8000-0000000000e4', now()) -> 'night_average', '5.0'::jsonb,
+select is((select night_average from private.vibe_snapshots where event_id = '18181818-0000-4000-8000-0000000000e4'), 5.0,
   '5 ratings left out of the score: the night average (an average of 5+) is shown');
 select is((select count(*)::int from private.vibe_snapshots
            where event_id in ('18181818-0000-4000-8000-0000000000e2', '18181818-0000-4000-8000-0000000000e3',

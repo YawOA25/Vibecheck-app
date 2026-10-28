@@ -276,13 +276,15 @@ select throws_ok($$ select public.get_events_vibe(array['eeeeeeee-0000-4000-8000
 
 select set_config('request.jwt.claims',
   '{"sub":"eeeeeeee-9999-4999-8999-000000000001","role":"authenticated"}', true);
-select is(public.get_event_vibe('eeeeeeee-0000-4000-8000-0000000000f5') - 'reactions',
+-- "breakdown" and "night" (VC-53/54, migration 20261027200000) are checked
+-- in 023_score_visuals.test.sql with a fixed clock, so they're left out here.
+select is(public.get_event_vibe('eeeeeeee-0000-4000-8000-0000000000f5') - 'reactions' - 'breakdown' - 'night',
   jsonb_build_object('state', 'live', 'raters', 5, 'here', 7, 'score', 8.0, 'label', 'Hot',
     'night_average', null, 'minutes_since_last', 0),
   'a guest gets the live vibe of the event');
 select is((select array_agg(k order by k) from jsonb_object_keys(public.get_event_vibe('eeeeeeee-0000-4000-8000-0000000000f5')) k),
-  array['here', 'label', 'minutes_since_last', 'night_average', 'raters', 'reactions', 'score', 'state'],
-  'the answer holds totals only (exactly these keys; no exact last_rating_at)');
+  array['breakdown', 'here', 'label', 'minutes_since_last', 'night', 'night_average', 'raters', 'reactions', 'score', 'state'],
+  'the answer holds totals and words only (exactly these keys; no exact last_rating_at)');
 select ok(public.get_event_vibe('eeeeeeee-0000-4000-8000-0000000000f5')::text !~ 'eeeeeeee-9999',
   'no user id appears in the answer');
 select throws_ok($$ select public.get_event_vibe('eeeeeeee-0000-4000-8000-0000000000f6') $$,
