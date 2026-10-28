@@ -1,6 +1,7 @@
 /**
  * Tests for the rating screen (app/rate/[id].tsx), task VC-B08, with the
- * heads-up tags (VC-43).
+ * heads-up tags (VC-43). VC-32d: a saved rating gives one light haptic tap
+ * (haptics are faked), a refused one gives none.
  *
  * The router, the reads, the quiet location reader and the server calls are
  * all fakes, so each test chooses what "happens". We check:
@@ -33,6 +34,7 @@ import { readLocationQuietly } from '@/lib/check-in-location';
 import { getEvent } from '@/lib/events-read';
 import { getMyRatingStatus, submitRating } from '@/lib/ratings-api';
 import { offerRecapReminder } from '@/lib/recap-notifications';
+import { tapLight, tapSuccess, tapWarning } from '@/lib/haptics';
 import type { PublicEvent } from '@/lib/tonight';
 
 jest.mock('@/lib/events-read', () => ({ getEvent: jest.fn() }));
@@ -42,6 +44,12 @@ jest.mock('@/lib/check-in-api', () => ({ submitCheckIn: jest.fn() }));
 jest.mock('@/lib/auth-context', () => ({ useAuth: jest.fn() }));
 // The 11 AM recap note (VC-B12); its own rules are in recap-notifications.test.ts.
 jest.mock('@/lib/recap-notifications', () => ({ offerRecapReminder: jest.fn() }));
+// VC-32d: fake vibrations, so tests can check WHEN each one fires.
+jest.mock('@/lib/haptics', () => ({
+  tapLight: jest.fn(),
+  tapSuccess: jest.fn(),
+  tapWarning: jest.fn(),
+}));
 // The "mock" prefix lets jest.mock (which runs first) use these fakes.
 const mockBack = jest.fn();
 const mockReplace = jest.fn();
@@ -179,6 +187,10 @@ describe('RateScreen form', () => {
     ).toBeOnTheScreen();
     await fireEvent.press(screen.getByRole('button', { name: 'Done' }));
     expect(mockBack).toHaveBeenCalled();
+    // VC-32d: one light tap for the saved rating, and no other buzz.
+    expect(tapLight).toHaveBeenCalledTimes(1);
+    expect(tapSuccess).not.toHaveBeenCalled();
+    expect(tapWarning).not.toHaveBeenCalled();
   });
 
   it('a reaction can be un-picked by tapping it again (it is optional)', async () => {
@@ -504,5 +516,7 @@ describe('RateScreen next-morning recap note (VC-B12)', () => {
     await fireEvent.press(screen.getByRole('button', { name: SUBMIT_LABEL }));
     await screen.findByText(/update your rating in 12 minutes/);
     expect(offerRecapReminder).not.toHaveBeenCalled();
+    // Nothing was saved, so no "saved" tap either (VC-32d).
+    expect(tapLight).not.toHaveBeenCalled();
   });
 });

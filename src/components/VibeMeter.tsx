@@ -41,18 +41,12 @@
  * (no extra animation library); SVG props can't use the native driver.
  */
 import { useEffect, useId, useRef, useState } from 'react';
-import {
-  AccessibilityInfo,
-  ActivityIndicator,
-  Animated,
-  Easing,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { ActivityIndicator, Animated, Easing, StyleSheet, Text, View } from 'react-native';
 import Svg, { Defs, Ellipse, Path, RadialGradient, Stop } from 'react-native-svg';
 
 import type { VibeLabel } from '@/lib/rating';
+// Shared with the skeletons and card press (Q6); the logic moved there unchanged.
+import { useReduceMotion } from '@/lib/reduce-motion';
 import { EARLY_TITLE, NO_VIBE_TITLE, VIBE_LOAD_ERROR, formatScore, meterSpoken } from '@/lib/vibe';
 import type { Vibe, VibeView } from '@/lib/vibe';
 import { colors, fonts, headlineMaxScale, typography } from '@/theme';
@@ -121,34 +115,6 @@ export function wordColour(label: VibeLabel | null): string {
 export function dashOffset(score: number): number {
   const clamped = Math.max(0, Math.min(10, score));
   return ARC_LENGTH * (1 - clamped / 10);
-}
-
-/**
- * Tracks the phone's "Reduce Motion" setting.
- *
- * @returns true while Reduce Motion is on, false while off, and null until
- *   the phone has answered (the gauge waits, so it never starts a sweep
- *   that should not happen). A listener follows later changes.
- */
-function useReduceMotion(): boolean | null {
-  const [reduce, setReduce] = useState<boolean | null>(null);
-  useEffect(() => {
-    let active = true;
-    AccessibilityInfo.isReduceMotionEnabled()
-      .then((on) => {
-        if (active) setReduce(on);
-      })
-      // If the phone can't say, assume motion is fine (the default setting).
-      .catch(() => {
-        if (active) setReduce(false);
-      });
-    const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduce);
-    return () => {
-      active = false;
-      subscription?.remove();
-    };
-  }, []);
-  return reduce;
 }
 
 /** What a VibeMeter needs. */

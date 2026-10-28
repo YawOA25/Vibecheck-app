@@ -6,6 +6,12 @@
  * Look (design/v3/Rate.dc.html): picked chips are gold-filled ('block') or
  * gold-edged ('pill'); unpicked ones are dark with a grey edge.
  *
+ * Pill fills (Q6, polish audit note): v3 uses two picked-pill looks.
+ *   - 'tint' (default): a dark gold-tinted fill with a gold edge. v3's
+ *     multi-select look (several can be on), e.g. heads-up tags.
+ *   - 'solid': a solid gold fill with dark (onAccent) text. v3's
+ *     single-select look, e.g. the Tonight date filter (only one is on).
+ *
  * Accessibility (v3 spec section 3, fix 9): being picked is never shown by
  * colour alone. A picked chip also shows a check mark, and screen readers
  * hear "selected" (or "checked" for a radio). Every chip is at least 44 px
@@ -50,6 +56,11 @@ export interface ChoiceChipProps {
    * 'radio' for one choice in a pick-one row (see the file comment).
    */
   role?: 'button' | 'radio';
+  /**
+   * How a picked PILL is filled: 'tint' (default, multi-select look) or
+   * 'solid' (gold fill, single-select look). Blocks are always solid gold.
+   */
+  pickedFill?: 'tint' | 'solid';
 }
 
 /**
@@ -68,9 +79,13 @@ export function ChoiceChip({
   accessibilityHint,
   disabled,
   role = 'button',
+  pickedFill = 'tint',
 }: ChoiceChipProps) {
   // The 2 px gold focus ring for keyboard and switch users (spec section 3, fix 6).
   const [focused, setFocused] = useState(false);
+  // A picked chip with a solid gold fill: every picked block, and pills
+  // that ask for the single-select look. Their check and words go dark.
+  const solid = shape === 'block' || pickedFill === 'solid';
   return (
     <Pressable
       onPress={onPress}
@@ -89,7 +104,7 @@ export function ChoiceChip({
       style={({ pressed }) => [
         styles.base,
         shape === 'block' ? styles.block : styles.pill,
-        selected && (shape === 'block' ? styles.blockSelected : styles.pillSelected),
+        selected && (solid ? styles.blockSelected : styles.pillSelected),
         pressed && !selected && styles.pressed,
         focused && styles.focused,
       ]}
@@ -100,17 +115,13 @@ export function ChoiceChip({
             on a gold block, gold on a pill. Screen readers skip it and
             hear "selected" instead. */}
         {selected ? (
-          <Icon
-            name="check"
-            size={iconSize.sm}
-            color={shape === 'block' ? colors.onAccent : colors.accent}
-          />
+          <Icon name="check" size={iconSize.sm} color={solid ? colors.onAccent : colors.accent} />
         ) : null}
         <Text
           style={[
             styles.label,
             shape === 'block' ? styles.blockText : styles.pillText,
-            selected && (shape === 'block' ? styles.blockTextSelected : styles.pillTextSelected),
+            selected && (solid ? styles.blockTextSelected : styles.pillTextSelected),
           ]}
         >
           {label}
@@ -131,6 +142,7 @@ const styles = StyleSheet.create({
   },
   // v3: 48 px tall, radius 14, three to a row.
   block: { flex: 1, minHeight: 48, borderRadius: radius.field, paddingHorizontal: spacing.xs },
+  // Solid gold: picked blocks, and picked pills with pickedFill 'solid'.
   blockSelected: { backgroundColor: colors.accent, borderColor: colors.accent },
   // Pills grow with their words; 44 px is the minimum tap height.
   pill: {

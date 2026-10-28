@@ -1,6 +1,7 @@
 /**
  * Tests for the check-in screen (app/check-in/[id].tsx) and its result
- * screens (src/lib/check-in-screens.ts), task VC-B06.
+ * screens (src/lib/check-in-screens.ts), task VC-B06. VC-32d: a passed
+ * check-in gives the success haptic (faked); "too far" gives none.
  *
  * The router, the event read, the location reader and the server call are
  * all fakes, so each test can choose what "happens". We check:
@@ -33,11 +34,18 @@ import { readLocationForCheckIn } from '@/lib/check-in-location';
 import type { ReadingOutcome } from '@/lib/check-in-location';
 import { GPS_LOCKED_BODY, RATE_THE_NIGHT } from '@/lib/check-in-screens';
 import { getEvent } from '@/lib/events-read';
+import { tapSuccess } from '@/lib/haptics';
 import type { PublicEvent } from '@/lib/tonight';
 
 jest.mock('@/lib/events-read', () => ({ getEvent: jest.fn() }));
 jest.mock('@/lib/check-in-location', () => ({ readLocationForCheckIn: jest.fn() }));
 jest.mock('@/lib/check-in-api', () => ({ submitCheckIn: jest.fn() }));
+// VC-32d: fake vibrations, so tests can check WHEN each one fires.
+jest.mock('@/lib/haptics', () => ({
+  tapLight: jest.fn(),
+  tapSuccess: jest.fn(),
+  tapWarning: jest.fn(),
+}));
 // The "mock" prefix lets jest.mock (which runs first) use these fakes.
 const mockPush = jest.fn();
 const mockBack = jest.fn();
@@ -158,6 +166,8 @@ describe('result screens from the server', () => {
     expect(screen.getByText(/You're checked in to Rooftop Sundown/)).toBeOnTheScreen();
     expect(submit).toHaveBeenCalledWith('e1', COORDS);
     expectNoCoordinatesOnScreen();
+    // VC-32d: the phone's success buzz, once.
+    expect(tapSuccess).toHaveBeenCalledTimes(1);
     await fireEvent.press(screen.getByRole('button', { name: 'Back to the event' }));
     expect(mockBack).toHaveBeenCalled();
   });
@@ -176,6 +186,8 @@ describe('result screens from the server', () => {
     await checkInWith({ ok: true, result: { status: 'too_far' } });
     expect(await screen.findByRole('header', { name: 'You seem far away.' })).toBeOnTheScreen();
     expect(screen.getByText(/outside the party area for Rooftop Sundown/)).toBeOnTheScreen();
+    // Not checked in, so no success buzz (VC-32d).
+    expect(tapSuccess).not.toHaveBeenCalled();
     await fireEvent.press(screen.getByRole('button', { name: 'Try again' }));
     await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
   });

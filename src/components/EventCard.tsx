@@ -29,8 +29,14 @@
  * something once the night is on, so nothing about ratings can show early.
  *
  * The whole card is one button: tapping anywhere opens the event page.
+ *
+ * Press feel (VC-72, Q6): while a finger is down the card shrinks to 98%
+ * over 120 ms and springs back on release, so taps feel answered. The
+ * screen turns this off (`animatePress` false) under Reduce Motion; the
+ * darker pressed background still shows either way.
  */
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useState } from 'react';
+import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Tag } from '@/components/Tag';
 import { wordColour } from '@/components/VibeMeter';
@@ -49,7 +55,16 @@ export interface EventCardProps {
   onPress: () => void;
   /** The event's vibe, or undefined while it hasn't loaded. Ignored before the start. */
   vibe?: Vibe;
+  /**
+   * true to shrink the card a little while pressed (VC-72). The screen
+   * passes false under Reduce Motion. Off by default.
+   */
+  animatePress?: boolean;
 }
+
+/** How small a pressed card gets (98%), and how long the change takes (VC-72). */
+export const PRESS_SCALE = 0.98;
+export const PRESS_MS = 120;
 
 /** The chip words for the vibe states without a number (exported for tests). */
 export const EARLY_LABEL = 'Early';
@@ -66,7 +81,35 @@ export const LIVE_LABEL = 'LIVE';
  *   "Saturday rooftop, Shaw, DC, Today · 10 PM, Staff pick, 74 here, vibe
  *   8.0 out of 10, Hot".
  */
-export function EventCard({ event, now, onPress, vibe: given }: EventCardProps) {
+export function EventCard({
+  event,
+  now,
+  onPress,
+  vibe: given,
+  animatePress = false,
+}: EventCardProps) {
+  // The card's size while pressed (1 = normal). Kept in state so it is made once.
+  const [scale] = useState(() => new Animated.Value(1));
+
+  /**
+   * Moves the card's size toward `value` (VC-72).
+   *
+   * @param value - PRESS_SCALE on finger down, 1 on release.
+   */
+  function pressTo(value: number) {
+    if (!animatePress) {
+      // Motion off: never shrink (and undo any shrink left from before).
+      scale.setValue(1);
+      return;
+    }
+    Animated.timing(scale, {
+      toValue: value,
+      duration: PRESS_MS,
+      easing: Easing.out(Easing.quad),
+      useNativeDriver: true,
+    }).start();
+  }
+
   const when = whenLine(event, now);
   // VC-61: before the start, act as if there were no vibe at all, so no
   // score, chip or "here" count can leak onto a not-started card.
@@ -94,39 +137,45 @@ export function EventCard({ event, now, onPress, vibe: given }: EventCardProps) 
     .join(', ');
 
   return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={spoken}
-      accessibilityHint="Opens the event"
-      style={({ pressed }) => [styles.card, pressed && styles.pressed]}
-    >
-      <View style={styles.left}>
-        <Text style={styles.title}>{event.title}</Text>
-        <Text style={styles.meta}>
-          {event.area_label} · {when}
-          {here ? ` · ${here}` : ''}
-        </Text>
-        {staffPick || event.is_21_plus || event.is_test ? (
-          <View style={styles.tags}>
-            {event.is_test ? <Tag label={TEST_LABEL} tone="gold" /> : null}
-            {staffPick ? <Tag label="Staff pick" tone="gold" /> : null}
-            {event.is_21_plus ? <Tag label="21+" /> : null}
-          </View>
-        ) : null}
-      </View>
-      {live || vibe ? (
-        <View style={styles.right}>
-          {live ? (
-            <View style={styles.liveRow} testID="event-card-live">
-              <View style={styles.liveDot} testID="event-card-live-dot" />
-              <Text style={styles.liveText}>{LIVE_LABEL}</Text>
+    // The scaling wrapper: not a button itself, so screen readers still
+    // meet exactly one button (the Pressable) per card.
+    <Animated.View style={{ transform: [{ scale }] }} testID="event-card-scale">
+      <Pressable
+        onPress={onPress}
+        onPressIn={() => pressTo(PRESS_SCALE)}
+        onPressOut={() => pressTo(1)}
+        accessibilityRole="button"
+        accessibilityLabel={spoken}
+        accessibilityHint="Opens the event"
+        style={({ pressed }) => [styles.card, pressed && styles.pressed]}
+      >
+        <View style={styles.left}>
+          <Text style={styles.title}>{event.title}</Text>
+          <Text style={styles.meta}>
+            {event.area_label} · {when}
+            {here ? ` · ${here}` : ''}
+          </Text>
+          {staffPick || event.is_21_plus || event.is_test ? (
+            <View style={styles.tags}>
+              {event.is_test ? <Tag label={TEST_LABEL} tone="gold" /> : null}
+              {staffPick ? <Tag label="Staff pick" tone="gold" /> : null}
+              {event.is_21_plus ? <Tag label="21+" /> : null}
             </View>
           ) : null}
-          {vibe ? <VibeBadge vibe={vibe} /> : null}
         </View>
-      ) : null}
-    </Pressable>
+        {live || vibe ? (
+          <View style={styles.right}>
+            {live ? (
+              <View style={styles.liveRow} testID="event-card-live">
+                <View style={styles.liveDot} testID="event-card-live-dot" />
+                <Text style={styles.liveText}>{LIVE_LABEL}</Text>
+              </View>
+            ) : null}
+            {vibe ? <VibeBadge vibe={vibe} /> : null}
+          </View>
+        ) : null}
+      </Pressable>
+    </Animated.View>
   );
 }
 

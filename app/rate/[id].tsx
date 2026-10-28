@@ -82,6 +82,7 @@ import {
   toggleTag,
 } from '@/lib/rating';
 import type { RatingDraft, RowValue } from '@/lib/rating';
+import { tapLight } from '@/lib/haptics';
 import { getMyRatingStatus, submitRating } from '@/lib/ratings-api';
 import type { MyRatingStatus } from '@/lib/ratings-api';
 import { rateResultScreen, tooSoonScreen } from '@/lib/rating-screens';
@@ -260,6 +261,8 @@ export default function RateScreenRoute() {
         // Saved: now (and only now) offer the next-morning recap note. The
         // payoff is already on screen; the answer adds one line under it.
         if (outcome.result.status === 'saved') {
+          // A light tap confirms the save (VC-32d; does nothing if the phone can't).
+          tapLight();
           void offerRecapReminder(event).then((reminder) =>
             setPhase((current) =>
               current.kind === 'result' && current.event.id === event.id

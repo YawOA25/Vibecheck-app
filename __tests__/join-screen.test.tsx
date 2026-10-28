@@ -1,6 +1,7 @@
 /**
  * Tests for the party-code screen (app/join/[id].tsx) and its wording
- * (src/lib/join-screens.ts), task VC-B07.
+ * (src/lib/join-screens.ts), task VC-B07. VC-32d: a passed code gives the
+ * success haptic and a wrong code the warning haptic (both faked).
  *
  * The router, the signed-in profile, the event read and the server calls
  * are fakes, so each test chooses what "happens". We check every state:
@@ -28,10 +29,17 @@ import { submitCodeCheckIn, submitTesterCheckIn } from '@/lib/code-check-in-api'
 import type { CodeCheckInOutcome } from '@/lib/code-check-in-api';
 import { getEvent } from '@/lib/events-read';
 import { INCOMPLETE_CODE_MESSAGE, wrongCodeMessage } from '@/lib/join-screens';
+import { tapSuccess, tapWarning } from '@/lib/haptics';
 import type { PublicEvent } from '@/lib/tonight';
 
 jest.mock('@/lib/events-read', () => ({ getEvent: jest.fn() }));
 jest.mock('@/lib/auth-context', () => ({ useAuth: jest.fn() }));
+// VC-32d: fake vibrations, so tests can check WHEN each one fires.
+jest.mock('@/lib/haptics', () => ({
+  tapLight: jest.fn(),
+  tapSuccess: jest.fn(),
+  tapWarning: jest.fn(),
+}));
 // The real API file is loaded below for its helpers; give it a fake client
 // so no real Supabase (or phone storage) is touched.
 jest.mock('@/lib/supabase', () => ({ supabase: { rpc: jest.fn() } }));
@@ -150,6 +158,9 @@ describe('entering the code', () => {
       result: { status: 'passed', firstAt: '2026-10-31T02:00:00Z', alreadyCheckedIn: false },
     });
     expect(submitCode).toHaveBeenCalledWith('e1', 'K7MX2Q');
+    // VC-32d: a passed check-in gets the success buzz, never the warning.
+    await waitFor(() => expect(tapSuccess).toHaveBeenCalledTimes(1));
+    expect(tapWarning).not.toHaveBeenCalled();
   });
 
   it('a wrong code says how many tries are left and clears the boxes', async () => {
@@ -159,6 +170,9 @@ describe('entering the code', () => {
     expect(screen.getByLabelText(CODE_FIELD_LABEL).props.value).toBe('');
     // The form is still there for another try.
     expect(screen.getByRole('button', { name: CHECK_ME_IN })).toBeOnTheScreen();
+    // VC-32d: the warning buzz for a wrong code, and no success buzz.
+    expect(tapWarning).toHaveBeenCalledTimes(1);
+    expect(tapSuccess).not.toHaveBeenCalled();
   });
 
   it('says "1 try left" (singular) on the last try', () => {

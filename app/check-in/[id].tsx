@@ -44,6 +44,7 @@ import { readLocationForCheckIn } from '@/lib/check-in-location';
 import { resultScreen } from '@/lib/check-in-screens';
 import type { CheckInAction, CheckInView } from '@/lib/check-in-screens';
 import { getEvent } from '@/lib/events-read';
+import { tapSuccess } from '@/lib/haptics';
 import type { PublicEvent } from '@/lib/tonight';
 import { colors, iconSize, radius, spacing, typography } from '@/theme';
 
@@ -125,6 +126,8 @@ export default function CheckInScreen() {
     // The reading goes straight into the request and is then forgotten.
     const outcome = await submitCheckIn(event.id, reading.reading);
     if (outcome.ok) {
+      // The phone's "success" buzz when the check-in passed (VC-32d).
+      if (outcome.result.status === 'passed') tapSuccess();
       setPhase({ kind: 'result', event, view: { source: 'server', result: outcome.result } });
     } else if (outcome.kind === 'notFound') {
       setPhase({ kind: 'notFound' });

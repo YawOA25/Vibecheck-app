@@ -43,6 +43,7 @@ import {
 } from '@/lib/code-check-in-api';
 import type { CodeCheckInOutcome } from '@/lib/code-check-in-api';
 import { getEvent } from '@/lib/events-read';
+import { tapSuccess, tapWarning } from '@/lib/haptics';
 import { INCOMPLETE_CODE_MESSAGE, joinResultScreen, wrongCodeMessage } from '@/lib/join-screens';
 import type { PublicEvent } from '@/lib/tonight';
 import { colors, spacing, typography } from '@/theme';
@@ -118,12 +119,16 @@ export default function JoinScreen() {
   const showOutcome = useCallback((event: PublicEvent, outcome: CodeCheckInOutcome) => {
     if (outcome.ok) {
       if (outcome.result.status === 'wrong_code') {
+        // The phone's "warning" buzz, next to the coral sentence (VC-32d).
+        tapWarning();
         // Clear the boxes so the next try starts fresh (and the wrong code
         // doesn't linger on screen).
         setCode('');
         setCodeError(wrongCodeMessage(outcome.result.triesLeft));
         setPhase({ kind: 'form', event, busy: false });
       } else {
+        // The "success" buzz only when the check-in passed (VC-32d).
+        if (outcome.result.status === 'passed') tapSuccess();
         setPhase({ kind: 'result', event, screen: joinResultScreen(outcome.result, event.title) });
       }
     } else if (outcome.kind === 'notFound') {

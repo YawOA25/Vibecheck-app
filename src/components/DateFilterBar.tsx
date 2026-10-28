@@ -1,7 +1,8 @@
 /**
  * The date filter on the home list (VC-63, revised by the founder
  * 2026-10-27): a compact row of chips, "Tonight", "This weekend", "This
- * week" (the default) and "Custom", in the v3 pill look.
+ * week" (the default) and "Custom", in the v3 pill look. The picked chip
+ * is solid gold with dark words (v3's single-select style, Q6).
  *
  * Custom: tapping the chip opens the date picker (src/components/
  * CustomDatesPicker.tsx): a bottom sheet on iPhone, the phone's calendar
@@ -89,6 +90,8 @@ export function DateFilterBar({ filter, now, onChange }: DateFilterBarProps) {
             onPress={() => pick(kind)}
             shape="pill"
             role="radio"
+            // Pick-one chips use v3's solid gold fill (Q6, polish audit).
+            pickedFill="solid"
           />
         ))}
       </ScrollView>

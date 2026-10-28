@@ -1,6 +1,7 @@
 /**
  * Tests for the event page (app/event/[id].tsx), task VC-B05. (The
  * party-code screen it leads to is tested in join-screen.test.tsx, VC-B07.)
+ * Q6: the loading skeleton, the error's alert icon and the not-found moon.
  *
  * The router and the event read are replaced with fakes, and the phone's
  * "open this link" function is watched. We check:
@@ -160,6 +161,9 @@ describe('EventScreen states', () => {
     get.mockReturnValue(new Promise(() => {}));
     await render(<EventScreen />);
     expect(screen.getByLabelText('Loading the event')).toBeOnTheScreen();
+    // Q6: a skeleton (heading lines plus card blocks), not a spinner.
+    expect(screen.getByTestId('event-skeleton')).toBeOnTheScreen();
+    expect(screen.getAllByTestId('skeleton-block').length).toBeGreaterThanOrEqual(4);
     expect(get).toHaveBeenCalledWith('e1');
   });
 
@@ -167,6 +171,11 @@ describe('EventScreen states', () => {
     get.mockResolvedValueOnce({ ok: false, message: "We couldn't load events. Please try again." });
     await render(<EventScreen />);
     expect(await screen.findByText("We couldn't load events. Please try again.")).toBeOnTheScreen();
+    // Q6: the alert icon over the sentence, which is read out as an alert.
+    expect(screen.getByTestId('status-icon-alert')).toBeOnTheScreen();
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      "We couldn't load events. Please try again.",
+    );
 
     get.mockResolvedValueOnce({ ok: true, event: makeEvent() });
     await fireEvent.press(screen.getByRole('button', { name: 'Try again' }));
@@ -177,6 +186,8 @@ describe('EventScreen states', () => {
     get.mockResolvedValue({ ok: true, event: null });
     await render(<EventScreen />);
     expect(await screen.findByRole('header', { name: NOT_FOUND_TITLE })).toBeOnTheScreen();
+    // Q6: the same quiet moon as the home list's empty card.
+    expect(screen.getByTestId('status-icon-moon')).toBeOnTheScreen();
     expect(screen.queryByRole('button', { name: "I'm here" })).toBeNull();
   });
 });

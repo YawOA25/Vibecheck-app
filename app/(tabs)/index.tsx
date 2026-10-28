@@ -39,6 +39,12 @@
  *     Custom to see it."). The note goes away when the filter changes;
  *   - pull down to refresh;
  *   - a loading state, an error state with "Try again", and an empty state.
+ *     Q6 ("home polish and motion"): loading shows three card-shaped
+ *     skeleton blocks instead of a spinner; the error shows the alert icon
+ *     in a circle over the sentence; the empty card has the moon centred
+ *     above its heading. Cards shrink a touch (0.98) while pressed, and the
+ *     list fades in when a new load lands. All motion is off under the
+ *     phone's Reduce Motion setting (src/lib/reduce-motion.ts).
  *
  * Not here on purpose (VC-31, not approved for the MVP): the map, genre
  * filters, the featured host card, photos and clips.
@@ -50,10 +56,10 @@
  * while already here scrolls the list back to the top (useScrollToTop).
  */
 import { useFocusEffect, useRouter, useScrollToTop } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   Alert,
+  Animated,
   AppState,
   RefreshControl,
   SectionList,
@@ -68,6 +74,8 @@ import { DateFilterBar } from '@/components/DateFilterBar';
 import { EventCard } from '@/components/EventCard';
 import { FormMessage } from '@/components/FormMessage';
 import { Icon } from '@/components/Icon';
+import { ListSkeleton } from '@/components/Skeleton';
+import { StatusPanel } from '@/components/StatusPanel';
 import { takeCreatedEvent } from '@/lib/created-event';
 import {
   FILTER_LABELS,
@@ -79,6 +87,7 @@ import {
 } from '@/lib/date-filter';
 import type { DateFilter } from '@/lib/date-filter';
 import { listHomeEvents } from '@/lib/events-read';
+import { motionAllowed, useReduceMotion } from '@/lib/reduce-motion';
 import { sendTestError } from '@/lib/sentry';
 import { groupByDay, hasStarted } from '@/lib/tonight';
 import type { PublicEvent } from '@/lib/tonight';
@@ -97,6 +106,8 @@ export const LIST_TITLE = FILTER_LABELS.week;
 export const SHOW_WEEK_LABEL = 'Show this week';
 /** The button under the last card when more events follow (VC-66). */
 export const LOAD_MORE_LABEL = 'Load more events';
+/** How long the list takes to fade in when a new load lands (VC-72). */
+export const LIST_FADE_MS = 200;
 
 /**
  * What the list is showing right now:
@@ -156,6 +167,43 @@ export default function HomeScreen() {
   const [clock, setClock] = useState<Date | null>(null);
   // VC-63b: after creating an event that the filter hides, where to find it.
   const [createdNote, setCreatedNote] = useState<string | null>(null);
+  // VC-72: the phone's Reduce Motion setting (null until it answers), and
+  // the list's opacity for the fade-in. Read once here and handed to every
+  // card, so 100 cards don't each ask the phone.
+  const reduceMotion = useReduceMotion();
+  const [listOpacity] = useState(() => new Animated.Value(1));
+  // The moment of the list on screen: it changes on every first load, filter
+  // change, "Try again" and pull to refresh, but NOT when "Load more" adds a
+  // page (that keeps the first page's moment), so only real refreshes fade.
+  const loadedAtMs = state.kind === 'ready' ? state.loadedAt.getTime() : null;
+
+  // VC-72 cross-fade: when a new list lands, start it see-through and fade
+  // it in over 200 ms, so the swap from skeleton or old list feels soft.
+  // Under Reduce Motion (or before the phone answers) it simply appears.
+  // A layout effect runs before the new list is drawn, so it never flashes
+  // at full strength for one frame before the fade starts.
+  useLayoutEffect(() => {
+    if (loadedAtMs === null) return undefined;
+    if (!motionAllowed(reduceMotion)) {
+      listOpacity.setValue(1);
+      return undefined;
+    }
+    listOpacity.setValue(0);
+    const fade = Animated.timing(listOpacity, {
+      toValue: 1,
+      duration: LIST_FADE_MS,
+      useNativeDriver: true,
+    });
+    fade.start();
+    // If another load lands mid-fade, stop this one and show it fully; the
+    // next load starts its own fade.
+    return () => {
+      fade.stop();
+      listOpacity.setValue(1);
+    };
+    // Only a new list should fade, not a Reduce Motion change mid-way.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadedAtMs]);
 
   // The events on screen as "id|start time" pairs, joined into one string so
   // the effect below only restarts when the list of events really changes.
@@ -390,75 +438,80 @@ export default function HomeScreen() {
         ) : null}
       </View>
 
-      {state.kind === 'loading' ? <LoadingState /> : null}
+      {state.kind === 'loading' ? <ListSkeleton label="Loading events" /> : null}
       {state.kind === 'error' ? <ErrorState message={state.message} onRetry={retry} /> : null}
       {state.kind === 'ready' ? (
-        <SectionList
-          ref={listRef}
-          testID="tonight-list"
-          sections={groupByDay(state.events, state.loadedAt)}
-          keyExtractor={(event) => event.id}
-          renderItem={({ item }) => (
-            <EventCard
-              event={item}
-              // The later of the list's load time and the last vibe refresh,
-              // so "has it started?" moves on with the minute refresh.
-              now={clock && clock > state.loadedAt ? clock : state.loadedAt}
-              vibe={vibes[item.id]}
-              onPress={() => openEvent(item.id)}
-            />
-          )}
-          renderSectionHeader={({ section }) => (
-            <Text style={styles.sectionTitle} accessibilityRole="header">
-              {section.title.toUpperCase()}
-            </Text>
-          )}
-          // Section headings scroll away with their cards instead of sticking.
-          stickySectionHeadersEnabled={false}
-          ItemSeparatorComponent={Gap}
-          ListHeaderComponent={
-            refreshError ? (
-              <View style={styles.refreshError}>
-                <FormMessage message={refreshError} />
-              </View>
-            ) : undefined
-          }
-          // VC-66: near the end of the list, load the next page (if any).
-          onEndReached={state.hasMore ? () => void loadMore() : undefined}
-          onEndReachedThreshold={0.5}
-          ListFooterComponent={
-            state.hasMore ? (
-              <View style={styles.loadMore}>
-                {loadMoreError ? <FormMessage message={loadMoreError} /> : null}
-                <Button
-                  label={LOAD_MORE_LABEL}
-                  variant="outline"
-                  size="small"
-                  busy={loadingMore}
-                  busyLabel="Loading..."
-                  onPress={() => void loadMore()}
-                />
-              </View>
-            ) : undefined
-          }
-          ListEmptyComponent={
-            <EmptyState
-              filter={filter}
-              onShowWeek={filter.kind === 'week' ? null : () => chooseFilter(THIS_WEEK)}
-            />
-          }
-          contentContainerStyle={styles.listContent}
-          // Pull down to refresh. The spinner is gold to match the theme.
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={refresh}
-              tintColor={colors.accent}
-              colors={[colors.accent]}
-              progressBackgroundColor={colors.surface}
-            />
-          }
-        />
+        // The list's fade-in wrapper (VC-72); testID lets tests read its opacity.
+        <Animated.View style={[styles.fill, { opacity: listOpacity }]} testID="tonight-list-fade">
+          <SectionList
+            ref={listRef}
+            testID="tonight-list"
+            sections={groupByDay(state.events, state.loadedAt)}
+            keyExtractor={(event) => event.id}
+            renderItem={({ item }) => (
+              <EventCard
+                event={item}
+                // The later of the list's load time and the last vibe refresh,
+                // so "has it started?" moves on with the minute refresh.
+                now={clock && clock > state.loadedAt ? clock : state.loadedAt}
+                vibe={vibes[item.id]}
+                onPress={() => openEvent(item.id)}
+                // VC-72: the 0.98 press scale, only when motion is allowed.
+                animatePress={motionAllowed(reduceMotion)}
+              />
+            )}
+            renderSectionHeader={({ section }) => (
+              <Text style={styles.sectionTitle} accessibilityRole="header">
+                {section.title.toUpperCase()}
+              </Text>
+            )}
+            // Section headings scroll away with their cards instead of sticking.
+            stickySectionHeadersEnabled={false}
+            ItemSeparatorComponent={Gap}
+            ListHeaderComponent={
+              refreshError ? (
+                <View style={styles.refreshError}>
+                  <FormMessage message={refreshError} />
+                </View>
+              ) : undefined
+            }
+            // VC-66: near the end of the list, load the next page (if any).
+            onEndReached={state.hasMore ? () => void loadMore() : undefined}
+            onEndReachedThreshold={0.5}
+            ListFooterComponent={
+              state.hasMore ? (
+                <View style={styles.loadMore}>
+                  {loadMoreError ? <FormMessage message={loadMoreError} /> : null}
+                  <Button
+                    label={LOAD_MORE_LABEL}
+                    variant="outline"
+                    size="small"
+                    busy={loadingMore}
+                    busyLabel="Loading..."
+                    onPress={() => void loadMore()}
+                  />
+                </View>
+              ) : undefined
+            }
+            ListEmptyComponent={
+              <EmptyState
+                filter={filter}
+                onShowWeek={filter.kind === 'week' ? null : () => chooseFilter(THIS_WEEK)}
+              />
+            }
+            contentContainerStyle={styles.listContent}
+            // Pull down to refresh. The spinner is gold to match the theme.
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={refresh}
+                tintColor={colors.accent}
+                colors={[colors.accent]}
+                progressBackgroundColor={colors.surface}
+              />
+            }
+          />
+        </Animated.View>
       ) : null}
     </SafeAreaView>
   );
@@ -503,32 +556,18 @@ function Gap() {
 }
 
 /**
- * First-load spinner.
- *
- * @returns a centred spinner with a short line, read out by screen readers.
- */
-function LoadingState() {
-  return (
-    <View style={styles.centre} accessible accessibilityLabel="Loading events">
-      <ActivityIndicator color={colors.accent} size="large" />
-      <Text style={styles.note}>Loading events...</Text>
-    </View>
-  );
-}
-
-/**
  * Shown when the first load failed.
  *
  * @param props.message - what went wrong, in plain words.
  * @param props.onRetry - runs the load again.
- * @returns the message (icon plus sentence, announced) and a "Try again" button.
+ * @returns the alert icon in a circle, the sentence (announced) and a
+ *   "Try again" button (Q6 icon treatment).
  */
 function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
-    <View style={styles.centre}>
-      <FormMessage message={message} />
+    <StatusPanel tone="error" message={message}>
       <Button label="Try again" variant="outline" onPress={onRetry} />
-    </View>
+    </StatusPanel>
   );
 }
 
@@ -551,12 +590,15 @@ function EmptyState({
   const text = filterEmptyText(filter, new Date());
   return (
     <View style={styles.card}>
-      {/* A quiet moon (Q4 icon set); decoration only. */}
-      <Icon name="moon" size={iconSize.lg} color={colors.muted} />
-      <Text style={styles.emptyTitle} accessibilityRole="header">
+      {/* A quiet moon (Q4 icon set), centred above the heading as the card's
+          focal point (Q6, polish audit); decoration only. */}
+      <View style={styles.emptyIcon} testID="empty-moon">
+        <Icon name="moon" size={iconSize.lg} color={colors.muted} />
+      </View>
+      <Text style={[styles.emptyTitle, styles.centred]} accessibilityRole="header">
         {text.title}
       </Text>
-      <Text style={styles.note}>{text.body}</Text>
+      <Text style={[styles.note, styles.centred]}>{text.body}</Text>
       {onShowWeek ? (
         <View style={styles.emptyAction}>
           <Button label={SHOW_WEEK_LABEL} variant="outline" size="small" onPress={onShowWeek} />
@@ -569,6 +611,8 @@ function EmptyState({
 /** Styles for this screen, built only from theme tokens. */
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
+  // The fade wrapper fills the space under the header, like the list did.
+  fill: { flex: 1 },
   // Q4 spec 2.5: 20 below the safe area (SafeAreaView adds the inset), 16
   // at the sides, 12 below, and a 16 gap between the title and the chips.
   header: {
@@ -600,13 +644,6 @@ const styles = StyleSheet.create({
   refreshError: { paddingTop: spacing.sm },
   // The "Load more events" button (and any error) under the last card.
   loadMore: { paddingTop: spacing.md, gap: spacing.sm, alignItems: 'flex-start' },
-  centre: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: spacing.md,
-    padding: spacing.lg,
-  },
   card: {
     marginTop: spacing.md,
     backgroundColor: colors.surface,
@@ -615,9 +652,22 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     padding: 18,
     gap: spacing.xs,
+    // Q6: everything centred under the moon.
+    alignItems: 'center',
   },
+  // The moon in a 56 px circle, with a little room below it.
+  emptyIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surfaceRaised,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.sm,
+  },
+  centred: { textAlign: 'center' },
   emptyTitle: { ...typography.cardTitle, color: colors.text },
-  // The button sits at the start, only as wide as its words.
+  // The button sits centred, only as wide as its words.
   emptyAction: { flexDirection: 'row', paddingTop: spacing.sm },
   note: { ...typography.bodySm, color: colors.muted },
 });

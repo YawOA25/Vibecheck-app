@@ -55,19 +55,27 @@
  * the bar has two buttons ("I'm here" and "Rate the night") they sit side
  * by side: the outline one on the left, the gold one on the right.
  *
+ * Loading, error and not found (Q6, polish audit): a skeleton (a heading
+ * plus card blocks, gently pulsing unless Reduce Motion is on) instead of a
+ * spinner; errors show the alert icon in a circle over the sentence; "not
+ * found" shows the quiet moon over its heading (src/components/
+ * StatusPanel.tsx).
+ *
  * Not here on purpose (VC-31): photos, "Now playing", clips, the Live /
  * Last 24h switch.
  */
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { ActivityIndicator, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BackButton } from '@/components/BackButton';
 import { Button } from '@/components/Button';
 import { CircleIconButton } from '@/components/CircleIconButton';
 import { EntryLink } from '@/components/EntryLink';
+import { EventSkeleton } from '@/components/Skeleton';
+import { StatusPanel } from '@/components/StatusPanel';
 import { TEST_LABEL } from '@/components/EventCard';
 import { FormMessage } from '@/components/FormMessage';
 import { HeadsUpCard } from '@/components/HeadsUpCard';
@@ -228,26 +236,20 @@ export default function EventScreen() {
         ) : null}
       </View>
 
-      {state.kind === 'loading' ? (
-        <View style={styles.centre} accessible accessibilityLabel="Loading the event">
-          <ActivityIndicator color={colors.accent} size="large" />
-        </View>
-      ) : null}
+      {/* Q6 (polish audit fix #8): a heading and card blocks while it loads,
+          instead of a spinner. */}
+      {state.kind === 'loading' ? <EventSkeleton label="Loading the event" /> : null}
 
+      {/* Q6 icon treatment: the alert icon in a circle over the sentence. */}
       {state.kind === 'error' ? (
-        <View style={styles.centre}>
-          <FormMessage message={state.message} />
+        <StatusPanel tone="error" message={state.message}>
           <Button label="Try again" variant="outline" onPress={retry} />
-        </View>
+        </StatusPanel>
       ) : null}
 
+      {/* Q6: the same quiet moon as the home list's empty card. */}
       {state.kind === 'notFound' ? (
-        <View style={styles.centre}>
-          <Text style={styles.notFoundTitle} accessibilityRole="header">
-            {NOT_FOUND_TITLE}
-          </Text>
-          <Text style={styles.muted}>{NOT_FOUND_BODY}</Text>
-        </View>
+        <StatusPanel tone="quiet" title={NOT_FOUND_TITLE} message={NOT_FOUND_BODY} />
       ) : null}
 
       {state.kind === 'ready' ? (
@@ -521,13 +523,4 @@ const styles = StyleSheet.create({
   // Two equal columns, 12 px apart (v3: a 2-column grid with a 12 gap).
   twoColumns: { flexDirection: 'row', gap: spacing.gap12 },
   column: { flex: 1 },
-  centre: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: spacing.md,
-    padding: spacing.lg,
-  },
-  notFoundTitle: { ...typography.cardTitle, color: colors.text, textAlign: 'center' },
-  muted: { ...typography.bodySm, color: colors.muted, textAlign: 'center' },
 });
