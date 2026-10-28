@@ -29,9 +29,10 @@
  * Most tests use an event that started an hour ago, so the live parts show.
  */
 import { fireEvent, render, screen, within } from '@testing-library/react-native';
-import { Linking, Share } from 'react-native';
+import { Linking, Share, StyleSheet } from 'react-native';
 
 import EventScreen, {
+  ART_BAND_HEIGHT,
   EDIT_EVENT,
   MODERATE_LABEL,
   HIDE_CODE,
@@ -364,6 +365,25 @@ describe('EventScreen layout (Q5 fixes #4 and #5)', () => {
     // The old outline pill had the word "Share" written on it; the circle
     // only has the icon (the word is its spoken label).
     expect(screen.queryByText(SHARE_LABEL)).toBeNull();
+  });
+
+  it('puts Back and Share on a 170 px generated art band once loaded (Q7, VC-69)', async () => {
+    get.mockResolvedValue({ ok: true, event: makeEvent() });
+    await render(<EventScreen />);
+    await screen.findByRole('button', { name: SHARE_LABEL });
+    const band = screen.getByTestId('event-art-band');
+    expect(ART_BAND_HEIGHT).toBe(170);
+    expect(StyleSheet.flatten(band.props.style)).toMatchObject({ height: 170 });
+    // The art is decoration (hidden from screen readers), and the two
+    // buttons float on top of it.
+    expect(within(band).getByTestId('event-art', { includeHiddenElements: true })).toBeTruthy();
+    expect(within(band).getByTestId('event-top-row')).toBeOnTheScreen();
+  });
+
+  it('draws no art band while loading', async () => {
+    get.mockReturnValue(new Promise(() => {}));
+    await render(<EventScreen />);
+    expect(screen.queryByTestId('event-art-band', { includeHiddenElements: true })).toBeNull();
   });
 
   it('shows no Share button until the event has loaded', async () => {

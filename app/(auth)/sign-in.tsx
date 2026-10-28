@@ -17,6 +17,8 @@
  * builds for now; see src/components/ReviewerSignIn.tsx.
  * The email step also links to the Terms of Service and the Privacy Policy
  * (VC-32b); those screens are open while signed out (app/_layout.tsx).
+ * The hero block at the top of the email step shows generated gold art
+ * (VC-32a, src/components/GeneratedArt.tsx) where v3 has a photo.
  * Until real email delivery is set up (task VC-B11), Supabase only sends these
  * emails to the founder's Supabase team members.
  */
@@ -38,10 +40,12 @@ import { BackButton } from '@/components/BackButton';
 import { Button } from '@/components/Button';
 import { CodeInput } from '@/components/CodeInput';
 import { FormMessage } from '@/components/FormMessage';
+import { GeneratedArt } from '@/components/GeneratedArt';
 import { Headline } from '@/components/Headline';
 import { ReviewerSignIn } from '@/components/ReviewerSignIn';
 import { TextField } from '@/components/TextField';
 import { describeSignInError } from '@/lib/auth-errors';
+import { SIGN_IN_ART_SEED } from '@/lib/generated-art';
 import { cleanCode, cleanEmail, EMAIL_CODE_LENGTH, looksLikeEmail } from '@/lib/sign-in-input';
 import { supabase } from '@/lib/supabase';
 import { colors, fonts, spacing, typography } from '@/theme';
@@ -222,6 +226,11 @@ export default function SignInScreen() {
               <>
                 {/* Hero block: wordmark at the top, headline at the bottom. */}
                 <View style={[styles.hero, { minHeight: heroHeight }]}>
+                  {/* VC-32a: generated gold-on-black art fills the hero, in
+                      place of v3's photo (no licence or people needed). It
+                      is drawn first so it sits behind the words, and fills
+                      the block as it grows or shrinks with the keyboard. */}
+                  <GeneratedArt seed={SIGN_IN_ART_SEED} testID="sign-in-hero-art" />
                   <Text style={styles.wordmark} accessibilityLabel="VibeCheck">
                     VIBECHECK
                   </Text>

@@ -11,7 +11,9 @@
  * Screen readers: the whole thing is ONE heading with one combined label
  * ("Know the vibe before you pull up."), not two separate pieces.
  */
+import type { Ref } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
+import type { HostInstance } from 'react-native';
 
 import { colors, headlineMaxScale, spacing, typography } from '@/theme';
 
@@ -23,6 +25,11 @@ export interface HeadlineProps {
   highlight?: string;
   /** 'hero' (38 px, sign-in) or 'h1' (36 px, other screens). Default 'h1'. */
   size?: 'hero' | 'h1';
+  /**
+   * Optional handle on the heading's view, so a screen can move the
+   * screen reader's focus to it (Q7: the check-in sheet's title).
+   */
+  ref?: Ref<HostInstance>;
 }
 
 /**
@@ -30,11 +37,12 @@ export interface HeadlineProps {
  *
  * @returns the headline view, announced as a heading.
  */
-export function Headline({ lead, highlight, size = 'h1' }: HeadlineProps) {
+export function Headline({ lead, highlight, size = 'h1', ref }: HeadlineProps) {
   const textStyle = size === 'hero' ? styles.hero : styles.h1;
   const fullText = highlight ? `${lead} ${highlight}` : lead;
   return (
     <View
+      ref={ref}
       accessible
       accessibilityRole="header"
       accessibilityLabel={fullText}

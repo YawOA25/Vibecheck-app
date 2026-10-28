@@ -136,7 +136,21 @@ function RootNavigator({ fontsReady }: { fontsReady: boolean }) {
         {/* The event page (VC-B05), GPS check-in (VC-B06) and the
             party-code placeholder (VC-B07 will fill it in). */}
         <Stack.Screen name="event/[id]" options={{ title: 'Event' }} />
-        <Stack.Screen name="check-in/[id]" options={{ title: 'Check in' }} />
+        {/* Check-in is a bottom sheet over the dimmed event page (Q7, fix
+            #7): 'transparentModal' keeps the event page drawn underneath,
+            and the see-through background lets it show. The screen itself
+            only fades in (a fade is fine under Reduce Motion); the sheet's
+            slide up is drawn by the check-in screen, which skips it when
+            Reduce Motion is on. */}
+        <Stack.Screen
+          name="check-in/[id]"
+          options={{
+            title: 'Check in',
+            presentation: 'transparentModal',
+            animation: 'fade',
+            contentStyle: { backgroundColor: 'transparent' },
+          }}
+        />
         <Stack.Screen name="join/[id]" options={{ title: 'Party code' }} />
         {/* The 3-tap rating (VC-B08). */}
         <Stack.Screen name="rate/[id]" options={{ title: 'Rate' }} />

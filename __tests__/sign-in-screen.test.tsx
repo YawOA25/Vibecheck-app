@@ -55,6 +55,14 @@ describe('SignInScreen', () => {
     ).toBeOnTheScreen();
   });
 
+  it('fills the hero with generated art, hidden from screen readers (VC-32a)', async () => {
+    await render(<SignInScreen />);
+    const art = screen.getByTestId('sign-in-hero-art', { includeHiddenElements: true });
+    expect(art.props.importantForAccessibility).toBe('no-hide-descendants');
+    // It fills the hero block behind the words.
+    expect(StyleSheet.flatten(art.props.style)).toMatchObject({ position: 'absolute' });
+  });
+
   it('sends a code to the cleaned email and moves to the code step', async () => {
     await render(<SignInScreen />);
     await sendCodeTo('  Ava@Example.com ');

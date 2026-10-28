@@ -4,9 +4,22 @@
  *
  * Address: /check-in/<event id>. Opened by "I'm here" on the event page.
  *
+ * How it looks (Q7, polish audit fix #7): a bottom sheet that slides up
+ * over the event page, which stays visible behind a dimmed layer (the
+ * "scrim"). The root layout opens this screen as a see-through modal
+ * (app/_layout.tsx). The slide is skipped when the phone's Reduce Motion
+ * setting is on. Tapping the dimmed area, or the round Close button,
+ * closes the sheet (both do what Back did before).
+ *
+ * Screen readers: the sheet is marked as a dialog ("Check in"), iPhone's
+ * VoiceOver is kept inside it (accessibilityViewIsModal), and when it opens
+ * (or shows a result) the reader's focus moves to its title.
+ *
  * What happens, step by step:
  *   1. Load the event's public facts (name and neighbourhood) to ask
- *      "You at <event>?". Never a map or an address: the app can't read
+ *      "You at <event>?". Under the question, a 150 px "pin panel" shows a
+ *      gold pin icon, and under it the AREA label only (e.g. "Navy Yard,
+ *      DC"). Never a map, coordinates or an address: the app can't read
  *      them (they live in event_private, VC-20). The v3 mockup shows a map
  *      and a street address; both are left out on purpose.
  *   2. On "Yep, I'm here": ask for location permission if needed, take ONE
@@ -22,20 +35,34 @@
  *
  * The party code (task VC-B07): "GPS not working? Enter the party code"
  * under the main button, and "Enter the party code" on the weak-signal and
- * permission screens, open the code screen (app/join/[id].tsx).
+ * permission screens, open the code screen (app/join/[id].tsx) in place of
+ * this sheet (Q7), so Back from it returns to the event page.
  *
  * After a successful check-in, "Rate the night" opens the rating screen
  * (app/rate/[id].tsx, task VC-B08) in place of this one, so Back from the
  * rating returns to the event page.
  */
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
-import type { ReactNode } from 'react';
-import { ActivityIndicator, Linking, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { RefObject } from 'react';
+import {
+  AccessibilityInfo,
+  ActivityIndicator,
+  Animated,
+  Easing,
+  Linking,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+} from 'react-native';
+import type { HostInstance } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { BackButton } from '@/components/BackButton';
 import { Button } from '@/components/Button';
+import { CircleIconButton } from '@/components/CircleIconButton';
 import { FormMessage } from '@/components/FormMessage';
 import { Headline } from '@/components/Headline';
 import { Icon } from '@/components/Icon';
@@ -45,6 +72,7 @@ import { resultScreen } from '@/lib/check-in-screens';
 import type { CheckInAction, CheckInView } from '@/lib/check-in-screens';
 import { getEvent } from '@/lib/events-read';
 import { tapSuccess } from '@/lib/haptics';
+import { motionAllowed, useReduceMotion } from '@/lib/reduce-motion';
 import type { PublicEvent } from '@/lib/tonight';
 import { colors, iconSize, radius, spacing, typography } from '@/theme';
 
@@ -58,6 +86,23 @@ export const NOT_THIS_ONE = 'Not this one';
 export const GPS_NOT_WORKING = 'GPS not working? Enter the party code';
 export const CHECKING = 'Checking...';
 export const NOT_FOUND_TITLE = 'Event not found';
+/** What screen readers call the sheet (the dialog's name). */
+export const SHEET_LABEL = 'Check in';
+/** The round button that closes the sheet. */
+export const CLOSE_LABEL = 'Close';
+
+/** How long the sheet takes to slide up, in milliseconds (skipped under Reduce Motion). */
+export const SHEET_SLIDE_MS = 280;
+/** Height of the pin panel (v3: 150 px). */
+export const PIN_PANEL_HEIGHT = 150;
+/** Size of the gold pin in the pin panel (v3: 34 px). */
+const PIN_ICON_SIZE = 34;
+/**
+ * A short wait before moving the screen reader to the sheet's title. The
+ * phone's own "a new screen opened" focus lands first; moving after it
+ * makes sure ours wins.
+ */
+export const FOCUS_DELAY_MS = 300;
 
 /** What the screen is showing. */
 type Phase =
@@ -153,7 +198,11 @@ export default function CheckInScreen() {
           Linking.openSettings().catch(() => {});
           break;
         case 'code':
-          router.push({ pathname: '/join/[id]', params: { id: event.id } });
+          // replace, not push (cto, Q7): this sheet is a see-through modal,
+          // and on iPhone a normal screen pushed from a modal slides in
+          // UNDER it, so the guest would see nothing. Replacing the sheet
+          // also means Back from the party code returns to the event page.
+          router.replace({ pathname: '/join/[id]', params: { id: event.id } });
           break;
         case 'rate':
           router.replace({ pathname: '/rate/[id]', params: { id: event.id } });
@@ -168,117 +217,237 @@ export default function CheckInScreen() {
 
   const checking = phase.kind === 'confirm' && phase.checking;
 
+  // --- The slide up (Q7) ---------------------------------------------------
+  const reduceMotion = useReduceMotion();
+  const { height: windowHeight } = useWindowDimensions();
+  // How far below its resting place the sheet is (0 = in place). It starts
+  // a full screen down, i.e. out of sight. Kept in state so it's made once.
+  const [slide] = useState(() => new Animated.Value(windowHeight));
+  useEffect(() => {
+    // Wait until the phone says whether Reduce Motion is on (null = not yet).
+    if (reduceMotion === null) return;
+    if (motionAllowed(reduceMotion)) {
+      // Glide up, slowing down at the end, like the phone's own sheets.
+      Animated.timing(slide, {
+        toValue: 0,
+        duration: SHEET_SLIDE_MS,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start();
+    } else {
+      // Reduce Motion: just appear in place, no movement.
+      slide.setValue(0);
+    }
+  }, [reduceMotion, slide]);
+
+  // --- Screen-reader focus (Q7) --------------------------------------------
+  // The sheet's current title (the "You at ...?" question, a result's
+  // headline, or the small label on the other states).
+  const titleRef = useRef<HostInstance>(null);
+  useEffect(() => {
+    // Nothing to announce while loading; the spinner has its own label.
+    if (phase.kind === 'loading') return;
+    // Each time the sheet shows something new (the question, a result, an
+    // error), move the reader to its title so they hear it first.
+    const timer = setTimeout(() => {
+      if (titleRef.current) AccessibilityInfo.sendAccessibilityEvent(titleRef.current, 'focus');
+    }, FOCUS_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [phase.kind]);
+
+  // The small label at the top of the sheet: "CHECKED IN" (green) after a
+  // passed check-in, "CHECK IN" otherwise.
+  const success = phase.kind === 'result' && resultScreen(phase.view, phase.event.title).success;
+  // On the states without a big headline (loading, a load error, a failed
+  // send), that small label is the sheet's title.
+  const labelIsTitle =
+    phase.kind === 'loading' || phase.kind === 'loadError' || phase.kind === 'error';
+
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.topBar}>
-        <BackButton onPress={goBack} disabled={checking} />
-      </View>
+    <View style={styles.root}>
+      {/* The dimmed event page: a tap here closes the sheet, like Close.
+          Screen readers skip it (they use the Close button instead), and it
+          ignores taps while a check-in is being sent, as Close does. */}
+      <Pressable
+        testID="check-in-scrim"
+        style={styles.scrim}
+        onPress={checking ? undefined : goBack}
+        accessible={false}
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+      />
 
-      {phase.kind === 'loading' ? (
-        <View style={styles.centre} accessible accessibilityLabel="Loading the event">
-          <ActivityIndicator color={colors.accent} size="large" />
-        </View>
-      ) : null}
-
-      {phase.kind === 'loadError' ? (
-        <View style={styles.centre}>
-          <FormMessage message={phase.message} />
-          <Button
-            label="Try again"
-            variant="outline"
-            onPress={() => {
-              setPhase({ kind: 'loading' });
-              setLoadAttempt((n) => n + 1);
-            }}
-          />
-        </View>
-      ) : null}
-
-      {phase.kind === 'notFound' ? (
-        <View style={styles.centre}>
-          <Text style={styles.notFoundTitle} accessibilityRole="header">
-            {NOT_FOUND_TITLE}
-          </Text>
-          <Text style={styles.muted}>It may have been removed, or the link is wrong.</Text>
-        </View>
-      ) : null}
-
-      {phase.kind === 'confirm' ? (
-        <Sheet>
-          <Text style={styles.label}>{CHECK_IN_LABEL}</Text>
-          <Headline lead="You at" highlight={`${phase.event.title}?`} />
-          <Text style={styles.muted}>{phase.event.area_label}</Text>
-          <View style={styles.note}>
-            {/* A small gold map pin (Q4 line icon; it replaced a "◈" text
-                character). Decoration only: screen readers read the note. */}
-            <View style={styles.noteIcon}>
-              <Icon name="pin" size={iconSize.sm} color={colors.accent} />
+      {/* The sheet itself. role "dialog" + aria-modal tell screen readers
+          it's a dialog; accessibilityViewIsModal keeps iPhone's VoiceOver
+          inside it (so it can't wander onto the dimmed page). */}
+      <Animated.View
+        testID="check-in-sheet"
+        role="dialog"
+        aria-modal
+        accessibilityViewIsModal
+        accessibilityLabel={SHEET_LABEL}
+        style={[styles.sheetFrame, { transform: [{ translateY: slide }] }]}
+      >
+        {/* Scrolls if the phone's text is very large. */}
+        <ScrollView bounces={false} style={styles.sheetScroll}>
+          {/* Adds the phone's home-bar space at the bottom, but at least 32 px. */}
+          <SafeAreaView edges={{ bottom: 'maximum' }} style={styles.sheet}>
+            <View style={styles.handle} testID="check-in-handle" />
+            <View style={styles.headerRow}>
+              <Text
+                ref={labelIsTitle ? titleRef : undefined}
+                accessibilityRole={labelIsTitle ? 'header' : undefined}
+                style={[styles.label, success && styles.successLabel]}
+              >
+                {success ? CHECKED_IN_LABEL : CHECK_IN_LABEL}
+              </Text>
+              <CircleIconButton
+                icon="close"
+                label={CLOSE_LABEL}
+                onPress={goBack}
+                disabled={checking}
+                iconPx={iconSize.sm}
+              />
             </View>
-            <Text style={styles.noteText}>{PRIVACY_NOTE}</Text>
-          </View>
-          <Button
-            label={IM_HERE}
-            busy={phase.checking}
-            busyLabel={CHECKING}
-            onPress={() => void runCheckIn(phase.event)}
-          />
-          {/* The indoor fallback, offered up front as well as after a weak signal. */}
-          <Button
-            label={GPS_NOT_WORKING}
-            variant="text"
-            size="small"
-            onPress={() => onAction('code', phase.event)}
-            disabled={phase.checking}
-          />
-          <Button label={NOT_THIS_ONE} variant="text" onPress={goBack} disabled={phase.checking} />
-        </Sheet>
-      ) : null}
 
-      {phase.kind === 'result' ? (
-        <ResultSheet
-          view={phase.view}
-          event={phase.event}
-          onAction={(action) => onAction(action, phase.event)}
-        />
-      ) : null}
+            {phase.kind === 'loading' ? (
+              <View style={styles.centre} accessible accessibilityLabel="Loading the event">
+                <ActivityIndicator color={colors.accent} size="large" />
+              </View>
+            ) : null}
 
-      {phase.kind === 'error' ? (
-        <Sheet>
-          <Text style={styles.label}>{CHECK_IN_LABEL}</Text>
-          <FormMessage message={phase.message} />
-          <Button label="Try again" onPress={() => void runCheckIn(phase.event)} />
-          <Button label="Back to the event" variant="text" onPress={goBack} />
-        </Sheet>
-      ) : null}
-    </SafeAreaView>
+            {phase.kind === 'loadError' ? (
+              <View style={styles.centre}>
+                <FormMessage message={phase.message} />
+                <Button
+                  label="Try again"
+                  variant="outline"
+                  onPress={() => {
+                    setPhase({ kind: 'loading' });
+                    setLoadAttempt((n) => n + 1);
+                  }}
+                />
+              </View>
+            ) : null}
+
+            {phase.kind === 'notFound' ? (
+              <View style={styles.centre}>
+                <Text ref={titleRef} style={styles.notFoundTitle} accessibilityRole="header">
+                  {NOT_FOUND_TITLE}
+                </Text>
+                <Text style={styles.muted}>It may have been removed, or the link is wrong.</Text>
+              </View>
+            ) : null}
+
+            {phase.kind === 'confirm' ? (
+              <>
+                <Headline ref={titleRef} lead="You at" highlight={`${phase.event.title}?`} />
+                <PinPanel />
+                {/* The AREA label only (VC-20): never an address or a map. */}
+                <Text style={styles.muted} testID="check-in-area">
+                  {phase.event.area_label}
+                </Text>
+                <View style={styles.note}>
+                  {/* A small gold shield (v3): "your privacy is protected".
+                      Decoration only: screen readers read the note. */}
+                  <View style={styles.noteIcon}>
+                    <Icon name="shield" size={iconSize.sm} color={colors.accent} />
+                  </View>
+                  <Text style={styles.noteText}>{PRIVACY_NOTE}</Text>
+                </View>
+                <Button
+                  label={IM_HERE}
+                  busy={phase.checking}
+                  busyLabel={CHECKING}
+                  onPress={() => void runCheckIn(phase.event)}
+                />
+                {/* The indoor fallback, offered up front as well as after a weak signal. */}
+                <Button
+                  label={GPS_NOT_WORKING}
+                  variant="text"
+                  size="small"
+                  onPress={() => onAction('code', phase.event)}
+                  disabled={phase.checking}
+                />
+                <Button
+                  label={NOT_THIS_ONE}
+                  variant="text"
+                  onPress={goBack}
+                  disabled={phase.checking}
+                />
+              </>
+            ) : null}
+
+            {phase.kind === 'result' ? (
+              <ResultContent
+                view={phase.view}
+                event={phase.event}
+                titleRef={titleRef}
+                onAction={(action) => onAction(action, phase.event)}
+              />
+            ) : null}
+
+            {phase.kind === 'error' ? (
+              <>
+                <FormMessage message={phase.message} />
+                <Button label="Try again" onPress={() => void runCheckIn(phase.event)} />
+                <Button label="Back to the event" variant="text" onPress={goBack} />
+              </>
+            ) : null}
+          </SafeAreaView>
+        </ScrollView>
+      </Animated.View>
+    </View>
   );
 }
 
 /**
- * One result screen: headline, sentence and buttons.
+ * The pin panel (v3, Q7): a 150 px recessed box with a gold map pin in the
+ * middle. It is a picture of "a place", NOT a map: no map tile, no
+ * coordinates, no address, no text at all. The area label sits under it.
+ *
+ * @returns the panel, hidden from screen readers (the area text under it
+ *   says the same thing in words).
+ */
+function PinPanel() {
+  return (
+    <View
+      style={styles.pinPanel}
+      testID="check-in-pin-panel"
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+    >
+      <Icon name="pin" size={PIN_ICON_SIZE} color={colors.accent} />
+    </View>
+  );
+}
+
+/**
+ * One result: headline, sentence and buttons, inside the sheet.
  *
  * @param props.view - what happened.
  * @param props.event - the event (its name goes in the sentence).
+ * @param props.titleRef - gets the headline, so the screen reader can be
+ *   moved to it.
  * @param props.onAction - called with the tapped button's action.
- * @returns the result sheet.
+ * @returns the result's parts.
  */
-function ResultSheet({
+function ResultContent({
   view,
   event,
+  titleRef,
   onAction,
 }: {
   view: CheckInView;
   event: PublicEvent;
+  titleRef: RefObject<HostInstance | null>;
   onAction: (action: CheckInAction) => void;
 }) {
   const content = resultScreen(view, event.title);
   const last = content.actions.length - 1;
   return (
-    <Sheet>
-      <Text style={[styles.label, content.success && styles.successLabel]}>
-        {content.success ? CHECKED_IN_LABEL : CHECK_IN_LABEL}
-      </Text>
-      <Headline lead={content.lead} highlight={content.highlight} />
+    <>
+      <Headline ref={titleRef} lead={content.lead} highlight={content.highlight} />
       {/* Read aloud when it appears, so screen-reader users hear the result. */}
       <Text style={styles.body} accessibilityLiveRegion="polite">
         {content.body}
@@ -293,50 +462,29 @@ function ResultSheet({
           onPress={() => onAction(button.action)}
         />
       ))}
-    </Sheet>
-  );
-}
-
-/**
- * The v3 bottom sheet: empty space above, then a raised panel with a small
- * grab handle and rounded top corners. Scrolls if the text is large.
- *
- * @param props.children - what goes in the panel.
- * @returns the sheet view.
- */
-function Sheet({ children }: { children: ReactNode }) {
-  return (
-    <ScrollView contentContainerStyle={styles.sheetScroll} bounces={false}>
-      <View style={styles.sheet}>
-        <View style={styles.handle} />
-        {children}
-      </View>
-    </ScrollView>
+    </>
   );
 }
 
 /** Styles built from theme tokens (plus the v3 sheet's 28 px corners and 20 px sides). */
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bg },
-  topBar: { paddingHorizontal: spacing.gutter, paddingTop: spacing.sm },
-  centre: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: spacing.md,
-    padding: spacing.authGutter,
-  },
-  notFoundTitle: { ...typography.h1, color: colors.text, textAlign: 'center' },
-  muted: { ...typography.bodySm, color: colors.muted },
-  body: { ...typography.body, color: colors.muted },
-  // Pushes the sheet to the bottom of the screen, like the v3 mockup.
-  sheetScroll: { flexGrow: 1, justifyContent: 'flex-end' },
-  sheet: {
+  // See-through, so the event page shows behind; the sheet sits at the bottom.
+  root: { flex: 1, justifyContent: 'flex-end' },
+  // The dimmed layer over the event page (the theme's 60% black scrim).
+  scrim: { ...StyleSheet.absoluteFill, backgroundColor: colors.scrim },
+  sheetFrame: {
+    // Leaves a strip of the dimmed page visible even with very large text.
+    maxHeight: '92%',
     backgroundColor: colors.surface,
     borderTopWidth: 1,
     borderColor: colors.borderStrong,
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
+    overflow: 'hidden',
+  },
+  // flexGrow 0: the sheet is only as tall as its content (up to maxHeight).
+  sheetScroll: { flexGrow: 0 },
+  sheet: {
     paddingHorizontal: 20,
     paddingTop: spacing.gap12,
     paddingBottom: spacing.xl,
@@ -346,11 +494,36 @@ const styles = StyleSheet.create({
     width: 40,
     height: 4,
     borderRadius: 2,
-    backgroundColor: colors.borderStrong,
+    backgroundColor: colors.handle,
     alignSelf: 'center',
   },
-  label: { ...typography.label, color: colors.muted },
+  // The label on the left, Close on the right.
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.gap12,
+  },
+  centre: {
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingVertical: spacing.lg,
+  },
+  notFoundTitle: { ...typography.h1, color: colors.text, textAlign: 'center' },
+  muted: { ...typography.bodySm, color: colors.muted },
+  body: { ...typography.body, color: colors.muted },
+  label: { ...typography.label, color: colors.muted, flexShrink: 1 },
   successLabel: { color: colors.success },
+  // v3 pin panel: 150 px, recessed fill, thin edge, 18 px corners.
+  pinPanel: {
+    height: PIN_PANEL_HEIGHT,
+    borderRadius: 18,
+    backgroundColor: colors.surfaceSunken,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   note: {
     flexDirection: 'row',
     gap: spacing.gap12,

@@ -61,6 +61,11 @@
  * found" shows the quiet moon over its heading (src/components/
  * StatusPanel.tsx).
  *
+ * Art band (Q7, VC-69): once loaded, Back and Share float on a 170 px
+ * band of generated gold-on-black art, standing in for v3's event photo.
+ * The art is worked out from the event id alone (src/components/
+ * GeneratedArt.tsx), so it says nothing about the place or the vibe.
+ *
  * Not here on purpose (VC-31): photos, "Now playing", clips, the Live /
  * Last 24h switch.
  */
@@ -78,6 +83,7 @@ import { EventSkeleton } from '@/components/Skeleton';
 import { StatusPanel } from '@/components/StatusPanel';
 import { TEST_LABEL } from '@/components/EventCard';
 import { FormMessage } from '@/components/FormMessage';
+import { GeneratedArt } from '@/components/GeneratedArt';
 import { HeadsUpCard } from '@/components/HeadsUpCard';
 import { LiveVibeCard } from '@/components/LiveVibeCard';
 import { PartyCodeCard } from '@/components/PartyCodeCard';
@@ -228,13 +234,23 @@ export default function EventScreen() {
   return (
     <SafeAreaView style={styles.container}>
       {/* Top row (Q5 fix #4): Back on the left, Share on the right. Share
-          only appears once the event has loaded, since it shares its facts. */}
-      <View style={styles.topBar} testID="event-top-row">
-        <BackButton onPress={goBack} />
-        {state.kind === 'ready' ? (
-          <CircleIconButton icon="share" label={SHARE_LABEL} onPress={() => share(state.event)} />
-        ) : null}
-      </View>
+          only appears once the event has loaded, since it shares its facts.
+          Once loaded (Q7, VC-69), the row sits on the 170 px art band, as
+          on v3's photo band; while loading or on an error it stands alone. */}
+      {state.kind === 'ready' ? (
+        <View style={styles.band} testID="event-art-band">
+          {/* Seeded by the id ONLY: the picture can't hint at the place or the vibe. */}
+          <GeneratedArt seed={state.event.id} height={ART_BAND_HEIGHT} testID="event-art" />
+          <View style={[styles.topBar, styles.topBarOnBand]} testID="event-top-row">
+            <BackButton onPress={goBack} />
+            <CircleIconButton icon="share" label={SHARE_LABEL} onPress={() => share(state.event)} />
+          </View>
+        </View>
+      ) : (
+        <View style={styles.topBar} testID="event-top-row">
+          <BackButton onPress={goBack} />
+        </View>
+      )}
 
       {/* Q6 (polish audit fix #8): a heading and card blocks while it loads,
           instead of a spinner. */}
@@ -483,6 +499,9 @@ function AdminTools({
   );
 }
 
+/** Height of the art band at the top of the page (v3's 170 px photo band, VC-69). */
+export const ART_BAND_HEIGHT = 170;
+
 /** Styles built only from theme tokens. */
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
@@ -493,6 +512,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: spacing.gutter,
     paddingTop: spacing.sm,
+  },
+  // The art band (v3: 170 px, the photo's place). The buttons float on it.
+  band: { height: ART_BAND_HEIGHT },
+  // v3 places the two circles 14 px from the sides and 16 px from the top.
+  topBarOnBand: {
+    position: 'absolute',
+    top: 16,
+    left: 14,
+    right: 14,
+    paddingHorizontal: 0,
+    paddingTop: 0,
   },
   // 24 px between the page's sections (Q5).
   content: { padding: spacing.gutter, gap: spacing.lg },

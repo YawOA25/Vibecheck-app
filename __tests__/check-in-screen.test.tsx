@@ -16,17 +16,26 @@
  *   - "Enter the party code" opens the party-code screen (VC-B07);
  *   - errors: a network failure offers "Try again"; an event that vanished
  *     shows "Event not found";
- *   - the reading is never shown on screen or written to the console.
+ *   - the reading is never shown on screen or written to the console;
+ *   - Q7 (fix #7) the bottom sheet: the pin panel shows the AREA only (no
+ *     address, coordinates or map, even if such data were passed in); the
+ *     handle colour; the slide up, and no slide under Reduce Motion;
+ *     screen readers: the sheet is a modal dialog named "Check in", focus
+ *     moves to its title, and Close (and the dimmed area) go back, but not
+ *     while a check-in is being sent.
  */
-import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
-import { Linking } from 'react-native';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react-native';
+import { AccessibilityInfo, Animated, Linking, StyleSheet } from 'react-native';
 
 import CheckInScreen, {
   CHECKED_IN_LABEL,
+  CLOSE_LABEL,
   IM_HERE,
   NOT_FOUND_TITLE,
   NOT_THIS_ONE,
   PRIVACY_NOTE,
+  SHEET_LABEL,
+  SHEET_SLIDE_MS,
 } from '../app/check-in/[id]';
 import { submitCheckIn } from '@/lib/check-in-api';
 import type { CheckInOutcome } from '@/lib/check-in-api';
@@ -36,6 +45,7 @@ import { GPS_LOCKED_BODY, RATE_THE_NIGHT } from '@/lib/check-in-screens';
 import { getEvent } from '@/lib/events-read';
 import { tapSuccess } from '@/lib/haptics';
 import type { PublicEvent } from '@/lib/tonight';
+import { colors } from '@/theme';
 
 jest.mock('@/lib/events-read', () => ({ getEvent: jest.fn() }));
 jest.mock('@/lib/check-in-location', () => ({ readLocationForCheckIn: jest.fn() }));
@@ -196,7 +206,9 @@ describe('result screens from the server', () => {
     await checkInWith({ ok: true, result: { status: 'weak_signal' } });
     expect(await screen.findByRole('header', { name: 'Weak signal.' })).toBeOnTheScreen();
     await fireEvent.press(screen.getByRole('button', { name: 'Enter the party code' }));
-    expect(mockPush).toHaveBeenCalledWith({ pathname: '/join/[id]', params: { id: 'e1' } });
+    expect(mockReplace).toHaveBeenCalledWith({ pathname: '/join/[id]', params: { id: 'e1' } });
+    // Never a push: from the see-through sheet, iPhone would slide it in under the sheet (Q7).
+    expect(mockPush).not.toHaveBeenCalled();
   });
 
   it('"GPS not working?" on the first sheet opens the party-code screen without reading GPS', async () => {
@@ -204,7 +216,7 @@ describe('result screens from the server', () => {
     await fireEvent.press(
       await screen.findByRole('button', { name: 'GPS not working? Enter the party code' }),
     );
-    expect(mockPush).toHaveBeenCalledWith({ pathname: '/join/[id]', params: { id: 'e1' } });
+    expect(mockReplace).toHaveBeenCalledWith({ pathname: '/join/[id]', params: { id: 'e1' } });
     expect(read).not.toHaveBeenCalled();
   });
 
@@ -250,7 +262,7 @@ describe('result screens from the server', () => {
     // No "Try again": GPS would give the same answer all night.
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
     await fireEvent.press(screen.getByRole('button', { name: 'Enter the party code' }));
-    expect(mockPush).toHaveBeenCalledWith({ pathname: '/join/[id]', params: { id: 'e1' } });
+    expect(mockReplace).toHaveBeenCalledWith({ pathname: '/join/[id]', params: { id: 'e1' } });
     expect(screen.getByRole('button', { name: 'Back to the event' })).toBeOnTheScreen();
   });
 
@@ -346,5 +358,157 @@ describe('after check-in (VC-B08)', () => {
     await fireEvent.press(await screen.findByRole('button', { name: IM_HERE }));
     await fireEvent.press(await screen.findByRole('button', { name: RATE_THE_NIGHT }));
     expect(mockReplace).toHaveBeenCalledWith({ pathname: '/rate/[id]', params: { id: 'e1' } });
+  });
+});
+
+describe('the bottom sheet (Q7, fix #7)', () => {
+  // The scrim and the pin panel are hidden from screen readers, so queries
+  // must be told to look at hidden parts too.
+  const HIDDEN = { includeHiddenElements: true };
+  let timingSpy: jest.SpyInstance;
+  let focusSpy: jest.SpyInstance;
+  let motionSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    // Watch the slide without really animating, and the screen-reader focus.
+    timingSpy = jest
+      .spyOn(Animated, 'timing')
+      .mockReturnValue({ start: jest.fn(), stop: jest.fn(), reset: jest.fn() });
+    focusSpy = jest.spyOn(AccessibilityInfo, 'sendAccessibilityEvent').mockImplementation(() => {});
+    motionSpy = jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled');
+  });
+
+  afterEach(() => {
+    timingSpy.mockRestore();
+    focusSpy.mockRestore();
+    motionSpy.mockRestore();
+  });
+
+  /**
+   * Opens the sheet with Reduce Motion on or off and waits for the question.
+   *
+   * @param reduceMotion - what the phone says about Reduce Motion.
+   * @param event - the event the server returns (default EVENT).
+   */
+  async function openSheet(reduceMotion: boolean, event: PublicEvent = EVENT) {
+    motionSpy.mockResolvedValue(reduceMotion);
+    get.mockResolvedValue({ ok: true, event });
+    await render(<CheckInScreen />);
+    await screen.findByRole('header', { name: `You at ${event.title}?` });
+  }
+
+  /** The slide-up calls made so far (the settings passed to Animated.timing). */
+  function slideCalls() {
+    return timingSpy.mock.calls
+      .map((call) => call[1] as { toValue: number; duration: number })
+      .filter((config) => config.duration === SHEET_SLIDE_MS);
+  }
+
+  /**
+   * The spoken label of a view handed to sendAccessibilityEvent.
+   *
+   * @param node - the view (a host instance in Jest).
+   * @returns its accessibilityLabel, wherever this renderer keeps it.
+   */
+  function labelOf(node: { props?: { accessibilityLabel?: string } } | null) {
+    return node?.props?.accessibilityLabel;
+  }
+
+  it('the pin panel shows a pin only, and the sheet shows the area label only', async () => {
+    // Even if the event data ever carried an address or coordinates, the
+    // sheet must not show them: it only ever reads area_label.
+    const leaky = {
+      ...EVENT,
+      address: '1300 First St SE',
+      lat: 38.87654,
+      lng: -77.00321,
+    } as PublicEvent;
+    await openSheet(true, leaky);
+    const panel = screen.getByTestId('check-in-pin-panel', HIDDEN);
+    // No words of any kind in the panel. It's hidden from screen readers,
+    // so look at hidden parts too, or this check would pass falsely.
+    expect(within(panel).queryAllByText(/./, { includeHiddenElements: true })).toHaveLength(0);
+    expect(StyleSheet.flatten(panel.props.style)).toMatchObject({
+      height: 150,
+      backgroundColor: colors.surfaceSunken,
+    });
+    expect(screen.getByTestId('check-in-area')).toHaveTextContent('Navy Yard, DC', {
+      exact: true,
+    });
+    expect(screen.queryByText(/1300|First St/, { includeHiddenElements: true })).toBeNull();
+    expect(screen.queryByText(/38\.87|77\.003/, { includeHiddenElements: true })).toBeNull();
+    expect(screen.queryByLabelText(/map/i, { includeHiddenElements: true })).toBeNull();
+  });
+
+  it('draws the handle in the handle colour', async () => {
+    await openSheet(true);
+    expect(StyleSheet.flatten(screen.getByTestId('check-in-handle').props.style)).toMatchObject({
+      backgroundColor: colors.handle,
+    });
+  });
+
+  it('slides up when motion is allowed', async () => {
+    await openSheet(false);
+    await waitFor(() => expect(slideCalls()).toHaveLength(1));
+    expect(slideCalls()[0].toValue).toBe(0);
+  });
+
+  it('Reduce Motion: no slide, the sheet is simply in place', async () => {
+    await openSheet(true);
+    // Give the motion setting's answer time to arrive, then check.
+    await waitFor(() =>
+      expect(
+        StyleSheet.flatten(screen.getByTestId('check-in-sheet').props.style).transform,
+      ).toEqual([{ translateY: 0 }]),
+    );
+    expect(slideCalls()).toHaveLength(0);
+  });
+
+  it('is announced as a modal dialog named "Check in"', async () => {
+    await openSheet(true);
+    const sheet = screen.getByTestId('check-in-sheet');
+    expect(sheet.props.role).toBe('dialog');
+    expect(sheet.props['aria-modal']).toBe(true);
+    expect(sheet.props.accessibilityViewIsModal).toBe(true);
+    expect(sheet.props.accessibilityLabel).toBe(SHEET_LABEL);
+    // The dimmed area behind is hidden from screen readers.
+    expect(screen.getByTestId('check-in-scrim', HIDDEN).props.importantForAccessibility).toBe(
+      'no-hide-descendants',
+    );
+  });
+
+  it("moves the screen reader's focus to the sheet's title, then to a result's headline", async () => {
+    submit.mockResolvedValue({
+      ok: true,
+      result: { status: 'passed', firstAt: '2026-10-31T02:00:00Z', alreadyCheckedIn: false },
+    });
+    await openSheet(true);
+    await waitFor(() => expect(focusSpy).toHaveBeenCalled());
+    const [first, kind] = focusSpy.mock.calls[0];
+    expect(kind).toBe('focus');
+    expect(labelOf(first)).toBe('You at Rooftop Sundown?');
+    await fireEvent.press(screen.getByRole('button', { name: IM_HERE }));
+    await screen.findByRole('header', { name: "You're in." });
+    await waitFor(() =>
+      expect(focusSpy.mock.calls.map(([node]) => labelOf(node))).toContain("You're in."),
+    );
+  });
+
+  it('Close goes back to the event, and so does a tap on the dimmed page', async () => {
+    await openSheet(true);
+    await fireEvent.press(screen.getByRole('button', { name: CLOSE_LABEL }));
+    expect(mockBack).toHaveBeenCalledTimes(1);
+    await fireEvent.press(screen.getByTestId('check-in-scrim', HIDDEN));
+    expect(mockBack).toHaveBeenCalledTimes(2);
+  });
+
+  it('Close and the dimmed page do nothing while a check-in is being sent', async () => {
+    read.mockReturnValue(new Promise(() => {}));
+    await openSheet(true);
+    await fireEvent.press(screen.getByRole('button', { name: IM_HERE }));
+    expect(screen.getByRole('button', { name: CLOSE_LABEL })).toBeDisabled();
+    await fireEvent.press(screen.getByRole('button', { name: CLOSE_LABEL }));
+    await fireEvent.press(screen.getByTestId('check-in-scrim', HIDDEN));
+    expect(mockBack).not.toHaveBeenCalled();
   });
 });
