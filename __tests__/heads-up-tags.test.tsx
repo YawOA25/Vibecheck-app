@@ -13,7 +13,8 @@
  *     checked or endorsed by us" line;
  *   - +1'ing "Felt unsafe" shows the 911 line; +1'ing another tag doesn't;
  *   - a retired tag is never shown, even if a server sent one;
- *   - with no tags, the empty text says a tag needs 2 guests;
+ *   - with no tags, the empty text says tags need 5 raters tonight (VC-67)
+ *     and 2 guests per tag (VC-56);
  *   - the share message never carries a heads-up (VC-60: not on shares).
  */
 import { fireEvent, render, screen } from '@testing-library/react-native';
@@ -103,11 +104,13 @@ describe('Heads-up chips (VC-45, VC-60)', () => {
     expect(screen.queryByText(/Packed/)).toBeNull();
   });
 
-  it('with no tags, says a tag needs 2 guests', async () => {
+  it('with no tags, says tags need 5 raters tonight and 2 guests per tag', async () => {
     headsUps.mockResolvedValue({ ok: true, tags: [] });
     await render(<HeadsUpCard eventId="e1" refreshKey={1} canVote contactEmail="" />);
     expect(await screen.findByText(NO_HEADS_UPS)).toBeOnTheScreen();
-    expect(NO_HEADS_UPS).toContain('2 or more guests');
+    // VC-67: the server sends nothing until 5 guests rated tonight, so say so.
+    expect(NO_HEADS_UPS).toContain('5 or more guests have rated tonight');
+    expect(NO_HEADS_UPS).toContain('2 or more of them');
     // No tags, so no info tap either.
     expect(screen.queryByRole('button', { name: INFO_LINK })).toBeNull();
   });

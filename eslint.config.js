@@ -7,6 +7,14 @@
  *   Prettier handles formatting. Without it the two tools would argue about
  *   things like quote style. It must come last so it wins.
  * - `ignores` lists folders that are generated or installed, not written by us.
+ * - The `no-restricted-syntax` rule below (batch Q1, privacy) refuses any
+ *   `supabase.rpc(name, args, options)` call with a third "options" input.
+ *   That input is where supabase-js takes `{ get: true }` or `{ head: true }`,
+ *   which send the function's inputs in the web ADDRESS (a GET request)
+ *   instead of the request body. Addresses are kept in server logs, so a
+ *   date of birth sent to complete_profile would end up there. With only
+ *   two inputs, supabase-js always sends a POST (proved in
+ *   __tests__/rpc-post-only.test.js). The app never needs the third input.
  *
  * Run it with `npm run lint`.
  */
@@ -17,6 +25,19 @@ const prettierConfig = require('eslint-config-prettier');
 module.exports = defineConfig([
   expoConfig,
   prettierConfig,
+  {
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          // Any `.rpc(...)` call with 3 or more inputs.
+          selector: "CallExpression[callee.property.name='rpc'][arguments.length>2]",
+          message:
+            'Call supabase.rpc(name, args) with two inputs only. A third options input can turn on GET or HEAD, which puts the inputs (e.g. a birthdate) in the URL and server logs. See eslint.config.js.',
+        },
+      ],
+    },
+  },
   {
     ignores: ['node_modules/*', '.expo/*', 'dist/*', 'coverage/*', 'expo-env.d.ts'],
   },

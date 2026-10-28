@@ -95,6 +95,9 @@ insert into public.check_ins (user_id, event_id, method, first_at, last_verified
 select pg_temp.g(n), '22222222-0000-4000-8000-0000000000e0', 'gps', now(), now()
 from generate_series(1, 2) n;
 select pg_temp.pick('22222222-0000-4000-8000-0000000000e0', 'packed', 3, 4, now());
+-- VC-67: tags show only once 5+ different guests rated tonight, so guests
+-- 11 to 15 rate e0 just now (no tags), lifting it over that bar.
+select pg_temp.rate('22222222-0000-4000-8000-0000000000e0', 11, 15, now());
 
 -- ---- 1. Locked down (5) -----------------------------------------------------
 select ok(not has_function_privilege('authenticated', 'private.heads_up_tags_active()', 'execute')
@@ -248,6 +251,9 @@ select is(private.event_heads_ups('22222222-0000-4000-8000-0000000000f5', null, 
 -- f6: 5 raters. Felt unsafe: 3 picks at 4:59 AM (last night, though inside
 -- the 3-hour window) and 2 at 5:30 AM. Long line: 2 picks at 4:59 AM.
 select pg_temp.rate('22222222-0000-4000-8000-0000000000f6', 1, 5, pg_temp.t() - interval '30 minutes');
+-- VC-67: guests 6 to 10 rated at 4 AM, so the EARLIER night (asked at
+-- 4:59:30 below) also has 5 raters. They aren't tonight's (6 AM) raters.
+select pg_temp.rate('22222222-0000-4000-8000-0000000000f6', 6, 10, pg_temp.t() - interval '2 hours');
 select pg_temp.pick('22222222-0000-4000-8000-0000000000f6', 'felt_unsafe', 1, 3, pg_temp.t() - interval '61 minutes');
 select pg_temp.pick('22222222-0000-4000-8000-0000000000f6', 'felt_unsafe', 4, 5, pg_temp.t() - interval '30 minutes');
 select pg_temp.pick('22222222-0000-4000-8000-0000000000f6', 'lines_long', 1, 2, pg_temp.t() - interval '61 minutes');

@@ -51,6 +51,20 @@ insert into public.heads_up_votes (user_id, event_id, tag, created_at) values
   ('20202020-9999-4999-8999-000000000002', '20202020-0000-4000-8000-0000000000e1', 'overpriced', now()),
   ('20202020-9999-4999-8999-000000000001', '20202020-0000-4000-8000-0000000000e1', 'dress_code', now()),
   ('20202020-9999-4999-8999-000000000002', '20202020-0000-4000-8000-0000000000e1', 'dress_code', now());
+-- VC-67: tags show only once 5+ different guests rated tonight, so five
+-- bystander guests (…b1 to …b5) rate e1 just now. They pick no tags and
+-- report nothing; they only lift e1 over that bar.
+insert into auth.users (id, email)
+select ('20202020-9999-4999-8999-0000000000b' || n)::uuid, 'tag-report-b' || n || '@test.vibecheck.invalid'
+from generate_series(1, 5) n;
+insert into public.profiles (id, display_name, birthdate, is_tester, role)
+select ('20202020-9999-4999-8999-0000000000b' || n)::uuid, 'Bystander ' || n,
+       current_date - interval '30 years', false, 'user'
+from generate_series(1, 5) n;
+insert into public.ratings (user_id, event_id, crowd, music, energy, created_at, updated_at)
+select ('20202020-9999-4999-8999-0000000000b' || n)::uuid, '20202020-0000-4000-8000-0000000000e1',
+       2, 2, 2, now(), now()
+from generate_series(1, 5) n;
 
 -- An old open report at e2 (guest 2, 50 hours ago): overdue. Made before
 -- VC-65, so it has no reason.

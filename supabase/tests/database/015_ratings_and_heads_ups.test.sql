@@ -256,6 +256,25 @@ select is(public.add_heads_up('dddddddd-0000-4000-8000-0000000000e1', 'lines_lon
   '{"status": "added"}'::jsonb, 'another checked-in guest can +1 it: added');
 select is(public.add_heads_up('dddddddd-0000-4000-8000-0000000000e2', 'dress_code'),
   '{"status": "not_checked_in"}'::jsonb, '+1 needs a check-in at that event');
+-- VC-67: tags show only once 5+ different guests rated tonight. Five
+-- bystander guests (…b1 to …b5, no tags) rate e1 now, written as owner, so
+-- the counts below are judged by the per-tag bars. (So "raters" in section
+-- 8 is 5 higher than the named guests alone.)
+reset role;
+insert into auth.users (id, email)
+select ('dddddddd-9999-4999-8999-0000000000b' || n)::uuid, 'rate-b' || n || '@test.vibecheck.invalid'
+from generate_series(1, 5) n;
+insert into public.profiles (id, display_name, birthdate, is_tester, role)
+select ('dddddddd-9999-4999-8999-0000000000b' || n)::uuid, 'Bystander ' || n,
+       current_date - interval '30 years', false, 'user'
+from generate_series(1, 5) n;
+insert into public.ratings (user_id, event_id, crowd, music, energy, created_at, updated_at)
+select ('dddddddd-9999-4999-8999-0000000000b' || n)::uuid, 'dddddddd-0000-4000-8000-0000000000e1',
+       2, 2, 2, now(), now()
+from generate_series(1, 5) n;
+set local role authenticated;
+select set_config('request.jwt.claims',
+  '{"sub":"dddddddd-9999-4999-8999-0000000000d2","role":"authenticated"}', true);
 select is(public.get_event_heads_ups('dddddddd-0000-4000-8000-0000000000e1') -> 0,
   '{"tag": "lines_long", "count": 2, "mine": true}'::jsonb,
   'counts are most-first; "mine" is true for the caller''s own +1');
@@ -266,7 +285,7 @@ select is(public.add_heads_up('dddddddd-0000-4000-8000-0000000000e3', 'dress_cod
 select set_config('request.jwt.claims',
   '{"sub":"dddddddd-9999-4999-8999-0000000000d3","role":"authenticated"}', true);
 select is(public.submit_rating('dddddddd-0000-4000-8000-0000000000e1', 1, 1, 1, 'dead', array['sound_bad', 'overpriced']) ->> 'raters',
-  '3', 'before hiding, 3 people''s ratings count at e1');
+  '8', 'before hiding, 8 people''s ratings count at e1 (3 named guests + 5 bystanders)');
 reset role;
 update public.ratings set hidden_at = now(), updated_at = now() - interval '2 hours'
 where user_id = 'dddddddd-9999-4999-8999-0000000000d3';
@@ -282,7 +301,7 @@ select is(public.get_event_heads_ups('dddddddd-0000-4000-8000-0000000000e1'),
 select set_config('request.jwt.claims',
   '{"sub":"dddddddd-9999-4999-8999-0000000000d3","role":"authenticated"}', true);
 select is(public.submit_rating('dddddddd-0000-4000-8000-0000000000e1', 3, 3, 3) ->> 'raters',
-  '2', 'the hidden guest''s update doesn''t count in raters');
+  '7', 'the hidden guest''s update doesn''t count in raters (2 named guests + 5 bystanders)');
 reset role;
 select isnt((select hidden_at from public.ratings where user_id = 'dddddddd-9999-4999-8999-0000000000d3'),
   null, 'an update keeps a hidden rating hidden');

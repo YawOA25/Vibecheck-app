@@ -9,12 +9,26 @@
  * the anon (public) key are safe to ship inside the app: the database's
  * row-level security rules protect the data, not the key.
  *
- * Why AsyncStorage: it is the phone's small key-value store. Supabase keeps the
- * login there so people stay signed in after closing the app.
+ * Where the login is kept: Supabase saves the login (session tokens) so people
+ * stay signed in after closing the app. On phones it goes to the encrypted
+ * secure store (iPhone Keychain / Android Keystore) through
+ * src/lib/secure-session-storage.ts, which also moved logins saved by older
+ * builds out of plain AsyncStorage once, without signing anyone out (batch
+ * Q1). The web build has no secure store, so it uses AsyncStorage (the
+ * browser's localStorage).
+ *
+ * Privacy rule for server calls (batch Q1): every `supabase.rpc(...)` is sent
+ * as a POST, with its inputs in the request BODY. Never pass the third
+ * `{ get: true }` or `{ head: true }` option: those put the inputs (for
+ * complete_profile, the date of birth) into the web address, where server
+ * logs keep them. ESLint refuses that option (eslint.config.js), and
+ * __tests__/rpc-post-only.test.js proves the calls go out as POST.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient } from '@supabase/supabase-js';
 import { AppState, Platform } from 'react-native';
+
+import { secureSessionStorage } from '@/lib/secure-session-storage';
 
 // Expo only fills these in when they are written out exactly like this
 // (process.env.EXPO_PUBLIC_...), so don't rewrite them as process.env[name].
@@ -42,7 +56,8 @@ export const supabase = createClient(
   anonKey || 'not-configured',
   {
     auth: {
-      storage: AsyncStorage,
+      // Phones: encrypted secure store. Web: localStorage (no secure store).
+      storage: Platform.OS === 'web' ? AsyncStorage : secureSessionStorage,
       // Renew the login token in the background before it expires (1 hour).
       autoRefreshToken: true,
       // Remember the login between app launches.

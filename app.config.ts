@@ -85,6 +85,13 @@ const config: ExpoConfig = {
         imageWidth: 76,
       },
     ],
+    // The login is kept in the phone's secure keychain / keystore (batch Q1,
+    // src/lib/secure-session-storage.ts). The plugin's default
+    // `configureAndroidBackup: true` keeps those encrypted values out of
+    // Android's cloud backup: restored on a new phone they couldn't be
+    // decrypted anyway (the key never leaves the old phone), so the guest
+    // simply signs in again there.
+    'expo-secure-store',
   ],
   // EAS (Expo Application Services) builds the app on Expo's servers (task
   // VC-B10). `owner` is the founder's Expo account and `projectId` is the ID

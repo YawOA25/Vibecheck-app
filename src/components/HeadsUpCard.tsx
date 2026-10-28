@@ -24,10 +24,12 @@
  *     sets VENUE_CONTACT_EMAIL (src/lib/contact.ts), venues and hosts also
  *     see an email address here.
  *
- *   - which tags appear is decided on the server (VC-56, VC-59): a tag shows
- *     only once 2 or more guests picked it, and "Felt unsafe" only at 3+
- *     guests and 10% of tonight's raters, counting tonight only. Lower
- *     counts never reach the app, so this card just shows what it gets.
+ *   - which tags appear is decided on the server (VC-67, VC-56, VC-59): no
+ *     tag at all until 5 or more guests have rated the event tonight; then
+ *     a tag shows once 2 or more guests picked it, and "Felt unsafe" only
+ *     at 3+ guests and 10% of tonight's raters, counting tonight only.
+ *     Lower counts never reach the app, so this card just shows what it
+ *     gets, and the empty text explains both bars.
  *   - "Felt unsafe" (VC-60) is worded as guests' view for that night
  *     ("💬 Felt unsafe · 3 guests tonight", a neutral icon, not a warning
  *     sign). "What are these?" opens a line saying tags are guests'
@@ -62,10 +64,14 @@ import type { HeadsUpCount } from '@/lib/ratings-api';
 import { headsUpRefusalMessage } from '@/lib/rating-screens';
 import { colors, radius, spacing, typography } from '@/theme';
 
-/** The card's words (exported so tests use the same text). */
+/**
+ * The card's words (exported so tests use the same text).
+ * NO_HEADS_UPS names both server bars (VC-67: 5 raters tonight; VC-56: 2
+ * guests per tag), so a guest at a small event knows why the card is empty.
+ */
 export const HEADS_UP_TITLE = 'HEADS-UP';
 export const NO_HEADS_UPS =
-  'No heads-ups yet. A tag shows here once 2 or more guests who are here pick it.';
+  'No heads-ups yet. Tags show here once 5 or more guests have rated tonight and 2 or more of them pick the same tag.';
 export const HEADS_UP_LOAD_ERROR = "We couldn't load the heads-ups.";
 export const PLUS_ONE_HINT = 'Here now? Tap a heads-up to +1 it.';
 export const REPORT_LINK = 'Report this tag';

@@ -154,6 +154,13 @@ insert into public.heads_up_votes (user_id, event_id, tag, created_at) values
   ('17171717-9999-4999-8999-000000000004', '17171717-0000-4000-8000-0000000000d1', 'lines_long', now() - interval '1 hour'),
   ('17171717-9999-4999-8999-000000000003', '17171717-0000-4000-8000-0000000000d1', 'picking_up', now() - interval '4 hours'),
   ('17171717-9999-4999-8999-000000000001', '17171717-0000-4000-8000-0000000000d1', 'picking_up', now());
+-- VC-67: tags show only once 5+ different guests rated tonight, so guests 6
+-- to 10 rate d1 just now (they pick no tags; they only lift the event over
+-- that bar, so the 3-hour-window checks below test what they mean to).
+insert into public.ratings (user_id, event_id, crowd, music, energy, created_at, updated_at)
+select ('17171717-9999-4999-8999-0000000000' || lpad(n::text, 2, '0'))::uuid,
+       '17171717-0000-4000-8000-0000000000d1', 2, 2, 2, now(), now()
+from generate_series(6, 10) n;
 
 -- ---- 1. Locked down (5) -----------------------------------------------------
 select ok((select bool_and(prosecdef and proconfig @> array['search_path=""'])
