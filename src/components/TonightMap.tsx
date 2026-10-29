@@ -48,7 +48,30 @@
  *     "2 events aren't on the map. See the list" when some events have a
  *     typed area the map can't place (they are in the list only);
  *   - "Showing the first 300. Narrow the dates." past 300 events;
- *   - a legend: the four bands, and "Circles show the area, not the address".
+ *   - a map key (legend): the four bands, and "Circles show the area, not
+ *     the address". Since VC-85 it lives behind the round menu button.
+ *
+ * VC-85 step 1, the "sleek" look (design/vc85-map-brand-spec.md; founder
+ * chose Tier 2 on 2026-10-29, and this step is the part both tiers share).
+ * Everything still works in Expo Go: no new native package.
+ *   - The Apple base is made as quiet as Apple allows: the "muted" map type
+ *     (flattest, least colour), no points of interest, and zoom limits
+ *     (from street level out to the whole DC / Baltimore / Richmond area).
+ *     Apple Maps can't be recoloured; that is step 2 (a custom base map,
+ *     which needs a development build).
+ *   - A dark edge fade over the map (src/components/MapGlass.tsx) pulls the
+ *     eye to the middle. It is only a picture: touches go through it.
+ *   - The chrome floats as "glass": a pill at the top ("Tonight ·
+ *     Washington") with one round menu button that opens the map key; the
+ *     key's "Circles show the area" line also shows once per app run as a
+ *     hint. Smaller 26 px tags, a 34 px count bubble, a softer area glow,
+ *     a glass card with a gold hairline and dots for its pages.
+ *   - Slower, softer motion: the camera takes 520 ms to a picked tag (450
+ *     ms into a bubble), the card slides up in 280 ms with no bounce, and
+ *     new tags fade in one after another, hottest first. Reduce Motion:
+ *     all instant, as before.
+ * The privacy rules are unchanged: area circles only, no counts of people
+ * or raters, published scores only.
  *
  * Refreshing: the points (and so the published scores) reload every minute
  * while the map is on screen, like the list's vibes. A score only changes
@@ -69,7 +92,7 @@
  *
  * Reduce Motion: the map jumps (to its framing, or to a picked tag) instead
  * of gliding, the card appears without rising, a picked tag doesn't grow,
- * and the cards don't shrink when pressed.
+ * new tags don't fade in, and the cards don't shrink when pressed.
  *
  * Android: no Google Maps key yet (a founder decision), so it shows "Map
  * coming soon" with a "See the list" button instead of a map.
@@ -99,7 +122,7 @@ import type { MapPressEvent, Region, UserLocationChangeEvent } from 'react-nativ
 
 import { AreaHeat } from '@/components/AreaHeat';
 import { Button } from '@/components/Button';
-import { CircleIconButton } from '@/components/CircleIconButton';
+import { GlassCircleButton, MAP_EASE, MapVignette, glass } from '@/components/MapGlass';
 import { MapCluster, MapDot } from '@/components/MapDots';
 import { MapMiniCard } from '@/components/MapMiniCard';
 import { MapTag } from '@/components/MapTag';
@@ -107,7 +130,7 @@ import type { MapTagProps, PulseMode } from '@/components/MapTag';
 import { StatusPanel } from '@/components/StatusPanel';
 import { wordColour } from '@/components/VibeMeter';
 import { useAuth } from '@/lib/auth-context';
-import { filterEmptyText } from '@/lib/date-filter';
+import { filterEmptyText, filterTitle } from '@/lib/date-filter';
 import type { DateFilter } from '@/lib/date-filter';
 import {
   BANDS,
@@ -132,6 +155,7 @@ import {
   planMap,
   pulseDelay,
   regionToFit,
+  tagAppearDelays,
 } from '@/lib/map-cluster';
 import type { MapSize, MapSpot, PlannedMarker } from '@/lib/map-cluster';
 import { motionAllowed, useReduceMotion } from '@/lib/reduce-motion';
@@ -148,6 +172,28 @@ export const MORE_THAN_LIMIT = `Showing the first ${MAP_LIMIT}. Narrow the dates
 export const LEGEND_TEXT = 'Circles show the area, not the address';
 /** The legend's extra line while count bubbles show (far zoom; the mock's words). */
 export const LEGEND_BUBBLE_TEXT = 'Bubble colour = hottest inside';
+/** The round menu button's spoken label (VC-85: it opens the map key). */
+export const MENU_LABEL = 'Map key';
+/** The muted place name in the top bar (VC-85 spec "Chrome"). */
+export const MAP_CITY = 'Washington';
+/** How long the first-open hint stays, in ms, unless the guest acts first. */
+export const HINT_MS = 6000;
+
+/**
+ * Whether the "Circles show the area" hint has been shown in this app run
+ * (VC-85: "first-open hint once"). Kept in memory only: it shows again
+ * after the app restarts, which is fine for a short hint.
+ */
+let hintShown = false;
+
+/**
+ * Lets tests start with the hint unseen again.
+ *
+ * @param shown - true to act as if it was already shown (default false).
+ */
+export function resetMapHintForTests(shown = false): void {
+  hintShown = shown;
+}
 
 /** A swipe down at least this far (in px) closes the card. */
 export const SWIPE_CLOSE_PX = 60;
@@ -178,11 +224,17 @@ export function swipeCloses(dy: number, vy: number): boolean {
   return dy >= SWIPE_CLOSE_PX || (dy > 10 && vy > SWIPE_CLOSE_SPEED);
 }
 
-/** How long the camera takes to ease to a picked tag, in ms. */
-export const CAMERA_MS = 350;
+/**
+ * How long the camera takes to ease to a picked tag, in ms (VC-85: 520,
+ * was 350). Apple Maps uses its own ease-out curve; we can only set the time.
+ */
+export const CAMERA_MS = 520;
 
-/** How long the bottom card takes to rise, in ms (spec §6). */
-export const CARD_RISE_MS = 240;
+/** How long the camera takes to open up a tapped count bubble, in ms (VC-85: 450). */
+export const CLUSTER_MS = 450;
+
+/** How long the bottom card takes to slide up and fade in, in ms (VC-85: 280, no bounce). */
+export const CARD_RISE_MS = 280;
 
 /**
  * How far below a picked tag the camera centres, as a share of the map's
@@ -200,9 +252,29 @@ export const DC_REGION: Region = { ...DC_CENTRE, latitudeDelta: 0.11, longitudeD
 const ME_DELTA = 0.02;
 
 /**
- * Dark map colours for Google Maps (Android, later, once a key is approved).
- * Apple Maps on iPhone can't take a style list; it uses its own dark mode
- * (`userInterfaceStyle="dark"`), which is close to the v3 look.
+ * How far in and out the guest can zoom (VC-85 spec "Zoom limits"), as the
+ * camera's height above the map's centre, in metres. Apple Maps only.
+ *   - 400 m is about street level: closer, Apple shows road names and
+ *     shop clutter, and our tags would cover whole blocks;
+ *   - 400 km still frames DC, Baltimore and Richmond together (about 240
+ *     km from end to end), but no further: there are no events beyond.
+ * It is a ZOOM limit only; Apple Maps (through react-native-maps) has no
+ * way to stop panning away, so the guest can still drag elsewhere.
+ */
+export const ZOOM_RANGE = {
+  minCenterCoordinateDistance: 400,
+  maxCenterCoordinateDistance: 400_000,
+  animated: true,
+};
+
+/**
+ * Dark map colours for Google Maps ONLY (kept for Android, once a Google
+ * key is approved; VC-85 step 2 may replace it with a custom base map).
+ *
+ * VC-85: this does NOTHING on iPhone. Apple Maps ignores style lists, so
+ * the iPhone map no longer passes it; it uses Apple's own dark mode and
+ * the "muted" map type instead. Nothing draws an Android map yet either
+ * (it shows "Map coming soon"), so today this list is unused.
  */
 export const DARK_MAP_STYLE = [
   { elementType: 'geometry', stylers: [{ color: '#141417' }] },
@@ -315,6 +387,18 @@ function IosMap({ filter, onSeeList, onOpenEvent }: TonightMapProps) {
   const myCoord = useRef<{ latitude: number; longitude: number } | null>(null);
   const reduceMotion = useReduceMotion();
   const moving = motionAllowed(reduceMotion);
+  // VC-85: the map key's panel under the round menu button.
+  const [menuOpen, setMenuOpen] = useState(false);
+  // VC-85: the "Circles show the area" hint, the first time the map opens
+  // in this app run (read once, when the map first draws).
+  const [hint, setHint] = useState(() => !hintShown);
+  useEffect(() => {
+    if (!hint) return;
+    hintShown = true;
+    // It goes away by itself after a few seconds.
+    const timer = setTimeout(() => setHint(false), HINT_MS);
+    return () => clearTimeout(timer);
+  }, [hint]);
 
   // The filter as text, so effects restart only when it really changes.
   const filterKey = JSON.stringify(filter);
@@ -415,6 +499,9 @@ function IosMap({ filter, onSeeList, onOpenEvent }: TonightMapProps) {
     else mapRef.current?.fitToCoordinates(coords, { edgePadding: FIT_PADDING, animated: moving });
   }, [mapReady, state.kind, layout, filterKey, attempt, moving, viewerId]);
 
+  // VC-85: how long each new tag waits before fading in (hottest first).
+  const appearDelays = useMemo(() => tagAppearDelays(plan.markers), [plan]);
+
   const selectedArea = pickedGroup(layout.areas, layout.venues, selected);
   const now = state.kind === 'ready' ? state.at : new Date(0);
   const eventCount = layout.areas.reduce((n, a) => n + a.events.length, 0) + layout.venues.length;
@@ -429,6 +516,9 @@ function IosMap({ filter, onSeeList, onOpenEvent }: TonightMapProps) {
    */
   function pick(key: string, at: { latitude: number; longitude: number }) {
     setSelected(key);
+    // The guest has found their way around: the hint and the key can go.
+    setHint(false);
+    setMenuOpen(false);
     const { latitudeDelta, longitudeDelta } = region;
     mapRef.current?.animateToRegion(
       {
@@ -443,14 +533,14 @@ function IosMap({ filter, onSeeList, onOpenEvent }: TonightMapProps) {
   }
 
   /**
-   * A tap on a count bubble: zooms in just enough to open it up (350 ms,
-   * or a jump under Reduce Motion). One area with several parties zooms to
+   * A tap on a count bubble: zooms in just enough to open it up (450 ms
+   * since VC-85, or a jump under Reduce Motion). One area with several parties zooms to
    * the close level around its centre, where its tag shows.
    *
    * @param cluster - the tapped bubble.
    */
   function openCluster(cluster: Extract<PlannedMarker, { kind: 'cluster' }>) {
-    mapRef.current?.animateToRegion(regionToFit(cluster.spots, region), moving ? CAMERA_MS : 0);
+    mapRef.current?.animateToRegion(regionToFit(cluster.spots, region), moving ? CLUSTER_MS : 0);
   }
 
   /** Closes the card (empty map tap, swipe down, or the screen reader's escape). */
@@ -506,6 +596,7 @@ function IosMap({ filter, onSeeList, onOpenEvent }: TonightMapProps) {
         animate={moving}
         pulse={pulse}
         pulseDelay={pulseDelay(spot.key)}
+        appearDelay={appearDelays.get(spot.key) ?? 0}
         testID={spotTestID(spot)}
       />
     );
@@ -521,7 +612,10 @@ function IosMap({ filter, onSeeList, onOpenEvent }: TonightMapProps) {
     if (event.nativeEvent.action === 'marker-press') return;
     const hit = areaAt(event.nativeEvent.coordinate, layout.areas);
     if (hit) pick(hit.label, hit);
-    else setSelected(null);
+    else {
+      setSelected(null);
+      setMenuOpen(false);
+    }
   }
 
   /** Remembers the blue dot's spot for the "Show my location" button (stays on the phone). */
@@ -568,8 +662,15 @@ function IosMap({ filter, onSeeList, onOpenEvent }: TonightMapProps) {
           style={styles.fill}
           initialRegion={DC_REGION}
           userInterfaceStyle="dark"
-          customMapStyle={DARK_MAP_STYLE}
+          // VC-85: Apple's flattest, least colourful map. (No
+          // customMapStyle: that list is Google-only; see DARK_MAP_STYLE.)
+          mapType="mutedStandard"
+          // No shop, food or other place icons. An EMPTY filter tells
+          // react-native-maps to fall back to the switch below, which hides
+          // every category (Apple's "exclude all" filter).
+          pointsOfInterestFilter={[]}
           showsPointsOfInterests={false}
+          cameraZoomRange={ZOOM_RANGE}
           showsBuildings={false}
           showsTraffic={false}
           showsCompass={false}
@@ -600,8 +701,53 @@ function IosMap({ filter, onSeeList, onOpenEvent }: TonightMapProps) {
         </MapView>
       </View>
 
-      {/* Top: loading, and the notes about what the map can't show. */}
+      {/* VC-85: the dark edge fade (a picture; touches go through it). */}
+      <MapVignette />
+
+      {/* Top: the floating glass bar and its menu button, then loading, the
+          first-open hint, and the notes about what the map can't show. */}
       <View style={styles.topRow} pointerEvents="box-none">
+        <View style={styles.topBar} pointerEvents="box-none">
+          <View
+            style={styles.topPill}
+            accessible
+            accessibilityLabel={`${filterTitle(filter, new Date())}, ${MAP_CITY}`}
+            testID="map-top-bar"
+          >
+            <View style={styles.topDot} />
+            <Text style={styles.topTitle} numberOfLines={1} maxFontSizeMultiplier={1.3}>
+              {filterTitle(filter, new Date())}
+              <Text style={styles.topCity}> · {MAP_CITY}</Text>
+            </Text>
+          </View>
+          <GlassCircleButton
+            icon="info"
+            label={MENU_LABEL}
+            onPress={() => {
+              setMenuOpen((open) => !open);
+              setHint(false);
+            }}
+            animate={moving}
+            expanded={menuOpen}
+            testID="map-menu-button"
+          />
+        </View>
+        {menuOpen ? (
+          <View
+            style={styles.menu}
+            testID="map-menu"
+            onAccessibilityEscape={() => setMenuOpen(false)}
+          >
+            <Legend bubbles={plan.markers.some((m) => m.kind === 'cluster')} />
+          </View>
+        ) : null}
+        {hint && !menuOpen ? (
+          <View style={styles.pill} testID="map-hint">
+            <Text style={styles.pillText} maxFontSizeMultiplier={1.3}>
+              {LEGEND_TEXT}
+            </Text>
+          </View>
+        ) : null}
         {state.kind === 'loading' ? (
           <View style={styles.pill} accessibilityLiveRegion="polite">
             <Text style={styles.pillText} maxFontSizeMultiplier={1.3}>
@@ -649,30 +795,31 @@ function IosMap({ filter, onSeeList, onOpenEvent }: TonightMapProps) {
         <EmptyCard filter={filter} onSeeList={onSeeList} />
       ) : null}
 
-      {/* Bottom: the legend, "See the list", the locate button, the card. */}
+      {/* Bottom: "See the list" and the locate button, 12 px above the card. */}
       <View style={styles.bottom} pointerEvents="box-none">
         <View style={styles.bottomRow} pointerEvents="box-none">
-          <Legend bubbles={plan.markers.some((m) => m.kind === 'cluster')} />
+          <Pressable
+            style={styles.seeList}
+            onPress={onSeeList}
+            accessibilityRole="button"
+            accessibilityLabel={SEE_LIST_LABEL}
+            testID="map-see-list"
+          >
+            <Text style={styles.seeListText} maxFontSizeMultiplier={1.3}>
+              {SEE_LIST_LABEL}
+            </Text>
+          </Pressable>
           {locationAllowed ? (
-            <CircleIconButton
+            <GlassCircleButton
               icon="pin"
               label={LOCATE_LABEL}
               onPress={showMe}
+              iconColour={colors.accent}
+              animate={moving}
               testID="map-locate"
             />
           ) : null}
         </View>
-        <Pressable
-          style={styles.seeList}
-          onPress={onSeeList}
-          accessibilityRole="button"
-          accessibilityLabel={SEE_LIST_LABEL}
-          testID="map-see-list"
-        >
-          <Text style={styles.seeListText} maxFontSizeMultiplier={1.3}>
-            {SEE_LIST_LABEL}
-          </Text>
-        </Pressable>
         {selectedArea ? (
           <AreaCard
             key={selectedArea.label}
@@ -830,9 +977,10 @@ function mapSpots(layout: { areas: AreaGroup[]; venues: MapPoint[] }): MapSpot[]
 }
 
 /**
- * The legend at the bottom left: the four bands as small gold swatches,
- * coolest to hottest, and a reminder that circles show areas only. While
- * count bubbles show, one more line: "Bubble colour = hottest inside".
+ * The map key (legend): the four bands as small gold swatches, coolest to
+ * hottest, and a reminder that circles show areas only. While count
+ * bubbles show, one more line: "Bubble colour = hottest inside". VC-85: it
+ * sits inside the menu panel (it used to float at the bottom left).
  *
  * @param props.bubbles - true while the map shows count bubbles (far zoom).
  * @returns the legend (read out as one sentence).
@@ -871,8 +1019,9 @@ function Legend({ bubbles }: { bubbles: boolean }) {
 
 /**
  * The card at the bottom for a picked area: one mini card per event,
- * swiped sideways, with "1 of 2" when there are several. It rises into
- * place (spec §6: 240 ms), or simply appears under Reduce Motion.
+ * swiped sideways, with small dots ("1 of 2" to screen readers) when there
+ * are several. It slides up and fades in (VC-85: 280 ms, easing out with
+ * no bounce), or simply appears under Reduce Motion.
  *
  * VC-83 Batch 2: the pages go hottest first (each with its own published
  * score; there is no area score), then by start time. A swipe down closes
@@ -969,7 +1118,12 @@ function AreaCard({
   const [shown] = useState(() => new Animated.Value(rise ? 0 : 1));
   useEffect(() => {
     if (!rise) return;
-    Animated.timing(shown, { toValue: 1, duration: CARD_RISE_MS, useNativeDriver: true }).start();
+    Animated.timing(shown, {
+      toValue: 1,
+      duration: CARD_RISE_MS,
+      easing: MAP_EASE,
+      useNativeDriver: true,
+    }).start();
   }, [rise, shown]);
   // It rises the last 30 px into place.
   const lift = shown.interpolate({ inputRange: [0, 1], outputRange: [30, 0] });
@@ -1018,12 +1172,31 @@ function AreaCard({
           </View>
         ))}
       </ScrollView>
-      {n > 1 ? (
-        <Text style={styles.pageText} maxFontSizeMultiplier={1.3}>
-          {Math.min(page + 1, n)} of {n}
-        </Text>
-      ) : null}
+      {n > 1 ? <PagerDots page={Math.min(page, n - 1)} count={n} /> : null}
     </Animated.View>
+  );
+}
+
+/**
+ * The card's page dots (VC-85: 5 px, the current one gold). Only drawn for
+ * 2 or more pages.
+ *
+ * @param props.page - the page showing now (0 = first).
+ * @param props.count - how many pages.
+ * @returns a row of dots, read to screen readers as e.g. "1 of 2".
+ */
+function PagerDots({ page, count }: { page: number; count: number }) {
+  return (
+    <View
+      style={styles.dots}
+      accessible
+      accessibilityLabel={`${page + 1} of ${count}`}
+      testID="map-card-dots"
+    >
+      {Array.from({ length: count }, (_, i) => (
+        <View key={i} style={[styles.dotMark, i === page && styles.dotMarkOn]} />
+      ))}
+    </View>
   );
 }
 
@@ -1049,23 +1222,58 @@ function EmptyCard({ filter, onSeeList }: { filter: DateFilter; onSeeList: () =>
 const styles = StyleSheet.create({
   fill: { flex: 1, backgroundColor: colors.bg },
   fallback: { flex: 1, paddingHorizontal: spacing.gutter, paddingTop: spacing.lg },
+  // VC-85: the floating chrome sits 12 px from the map's edges.
   topRow: {
     position: 'absolute',
-    top: spacing.sm,
-    left: spacing.gutter,
-    right: spacing.gutter,
+    top: spacing.gap12,
+    left: spacing.gap12,
+    right: spacing.gap12,
     alignItems: 'center',
     gap: spacing.sm,
   },
-  // The small notes at the top (v3 pill: surface, 1 px strong edge).
+  // The glass bar and the round menu button beside it.
+  topBar: { alignSelf: 'stretch', flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  topPill: {
+    flex: 1,
+    height: 40,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: 14,
+    borderRadius: radius.pill,
+    backgroundColor: glass.fill,
+    borderWidth: 1,
+    borderColor: glass.hairline,
+  },
+  topDot: { width: 7, height: 7, borderRadius: 3.5, backgroundColor: colors.accent },
+  topTitle: {
+    flexShrink: 1,
+    fontFamily: fonts.bodyBold,
+    fontSize: 14,
+    lineHeight: 20,
+    color: colors.text,
+  },
+  topCity: { fontFamily: fonts.bodyMedium, color: colors.muted },
+  // The map key's glass panel, under the menu button.
+  menu: {
+    alignSelf: 'flex-end',
+    maxWidth: 300,
+    paddingHorizontal: spacing.gap12,
+    paddingVertical: 10,
+    borderRadius: 16,
+    backgroundColor: glass.fill,
+    borderWidth: 1,
+    borderColor: glass.hairline,
+  },
+  // The small notes at the top (glass pills since VC-85).
   pill: {
     minHeight: 32,
     justifyContent: 'center',
     paddingHorizontal: 14,
     borderRadius: radius.pill,
-    backgroundColor: colors.surface,
+    backgroundColor: glass.fill,
     borderWidth: 1,
-    borderColor: colors.borderStrong,
+    borderColor: glass.hairline,
   },
   pillText: { fontFamily: fonts.bodyBold, fontSize: 13, lineHeight: 18, color: colors.text },
   overlayCard: {
@@ -1079,12 +1287,13 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     padding: 18,
   },
+  // VC-85: 12 px from the sides, 14 above the tab bar, 12 between rows.
   bottom: {
     position: 'absolute',
-    left: spacing.gutter,
-    right: spacing.gutter,
-    bottom: spacing.md,
-    gap: spacing.sm,
+    left: spacing.gap12,
+    right: spacing.gap12,
+    bottom: 14,
+    gap: spacing.gap12,
   },
   bottomRow: {
     flexDirection: 'row',
@@ -1092,17 +1301,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: spacing.sm,
   },
-  // The legend (spec §3): a small card, bottom left.
-  legend: {
-    flexShrink: 1,
-    gap: spacing.xs,
-    paddingHorizontal: 10,
-    paddingVertical: spacing.sm,
-    borderRadius: 12,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
+  // The map key: no box of its own (the menu panel is its glass).
+  legend: { flexShrink: 1, gap: spacing.xs },
   legendBands: { flexDirection: 'row', gap: 6 },
   legendBand: { alignItems: 'center', gap: 3 },
   legendSwatch: { width: 28, height: 6, borderRadius: 3 },
@@ -1115,27 +1315,29 @@ const styles = StyleSheet.create({
     color: colors.muted,
   },
   legendText: { ...typography.caption, fontSize: 11, lineHeight: 14, color: colors.muted },
-  // "See the list": a 44 px tall gold-text pill.
+  // "See the list": a 44 px tall gold-text glass pill.
   seeList: {
-    alignSelf: 'flex-start',
     minHeight: minTapTarget,
     justifyContent: 'center',
     paddingHorizontal: spacing.md,
     borderRadius: radius.pill,
-    backgroundColor: colors.surface,
+    backgroundColor: glass.fill,
     borderWidth: 1,
-    borderColor: colors.borderStrong,
+    borderColor: glass.hairline,
   },
   seeListText: { fontFamily: fonts.bodyBold, fontSize: 14, lineHeight: 20, color: colors.accent },
-  // The tap card: surface, radius 20, padding 12.
+  // The tap card (VC-85): glass, radius 22, a gold hairline, padding 12.
   tapCard: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.card,
+    backgroundColor: glass.fill,
+    borderRadius: 22,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: glass.goldHairline,
     padding: spacing.gap12,
     gap: spacing.sm,
   },
   pageFallback: { width: 300 },
-  pageText: { ...typography.caption, color: colors.muted, textAlign: 'center' },
+  // The pager's 5 px dots, the current one gold.
+  dots: { flexDirection: 'row', justifyContent: 'center', gap: 4 },
+  dotMark: { width: 5, height: 5, borderRadius: 2.5, backgroundColor: colors.borderStrong },
+  dotMarkOn: { backgroundColor: colors.accent },
 });

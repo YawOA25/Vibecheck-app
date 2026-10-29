@@ -2,7 +2,8 @@
  * A tag on the map (VC-83 map v2, design/vc83-map-v2-spec.md §2). It
  * replaces VC-79's "Shaw · 2" pill.
  *
- * What it looks like: a 32 px pill with, left to right, a 10 px heat dot,
+ * What it looks like: a 26 px glass pill (32 before VC-85) with, left to
+ * right, a 7 px heat dot,
  * the name, and then one of:
  *   - the published score ("8.4") in its band's gold, once started;
  *   - the start time ("10 PM") in grey, before the start (no dot colour);
@@ -26,6 +27,15 @@
  *   - LARGE TEXT: when the phone's text size is 1.3x or more, the score
  *     drops under the name (spec §7) so the pill doesn't get too wide.
  *
+ * VC-85 step 1 ("sleek", design/vc85-map-brand-spec.md "Tags"): the pill
+ * is smaller and made of the map's glass (src/components/MapGlass.tsx):
+ * 26 px tall with a light hairline edge, a 7 px dot, a 12 px name and a
+ * 13 px score. Picking a tag now cross-fades the gold fill in (160 ms)
+ * instead of switching it, and when a tag first appears (after a zoom) it
+ * fades in over 200 ms, a little after the hotter tags (the map passes
+ * `appearDelay`). Under Reduce Motion all of this is instant. The touch
+ * area stays 44 px tall (clear padding round the pill).
+ *
  * Where it sits: always exactly at the point the server sent (an area's
  * fixed centre, or a venue once that switch is on). Its position never
  * depends on the score or anything else (cto rule).
@@ -43,10 +53,11 @@ import { useEffect, useState } from 'react';
 import { Animated, Easing, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { Marker } from 'react-native-maps';
 
+import { glass } from '@/components/MapGlass';
 import { wordColour } from '@/components/VibeMeter';
-import { PULSE_MS } from '@/lib/map-cluster';
+import { PULSE_MS, TAG_HEIGHT } from '@/lib/map-cluster';
 import type { VibeLabel } from '@/lib/rating';
-import { colors, fonts } from '@/theme';
+import { colors, fonts, minTapTarget } from '@/theme';
 
 /** How long a tag keeps redrawing after a change, in ms (enough for one draw). */
 export const TAG_REDRAW_MS = 300;
@@ -56,6 +67,15 @@ export const BAND_FADE_MS = 400;
 
 /** From this text size up, the score sits under the name (spec §7). */
 export const STACK_FONT_SCALE = 1.3;
+
+/** How long a new tag takes to fade in, in ms (VC-85 spec "Motion"). */
+export const TAG_APPEAR_MS = 200;
+
+/** How long the picked tag's grow and gold cross-fade take, in ms. */
+export const TAG_PICK_MS = 160;
+
+/** The dot's size (VC-85: 7, was 10). */
+const DOT = 7;
 
 /** How the tag's dot looks. */
 export type TagDot =
@@ -98,6 +118,12 @@ export interface MapTagProps {
   pulse?: PulseMode;
   /** How long the pulse waits before its first ring, in ms (so tags don't pulse in step). */
   pulseDelay?: number;
+  /**
+   * How long to wait before fading in when the tag first appears, in ms
+   * (hotter tags first; see tagAppearDelays in src/lib/map-cluster.ts).
+   * Ignored when `animate` is false: the tag is simply there.
+   */
+  appearDelay?: number;
   testID?: string;
 }
 
@@ -169,6 +195,7 @@ export function MapTag({
   animate,
   pulse = 'off',
   pulseDelay = 0,
+  appearDelay = 0,
   testID,
 }: MapTagProps) {
   const band = dot.kind === 'band' ? dot.band : null;
@@ -204,15 +231,40 @@ export function MapTag({
   const look = `${name}|${trailing}|${dot.kind}|${band ?? ''}|${picked}|${pulse}|${stacked}`;
   const redrawing = useBriefRedraw(look, ghost ? BAND_FADE_MS + 100 : TAG_REDRAW_MS);
 
-  // The picked tag grows a little (spec: 1.08 in 160 ms).
+  // The picked tag grows a little (spec: 1.08 in 160 ms) and its gold fill
+  // cross-fades in at the same pace (VC-85). `gold` is the gold layer's
+  // opacity: 0 = glass, 1 = gold.
   const [scale] = useState(() => new Animated.Value(picked ? 1.08 : 1));
+  const [gold] = useState(() => new Animated.Value(picked ? 1 : 0));
   useEffect(() => {
-    Animated.timing(scale, {
-      toValue: picked ? 1.08 : 1,
-      duration: animate ? 160 : 0,
+    const duration = animate ? TAG_PICK_MS : 0;
+    Animated.parallel([
+      Animated.timing(scale, { toValue: picked ? 1.08 : 1, duration, useNativeDriver: true }),
+      Animated.timing(gold, { toValue: picked ? 1 : 0, duration, useNativeDriver: true }),
+    ]).start();
+  }, [picked, animate, scale, gold]);
+
+  // VC-85: a new tag fades in (200 ms, after its own short wait, so the
+  // hottest tags arrive first). Only when it first appears: the starting
+  // value is read once, so later changes of `animate` don't hide it again.
+  const [appear] = useState(() => new Animated.Value(animate ? 0 : 1));
+  useEffect(() => {
+    // Nothing to do when it started fully shown (Reduce Motion).
+    if (!animate) {
+      appear.setValue(1);
+      return;
+    }
+    const fadeIn = Animated.timing(appear, {
+      toValue: 1,
+      duration: TAG_APPEAR_MS,
+      delay: appearDelay,
       useNativeDriver: true,
-    }).start();
-  }, [picked, animate, scale]);
+    });
+    fadeIn.start();
+    return () => fadeIn.stop();
+    // Run once per tag: a fade-in is only for its first appearance.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const fire = band === 'Fire';
   const scoreColour = picked ? colors.onAccent : wordColour(band);
@@ -243,8 +295,11 @@ export function MapTag({
       accessibilityLabel={spoken}
       testID={testID}
     >
-      {/* Clear padding around the 32 px pill makes the touch area 44 tall. */}
-      <View style={styles.touch}>
+      {/* Clear padding around the 26 px pill makes the touch area 44 tall. */}
+      <Animated.View
+        style={[styles.touch, { opacity: appear }]}
+        testID={testID ? `${testID}-appear` : undefined}
+      >
         <Animated.View
           style={[
             styles.pill,
@@ -254,6 +309,12 @@ export function MapTag({
             { transform: [{ scale }] },
           ]}
         >
+          {/* The gold fill of a picked tag, faded in over the glass. */}
+          <Animated.View
+            pointerEvents="none"
+            testID={testID ? `${testID}-gold` : undefined}
+            style={[styles.goldLayer, { opacity: gold }]}
+          />
           <View style={styles.dotBox}>
             {pulse !== 'off' ? (
               <PulseRing
@@ -299,7 +360,7 @@ export function MapTag({
             </>
           )}
         </Animated.View>
-      </View>
+      </Animated.View>
     </Marker>
   );
 }
@@ -370,43 +431,51 @@ function PulseRing({
   );
 }
 
-/** Styles built only from theme tokens (spec §2). */
+/** Styles built only from theme tokens and the map's glass (spec §2, VC-85). */
 const styles = StyleSheet.create({
-  touch: { paddingVertical: 6, paddingHorizontal: 2 },
+  // 9 px above and below the 26 px pill: a 44 px tall touch area.
+  touch: { paddingVertical: (minTapTarget - TAG_HEIGHT) / 2, paddingHorizontal: 2 },
   pill: {
-    height: 32,
+    height: TAG_HEIGHT,
     minWidth: 44,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingLeft: 9,
-    paddingRight: 12,
-    borderRadius: 16,
-    backgroundColor: colors.surface,
+    gap: 5,
+    paddingLeft: 8,
+    paddingRight: 10,
+    borderRadius: TAG_HEIGHT / 2,
+    backgroundColor: glass.fill,
     borderWidth: 1,
-    borderColor: colors.borderStrong,
+    borderColor: glass.tagHairline,
   },
   // Large text: the pill grows to fit two lines.
-  pillStacked: { height: undefined, minHeight: 32, paddingVertical: 4 },
+  pillStacked: { height: undefined, minHeight: TAG_HEIGHT, paddingVertical: 3 },
   pillFire: { borderColor: colors.accent },
-  pillPicked: { backgroundColor: colors.accent, borderColor: colors.accent },
+  // The gold FILL comes from goldLayer (cross-faded); only the edge switches.
+  pillPicked: { borderColor: colors.accent },
+  goldLayer: {
+    ...StyleSheet.absoluteFill,
+    borderRadius: TAG_HEIGHT / 2,
+    backgroundColor: colors.accent,
+  },
   stack: { flexDirection: 'column' },
-  dotBox: { width: 10, height: 10 },
-  dot: { width: 10, height: 10, borderRadius: 5 },
-  dotDashed: { borderWidth: 1.5, borderStyle: 'dashed', borderColor: colors.muted },
+  dotBox: { width: DOT, height: DOT },
+  dot: { width: DOT, height: DOT, borderRadius: DOT / 2 },
+  dotDashed: { borderWidth: 1.25, borderStyle: 'dashed', borderColor: colors.muted },
   // The fading old dot sits exactly on top of the new one.
   ghost: { position: 'absolute', top: 0, left: 0 },
   ring: {
     position: 'absolute',
     top: 0,
     left: 0,
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    borderWidth: 2,
+    width: DOT,
+    height: DOT,
+    borderRadius: DOT / 2,
+    borderWidth: 1.5,
   },
-  name: { fontFamily: fonts.bodyBold, fontSize: 13, lineHeight: 18, color: colors.text },
-  score: { fontFamily: fonts.display, fontSize: 14, lineHeight: 18 },
-  muted: { fontFamily: fonts.bodyMedium, fontSize: 12, lineHeight: 16, color: colors.muted },
+  name: { fontFamily: fonts.bodyBold, fontSize: 12, lineHeight: 16, color: colors.text },
+  score: { fontFamily: fonts.display, fontSize: 13, lineHeight: 16 },
+  // "Too early", "10 PM", "2 parties": Manrope 500 11, muted (6.7:1 on the glass).
+  muted: { fontFamily: fonts.bodyMedium, fontSize: 11, lineHeight: 14, color: colors.muted },
   textPicked: { color: colors.onAccent },
 });

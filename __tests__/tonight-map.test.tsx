@@ -36,27 +36,42 @@
  *     tags pulse, still under Reduce Motion; a band change cross-fades the
  *     glow (instant under Reduce Motion); a swipe down or the screen
  *     reader's escape closes the card; a stale score is spoken as "stale".
+ *   - VC-85 step 1 (sleek): the quiet Apple base (muted map type, no places,
+ *     zoom limits, no Google-only style list), the edge fade that never
+ *     takes touches, the glass top bar with the menu button that opens the
+ *     map key, the once-per-run hint, the card's page dots and score
+ *     column, the slower camera and the soft five-ring glow (outer ring
+ *     still the area's size).
  */
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import * as Location from 'expo-location';
-import { AccessibilityInfo, Animated, Platform, ScrollView } from 'react-native';
+import { AccessibilityInfo, Animated, Platform, ScrollView, StyleSheet } from 'react-native';
 import * as Maps from 'react-native-maps';
 
-import { GLOW_FADE_MS, heatLayers } from '@/components/AreaHeat';
+import { GLOW_FADE_MS, heatLayers, ringAlphas } from '@/components/AreaHeat';
+import { BUBBLE_SIZE, bubbleEdge } from '@/components/MapDots';
+import { MAP_EASE } from '@/components/MapGlass';
 import { TAG_REDRAW_MS } from '@/components/MapTag';
 import {
   ANDROID_TITLE,
   CAMERA_MS,
   CARD_LIFT,
+  CARD_RISE_MS,
+  CLUSTER_MS,
   DC_REGION,
+  HINT_MS,
   LEGEND_TEXT,
   LOCATE_LABEL,
+  MAP_CITY,
   MAP_LOADING_LABEL,
+  MENU_LABEL,
   MORE_THAN_LIMIT,
   LEGEND_BUBBLE_TEXT,
   SEE_LIST_LABEL,
   TonightMap,
+  ZOOM_RANGE,
   isSwipeDown,
+  resetMapHintForTests,
   swipeCloses,
 } from '@/components/TonightMap';
 import { useAuth } from '@/lib/auth-context';
@@ -189,6 +204,8 @@ beforeEach(() => {
   jest.clearAllMocks();
   Platform.OS = 'ios';
   resetReduceMotionForTests();
+  // VC-85: every test starts as the app's first map visit (hint unseen).
+  resetMapHintForTests();
   jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(false);
   getPermission.mockResolvedValue({ granted: false, status: 'denied' });
   rpc.mockResolvedValue({ data: THREE_ROWS, error: null });
@@ -203,10 +220,11 @@ afterEach(() => {
 describe('TonightMap heat glow', () => {
   it('draws one glow per area around the centre the server sent, by band', async () => {
     await drawMap();
-    // Shaw's hottest published band is Hot: three stacked circles.
+    // Shaw's hottest published band is Hot: five soft stacked rings (VC-85),
+    // the outer one exactly the area's size.
     const shaw = circlesAt(38.9123);
     const hot = heatLayers('Hot');
-    expect(shaw.map((c) => c.radius)).toEqual([600, 396, 198]);
+    expect(shaw.map((c) => c.radius)).toEqual([600, 480, 360, 240, 120]);
     expect(shaw.map((c) => c.fillColor)).toEqual(hot.map((l) => l.fill));
     expect(shaw[0].center).toEqual({ latitude: 38.9123, longitude: -77.0219 });
     // Clarendon hasn't started: one faint dashed circle, no glow.
@@ -247,11 +265,100 @@ describe('TonightMap heat glow', () => {
     expect(screen.getByTestId('map-circle').props.radius).toBe(600);
   });
 
-  it('shows the legend', async () => {
+  it('keeps the map key behind the menu button, with a hint the first time', async () => {
     await drawMap();
-    expect(screen.getByText(LEGEND_TEXT)).toBeOnTheScreen();
+    // VC-85: no legend box on the map; the area line shows once as a hint.
+    expect(screen.queryByTestId('map-legend')).toBeNull();
+    expect(screen.getByTestId('map-hint')).toHaveTextContent(LEGEND_TEXT);
+    const menu = screen.getByRole('button', { name: MENU_LABEL });
+    expect(menu.props.accessibilityState).toEqual(expect.objectContaining({ expanded: false }));
+    await fireEvent.press(menu);
     expect(screen.getByTestId('map-legend').props.accessibilityLabel).toBe(
       `Heat from Quiet, Good, Hot, Fire. ${LEGEND_TEXT}.`,
+    );
+    // Opening the key retires the hint; pressing again closes the key.
+    expect(screen.queryByTestId('map-hint')).toBeNull();
+    await fireEvent.press(screen.getByRole('button', { name: MENU_LABEL }));
+    expect(screen.queryByTestId('map-legend')).toBeNull();
+  });
+
+  it('shows the hint only once per app run, and only for a few seconds', async () => {
+    jest.useFakeTimers();
+    await drawMap();
+    expect(screen.getByTestId('map-hint')).toBeOnTheScreen();
+    await act(() => jest.advanceTimersByTimeAsync(HINT_MS));
+    expect(screen.queryByTestId('map-hint')).toBeNull();
+    // Back to the list and to the map again: no second hint.
+    await screen.unmount();
+    await drawMap();
+    expect(screen.queryByTestId('map-hint')).toBeNull();
+  });
+});
+
+describe('TonightMap sleek look (VC-85 step 1)', () => {
+  it('makes the Apple map as quiet as Apple allows', async () => {
+    await drawMap();
+    const map = screen.getByTestId('tonight-map');
+    expect(map.props.mapType).toBe('mutedStandard');
+    expect(map.props.userInterfaceStyle).toBe('dark');
+    // No places: an empty filter falls back to "show none".
+    expect(map.props.pointsOfInterestFilter).toEqual([]);
+    expect(map.props.showsPointsOfInterests).toBe(false);
+    expect(map.props.cameraZoomRange).toEqual(ZOOM_RANGE);
+    // The Google-only style list is not passed to Apple Maps (it did nothing).
+    expect(map.props.customMapStyle).toBeUndefined();
+  });
+
+  it('draws the edge fade without taking touches or screen reader focus', async () => {
+    await drawMap();
+    const fade = screen.getByTestId('map-vignette', { includeHiddenElements: true });
+    expect(fade.props.pointerEvents).toBe('none');
+    expect(fade.props.accessibilityElementsHidden).toBe(true);
+  });
+
+  it('slides the card up with the map ease, no spring', async () => {
+    const timing = jest.spyOn(Animated, 'timing');
+    const spring = jest.spyOn(Animated, 'spring');
+    await drawMap();
+    await fireEvent.press(screen.getByTestId('map-area-Shaw, DC'));
+    expect(timing).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        toValue: 1,
+        duration: CARD_RISE_MS,
+        easing: MAP_EASE,
+        useNativeDriver: true,
+      }),
+    );
+    expect(spring).not.toHaveBeenCalled();
+  });
+
+  it('builds the soft glow so the middle reaches the spec strength', () => {
+    // Stacked see-through rings: what shows in the middle is 1 - (each
+    // ring's see-through share multiplied together).
+    const middle = (alphas: number[]) => 1 - alphas.reduce((left, a) => left * (1 - a), 1);
+    expect(middle(ringAlphas(0.55))).toBeCloseTo(0.55, 5);
+    expect(middle(ringAlphas(0.38))).toBeCloseTo(0.38, 5);
+    // The outer ring alone is faint (12% of the middle): a soft edge.
+    expect(ringAlphas(0.55)[0]).toBeCloseTo(0.066, 3);
+    // No ring gets a hard edge.
+    expect(heatLayers('Fire').every((l) => l.strokeWidth === 0 && !l.stroke)).toBe(true);
+  });
+
+  it('draws a 34 px glass bubble edged in the hottest band at 55%', async () => {
+    await drawMap();
+    await moveMapTo(FAR_VIEW);
+    const style = StyleSheet.flatten(screen.getByTestId('map-cluster-Shaw, DC-bubble').props.style);
+    expect(style.width).toBe(BUBBLE_SIZE);
+    expect(BUBBLE_SIZE).toBe(34);
+    expect(style.borderColor).toBe(bubbleEdge('Hot'));
+    expect(bubbleEdge('Hot')).toBe('rgba(214, 185, 123, 0.55)');
+  });
+
+  it('floats a glass top bar naming the dates and the city', async () => {
+    await drawMap();
+    expect(screen.getByTestId('map-top-bar').props.accessibilityLabel).toBe(
+      `This week, ${MAP_CITY}`,
     );
   });
 });
@@ -384,9 +491,10 @@ describe('TonightMap tap card', () => {
     await fireEvent.press(screen.getByTestId('map-area-Shaw, DC'));
     const cards = screen.getAllByTestId('map-mini-card');
     expect(cards).toHaveLength(2);
-    expect(screen.getByText('1 of 2')).toBeOnTheScreen();
-    // The started party shows the gauge; the later one shows nothing about ratings.
-    expect(screen.getAllByTestId('map-mini-card-gauge')).toHaveLength(1);
+    // VC-85: page dots, read as "1 of 2".
+    expect(screen.getByLabelText('1 of 2')).toBeOnTheScreen();
+    // The started party shows its score; the later one shows nothing about ratings.
+    expect(screen.getAllByTestId('map-mini-card-score')).toHaveLength(1);
     expect(screen.queryByTestId('map-mini-card-early')).toBeNull();
     // Where: the area only, never more.
     expect(screen.getAllByText('Somewhere in Shaw, DC')).toHaveLength(2);
@@ -425,7 +533,7 @@ describe('TonightMap tap card', () => {
     await drawMap();
     await fireEvent.press(screen.getByTestId('map-area-Shaw, DC'));
     expect(screen.getByTestId('map-mini-card-early')).toHaveTextContent(TOO_EARLY);
-    expect(screen.queryByTestId('map-mini-card-gauge')).toBeNull();
+    expect(screen.queryByTestId('map-mini-card-score')).toBeNull();
   });
 });
 
@@ -636,10 +744,11 @@ describe('TonightMap far zoom (VC-83 Batch 2)', () => {
     // No names and no tags at this zoom.
     expect(screen.queryByText('Clarendon pick')).toBeNull();
     expect(screen.queryByTestId('map-area-Shaw, DC')).toBeNull();
-    // The legend explains the bubble colour.
+    // The map key (behind the menu button) explains the bubble colour.
+    await fireEvent.press(screen.getByRole('button', { name: MENU_LABEL }));
     expect(screen.getByText(LEGEND_BUBBLE_TEXT)).toBeOnTheScreen();
     // The glows stay, at the areas' own size.
-    expect(circlesAt(38.9123).map((c) => c.radius)).toEqual([600, 396, 198]);
+    expect(circlesAt(38.9123).map((c) => c.radius)).toEqual([600, 480, 360, 240, 120]);
   });
 
   it('merges nearby areas into one bubble at the average of their events', async () => {
@@ -696,7 +805,7 @@ describe('TonightMap far zoom (VC-83 Batch 2)', () => {
         latitudeDelta: CLOSE_DELTA,
         longitudeDelta: CLOSE_DELTA,
       },
-      CAMERA_MS,
+      CLUSTER_MS,
     );
     // No card: a bubble only zooms.
     expect(screen.queryByTestId('map-tap-card')).toBeNull();
@@ -744,7 +853,7 @@ describe('TonightMap card pager order (VC-83 Batch 2)', () => {
       .getAllByTestId('map-mini-card')
       .map((c) => String(c.props.accessibilityLabel).split(',')[0]);
     expect(titles).toEqual(['Fire one', 'Good one', 'Early one', 'Later one']);
-    expect(screen.getByText('1 of 4')).toBeOnTheScreen();
+    expect(screen.getByLabelText('1 of 4')).toBeOnTheScreen();
   });
 
   it('stays on the event being viewed when a refresh re-sorts the pages (VC-84 fix)', async () => {
@@ -797,7 +906,7 @@ describe('TonightMap card pager order (VC-83 Batch 2)', () => {
         nativeEvent: { contentOffset: { x: W, y: 0 } },
       }),
     );
-    expect(screen.getByText('2 of 3')).toBeOnTheScreen();
+    expect(screen.getByLabelText('2 of 3')).toBeOnTheScreen();
     scrollTo.mockClear();
 
     // B turns Fire: the refresh puts it first. The card follows B to page 1
@@ -808,7 +917,7 @@ describe('TonightMap card pager order (VC-83 Batch 2)', () => {
     });
     await act(() => jest.advanceTimersByTimeAsync(LIST_VIBE_REFRESH_MS));
     expect(titles()).toEqual(['B one', 'A one', 'C one']);
-    expect(screen.getByText('1 of 3')).toBeOnTheScreen();
+    expect(screen.getByLabelText('1 of 3')).toBeOnTheScreen();
     expect(scrollTo).toHaveBeenLastCalledWith({ x: 0, animated: false });
 
     // If the viewed event leaves the area, the card keeps the page number
@@ -816,7 +925,7 @@ describe('TonightMap card pager order (VC-83 Batch 2)', () => {
     rpc.mockResolvedValue({ data: [scored('A', 8), scored('C', 7)], error: null });
     await act(() => jest.advanceTimersByTimeAsync(LIST_VIBE_REFRESH_MS));
     expect(titles()).toEqual(['A one', 'C one']);
-    expect(screen.getByText('1 of 2')).toBeOnTheScreen();
+    expect(screen.getByLabelText('1 of 2')).toBeOnTheScreen();
   });
 });
 
@@ -899,16 +1008,16 @@ describe('TonightMap band change (VC-83 Batch 2)', () => {
   it('cross-fades the glow over 400 ms', async () => {
     jest.useFakeTimers();
     await drawMap();
-    expect(circlesAt(38.9123)).toHaveLength(3);
+    expect(circlesAt(38.9123)).toHaveLength(5);
     rpc.mockResolvedValue({ data: FIRE_ROWS, error: null });
     await act(() => jest.advanceTimersByTimeAsync(LIST_VIBE_REFRESH_MS));
     // The old Hot glow (still fully on) plus the new Fire glow (not in yet).
     const fading = circlesAt(38.9123);
-    expect(fading).toHaveLength(6);
-    expect(fading.slice(0, 3).map((c) => c.fillColor)).toEqual(
+    expect(fading).toHaveLength(10);
+    expect(fading.slice(0, 5).map((c) => c.fillColor)).toEqual(
       heatLayers('Hot').map((l) => l.fill),
     );
-    expect(fading.slice(3).map((c) => c.fillColor)).toEqual(
+    expect(fading.slice(5).map((c) => c.fillColor)).toEqual(
       heatLayers('Fire', 0).map((l) => l.fill),
     );
     await act(() => jest.advanceTimersByTimeAsync(GLOW_FADE_MS));

@@ -57,8 +57,14 @@ export const MAX_PULSES = 5;
 /** One pulse ring's length, in ms (spec §4: every 2.4 s). */
 export const PULSE_MS = 2400;
 
-/** A tag pill's height on screen, in px (spec §2). */
-export const TAG_HEIGHT = 32;
+/** A tag pill's height on screen, in px (VC-85: 26, was 32). */
+export const TAG_HEIGHT = 26;
+
+/** How long apart new tags start fading in, hottest first, in ms (VC-85). */
+export const TAG_STAGGER_MS = 30;
+
+/** Only the first 8 tags wait their turn; any more fade in with the 8th (VC-85). */
+export const TAG_STAGGER_MAX = 8;
 
 /**
  * How far in (as degrees of latitude across the screen) tapping a bubble
@@ -139,8 +145,10 @@ export interface MapPlan {
  *   letter of the name and 8 px per letter of the score.
  */
 export function estimateTagWidth(name: string, trailing: string): number {
-  // 9 left padding + 10 dot + 6 gap + 6 gap + 12 right padding + 2 border.
-  return 45 + name.length * 7.2 + trailing.length * 7.8;
+  // VC-85's smaller tag: 8 left padding + 7 dot + 5 gap + 5 gap + 10 right
+  // padding + 2 border = 37, then about 6.6 px per letter of the 12 px name
+  // and 7.2 px per letter of the 13 px score.
+  return 37 + name.length * 6.6 + trailing.length * 7.2;
 }
 
 /**
@@ -456,4 +464,26 @@ export function pulseDelay(id: string): number {
   let h = 0;
   for (let i = 0; i < id.length; i += 1) h = (h * 31 + id.charCodeAt(i)) >>> 0;
   return h % PULSE_MS;
+}
+
+/**
+ * When each full tag should start fading in after the map re-plans (VC-85
+ * spec "Motion": 200 ms fades, 30 ms apart, hottest first, at most 8 in the
+ * queue). Only the order of heat is used, never the score itself, so the
+ * timing tells nothing the tags don't already show.
+ *
+ * @param markers - the plan's markers (only the tags are used).
+ * @returns each tag's spot key with its wait in ms: 0 for the hottest,
+ *   30 for the next, and so on, up to 7 x 30 = 210 ms for the 8th and later.
+ */
+export function tagAppearDelays(markers: PlannedMarker[]): Map<string, number> {
+  const tags = markers
+    .filter((m): m is Extract<PlannedMarker, { kind: 'tag' }> => m.kind === 'tag')
+    .map((m) => m.spot)
+    .sort(compareSpots);
+  const delays = new Map<string, number>();
+  tags.forEach((spot, i) => {
+    delays.set(spot.key, Math.min(i, TAG_STAGGER_MAX - 1) * TAG_STAGGER_MS);
+  });
+  return delays;
 }

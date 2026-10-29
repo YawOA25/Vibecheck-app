@@ -16,10 +16,18 @@
  *
  * Map speed: like tags, they redraw only for a moment after their look
  * changes (useBriefRedraw in MapTag.tsx).
+ *
+ * VC-85 step 1 ("sleek", design/vc85-map-brand-spec.md): the bubble is
+ * smaller (34 px, was 44) and made of the map's glass, with a 1 px edge in
+ * the hottest band's gold at 55%, a faint 5 px gold halo round it, and a
+ * gold number. The halo fills the full 44 px, so the touch area is
+ * unchanged.
  */
 import { StyleSheet, Text, View } from 'react-native';
 import { Marker } from 'react-native-maps';
 
+import { rgba } from '@/components/AreaHeat';
+import { glass } from '@/components/MapGlass';
 import { dotFill, useBriefRedraw } from '@/components/MapTag';
 import type { TagDot } from '@/components/MapTag';
 import { wordColour } from '@/components/VibeMeter';
@@ -29,8 +37,19 @@ import { colors, fonts, minTapTarget } from '@/theme';
 /** A heat dot's size at far zoom, in px (spec §5). */
 export const FAR_DOT_SIZE = 14;
 
-/** A count bubble's size, in px (the mock's 44, also the smallest touch target). */
-export const BUBBLE_SIZE = 44;
+/** A count bubble's size, in px (VC-85: 34, was 44). */
+export const BUBBLE_SIZE = 34;
+
+/**
+ * The bubble's edge colour: the hottest band's gold at 55% (VC-85), or the
+ * plain glass hairline when nothing inside has a published score.
+ *
+ * @param band - the hottest published band inside, or null.
+ * @returns an rgba() colour.
+ */
+export function bubbleEdge(band: VibeLabel | null): string {
+  return band ? rgba(wordColour(band), 0.55) : colors.borderStrong;
+}
 
 /** What a MapDot needs. */
 export interface MapDotProps {
@@ -107,7 +126,8 @@ export function clusterSpoken(count: number, noun: string, band: VibeLabel | nul
 /**
  * Renders a count bubble as a map marker.
  *
- * @returns a Marker holding a 44 px round bubble with the count.
+ * @returns a Marker holding a 34 px round glass bubble with the count,
+ *   inside its 44 px halo.
  */
 export function MapCluster({ coordinate, count, band, noun, onPress, testID }: MapClusterProps) {
   const redrawing = useBriefRedraw(`${count}|${band ?? ''}`);
@@ -119,14 +139,18 @@ export function MapCluster({ coordinate, count, band, noun, onPress, testID }: M
       accessibilityLabel={clusterSpoken(count, noun, band)}
       testID={testID}
     >
-      <View
-        testID={testID ? `${testID}-bubble` : undefined}
-        // The edge carries the band (grey when nothing inside has a score).
-        style={[styles.bubble, { borderColor: band ? wordColour(band) : colors.borderStrong }]}
-      >
-        <Text style={styles.count} maxFontSizeMultiplier={1.3}>
-          {count}
-        </Text>
+      {/* The faint gold halo: 5 px round the 34 px bubble, which also makes
+          the touch area 44 px. */}
+      <View style={styles.halo}>
+        <View
+          testID={testID ? `${testID}-bubble` : undefined}
+          // The edge carries the band (grey when nothing inside has a score).
+          style={[styles.bubble, { borderColor: bubbleEdge(band) }]}
+        >
+          <Text style={styles.count} maxFontSizeMultiplier={1.3}>
+            {count}
+          </Text>
+        </View>
       </View>
     </Marker>
   );
@@ -143,14 +167,22 @@ const styles = StyleSheet.create({
   dot: { width: FAR_DOT_SIZE, height: FAR_DOT_SIZE, borderRadius: FAR_DOT_SIZE / 2 },
   dotDashed: { borderWidth: 1.5, borderStyle: 'dashed', borderColor: colors.muted },
   dotPicked: { borderWidth: 2, borderColor: colors.accent },
+  halo: {
+    width: minTapTarget,
+    height: minTapTarget,
+    borderRadius: minTapTarget / 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: rgba(colors.accent, 0.1),
+  },
   bubble: {
     width: BUBBLE_SIZE,
     height: BUBBLE_SIZE,
     borderRadius: BUBBLE_SIZE / 2,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.surface,
-    borderWidth: 1.5,
+    backgroundColor: glass.fill,
+    borderWidth: 1,
   },
-  count: { fontFamily: fonts.display, fontSize: 16, lineHeight: 20, color: colors.text },
+  count: { fontFamily: fonts.display, fontSize: 14, lineHeight: 18, color: colors.accent },
 });

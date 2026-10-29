@@ -14,7 +14,9 @@
  *     becomes a dot (never moved), the picked spot always keeps its tag;
  *   - pulse: only live Hot/Fire with a fresh score, at most 5, highest first;
  *   - tapping a bubble zooms in to fit it (close zoom for one shared point);
- *   - each event's pulse delay is fixed and within one pulse.
+ *   - each event's pulse delay is fixed and within one pulse;
+ *   - VC-85: new tags fade in 30 ms apart, hottest first, at most 8 in the
+ *     queue (dots and bubbles don't wait).
  */
 import type { Region } from 'react-native-maps';
 
@@ -24,6 +26,7 @@ import {
   MAX_PULSES,
   MIDDLE_TAGS,
   PULSE_MS,
+  TAG_STAGGER_MS,
   canPulse,
   chooseTags,
   clusterOf,
@@ -34,10 +37,11 @@ import {
   pulsingKeys,
   regionToFit,
   spanKm,
+  tagAppearDelays,
   toScreen,
   zoomLevel,
 } from '@/lib/map-cluster';
-import type { MapSpot } from '@/lib/map-cluster';
+import type { MapSpot, PlannedMarker } from '@/lib/map-cluster';
 import { parseMapPoint } from '@/lib/map-read';
 import type { MapPoint } from '@/lib/map-read';
 
@@ -337,5 +341,24 @@ describe('zooming in on a bubble', () => {
     expect(r.longitude).toBeCloseTo(0.05);
     expect(r.latitudeDelta).toBeCloseTo(0.16);
     expect(r.latitudeDelta).toBeLessThanOrEqual(0.5);
+  });
+});
+
+describe('tags fading in (VC-85)', () => {
+  it('lets the hottest tag go first, 30 ms apart, and caps the wait at the 8th', () => {
+    // Ten tags with scores 5.0 to 5.9 (s9 hottest), plus a dot that never waits.
+    const markers: PlannedMarker[] = Array.from({ length: 10 }, (_, i) => ({
+      kind: 'tag' as const,
+      spot: spot(`s${i}`, 0, i, [event({ event_id: `e${i}`, vibe_score: 5 + i / 10 })]),
+      pulse: false,
+    }));
+    markers.push({ kind: 'dot', spot: spot('dot', 1, 1) });
+    const delays = tagAppearDelays(markers);
+    expect(delays.get('s9')).toBe(0);
+    expect(delays.get('s8')).toBe(TAG_STAGGER_MS);
+    // The 8th hottest (s2) and everything cooler wait the same 7 steps.
+    expect(delays.get('s2')).toBe(7 * TAG_STAGGER_MS);
+    expect(delays.get('s0')).toBe(7 * TAG_STAGGER_MS);
+    expect(delays.has('dot')).toBe(false);
   });
 });

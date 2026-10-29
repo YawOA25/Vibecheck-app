@@ -11,7 +11,10 @@
  *   - the band cross-fade: when the band changes, the old dot stays on top
  *     and fades out over 400 ms, then goes; under Reduce Motion the change
  *     is instant (no fading dot at all);
- *   - large text: from a 1.3x text size the score sits under the name.
+ *   - large text: from a 1.3x text size the score sits under the name;
+ *   - VC-85: a new tag fades in (200 ms, after its own wait) and a picked
+ *     tag's gold fill cross-fades in (160 ms); both instant under Reduce
+ *     Motion.
  *
  * Native-driver opacity never moves in Jest, so we check the animation
  * calls rather than the opacity itself (lesson VC-76).
@@ -19,7 +22,7 @@
 import { act, render, screen } from '@testing-library/react-native';
 import { Animated, StyleSheet } from 'react-native';
 
-import { BAND_FADE_MS, MapTag } from '@/components/MapTag';
+import { BAND_FADE_MS, MapTag, TAG_APPEAR_MS, TAG_PICK_MS } from '@/components/MapTag';
 import type { MapTagProps } from '@/components/MapTag';
 import { PULSE_MS } from '@/lib/map-cluster';
 
@@ -153,5 +156,48 @@ describe('MapTag large text', () => {
     mockFontScale = 1.5;
     await render(tag());
     expect(screen.getByTestId('t-stacked')).toHaveTextContent('Shaw kickback7.4');
+  });
+});
+
+describe('MapTag sleek motion (VC-85)', () => {
+  it('fades a new tag in after its own wait, on the native driver', async () => {
+    const timing = jest.spyOn(Animated, 'timing');
+    await render(tag({ appearDelay: 60 }));
+    expect(timing).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        toValue: 1,
+        duration: TAG_APPEAR_MS,
+        delay: 60,
+        useNativeDriver: true,
+      }),
+    );
+  });
+
+  it('shows a new tag at once under Reduce Motion', async () => {
+    const timing = jest.spyOn(Animated, 'timing');
+    await render(tag({ animate: false, appearDelay: 60 }));
+    expect(StyleSheet.flatten(screen.getByTestId('t-appear').props.style).opacity).toBe(1);
+    expect(timing).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ duration: TAG_APPEAR_MS }),
+    );
+  });
+
+  it('cross-fades the gold fill when picked (instant under Reduce Motion)', async () => {
+    const timing = jest.spyOn(Animated, 'timing');
+    const view = await render(tag());
+    timing.mockClear();
+    await view.rerender(tag({ picked: true }));
+    expect(timing).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ toValue: 1, duration: TAG_PICK_MS, useNativeDriver: true }),
+    );
+    timing.mockClear();
+    await view.rerender(tag({ picked: false, animate: false }));
+    expect(timing).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ toValue: 0, duration: 0 }),
+    );
   });
 });

@@ -2,11 +2,19 @@
  * An area's heat glow on the map (VC-83 map v2, design/vc83-map-v2-spec.md
  * §3).
  *
- * What it draws: up to three stacked circles around the area's fixed centre,
- * at 100%, 66% and 33% of the area's radius. Each one is a little more
- * opaque than the one around it, so the gold glow fades out towards the
- * edge without needing a picture. How strong the glow is follows the BAND
+ * What it draws: stacked see-through circles around the area's fixed
+ * centre (five since VC-85, see below; three in VC-83). Inner circles
+ * pile on top of outer ones, so the gold glow is strongest in the middle
+ * and fades out towards the edge without needing a picture. How strong the glow is follows the BAND
  * (Quiet, Good, Hot, Fire), using only the v3 gold ramp.
+ *
+ * VC-85 step 1 ("soft radial glow", design/vc85-map-brand-spec.md): Apple
+ * Maps can't fill a circle with a real gradient, and a picture overlay would
+ * need its size worked out at every zoom. So the glow is now FIVE thinner
+ * rings (at 100%, 80%, 60%, 40% and 20% of the radius) with no hard edge,
+ * tuned so the middle reaches the spec's strength (Fire 55% light gold, Hot
+ * 38%, Good 20%, Quiet 20% grey) and it fades smoothly to almost nothing at
+ * the area's edge. The OUTER ring is still exactly the area's size.
  *
  * Privacy: the circle SIZE is always the area's own size (600 m or more,
  * from the server). The score never changes the size, only the colour and
@@ -61,21 +69,47 @@ export function rgba(hex: string, alpha: number): string {
 }
 
 /**
- * The glow recipe per band (spec §3 table): band colour, fill opacity of the
- * outer / middle / core circle, and the outer edge.
+ * The glow recipe per band (VC-85 spec "Glow"): the band's colour and how
+ * strong the glow is in the very middle (0 to 1).
  */
-const RECIPES: Record<
-  VibeLabel,
-  { colour: string; fills: [number, number, number]; stroke: number; strokeAlpha: number }
-> = {
-  Quiet: { colour: colors.muted, fills: [0.06, 0.08, 0.1], stroke: 0, strokeAlpha: 0 },
-  Good: { colour: colors.accentPressed, fills: [0.08, 0.12, 0.16], stroke: 0, strokeAlpha: 0 },
-  Hot: { colour: colors.accent, fills: [0.1, 0.18, 0.26], stroke: 1, strokeAlpha: 0.4 },
-  Fire: { colour: colors.accentHover, fills: [0.12, 0.24, 0.36], stroke: 1.5, strokeAlpha: 0.6 },
+const RECIPES: Record<VibeLabel, { colour: string; centre: number }> = {
+  Quiet: { colour: colors.muted, centre: 0.2 },
+  Good: { colour: colors.accentPressed, centre: 0.2 },
+  Hot: { colour: colors.accent, centre: 0.38 },
+  Fire: { colour: colors.accentHover, centre: 0.55 },
 };
 
-/** The circles' sizes, outer first, as shares of the area's radius. */
-const SCALES = [1, 0.66, 0.33] as const;
+/** The rings' sizes, outer first, as shares of the area's radius. */
+const SCALES = [1, 0.8, 0.6, 0.4, 0.2] as const;
+
+/**
+ * How strong the glow looks in each band of the area, outer band first, as
+ * a share of the middle's strength: faint at the edge, full in the middle
+ * (the mock's radial gradient, in 5 steps).
+ */
+const PROFILE = [0.12, 0.3, 0.5, 0.75, 1] as const;
+
+/**
+ * The see-through amount of each ring so the STACK looks like PROFILE.
+ *
+ * Why the sum isn't simple: see-through layers on top of each other don't
+ * add up. Two 20% layers look like 36%, not 40% (the second one only
+ * covers what the first let through). So for each ring we work out the
+ * amount that turns what is already showing (`before`) into the target
+ * (`target`): 1 - (1 - target) / (1 - before).
+ *
+ * @param centre - how strong the middle should look (0 to 1).
+ * @returns one opacity per ring, outer first.
+ */
+export function ringAlphas(centre: number): number[] {
+  let before = 0;
+  return PROFILE.map((share) => {
+    const target = centre * share;
+    const alpha = 1 - (1 - target) / (1 - before);
+    before = target;
+    return alpha;
+  });
+}
 
 /** How long a band change fades, in ms (spec §3), and in how many steps. */
 export const GLOW_FADE_MS = 400;
@@ -88,9 +122,9 @@ const GLOW_FADE_STEPS = 4;
  *   published band among them), or null when none has a published score.
  * @param strength - 0 to 1: how far faded in (1, the default, is the full
  *   glow; used only while a band change cross-fades).
- * @returns the circles, outer first. With no band: one faint grey circle
- *   with a dashed edge (the middle and core would be fully clear, so they
- *   aren't drawn at all).
+ * @returns the circles, outer first: five soft rings with no edge. With no
+ *   band: one faint grey circle with a dashed edge (the inner rings would be
+ *   fully clear, so they aren't drawn at all).
  */
 export function heatLayers(band: VibeLabel | null, strength: number = 1): HeatLayer[] {
   if (band === null) {
@@ -105,13 +139,12 @@ export function heatLayers(band: VibeLabel | null, strength: number = 1): HeatLa
     ];
   }
   const recipe = RECIPES[band];
+  const alphas = ringAlphas(recipe.centre);
+  // No hard edge on any ring (VC-85): the glow just fades out.
   return SCALES.map((scale, i) => ({
     scale,
-    fill: rgba(recipe.colour, recipe.fills[i] * strength),
-    // Only the outer circle gets an edge, and only for Hot and Fire.
-    stroke:
-      i === 0 && recipe.stroke > 0 ? rgba(recipe.colour, recipe.strokeAlpha * strength) : undefined,
-    strokeWidth: i === 0 ? recipe.stroke : 0,
+    fill: rgba(recipe.colour, alphas[i] * strength),
+    strokeWidth: 0,
   }));
 }
 
@@ -137,7 +170,7 @@ interface DrawnLayer {
 /**
  * Renders the stacked circles.
  *
- * @returns 1 to 3 map circles (testID "map-circle" in the Jest fake); for
+ * @returns 1 to 5 map circles (testID "map-circle" in the Jest fake); for
  *   400 ms after a band change, the old band's circles too, fading out.
  */
 export function AreaHeat({ latitude, longitude, radius, band, fade = false }: AreaHeatProps) {
