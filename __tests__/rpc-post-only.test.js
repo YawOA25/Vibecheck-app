@@ -134,6 +134,48 @@ describe('the lint guard: no rpc call may pass GET or HEAD options', () => {
     expect(head).toHaveLength(1);
   });
 
+  // Q8a: the ways around the input count ("rpc lint rule misses aliasing").
+  it('catches the bracket form with a third input', () => {
+    const hits = lint(
+      "declare const supabase: any;\nexport const a = supabase['rpc']('complete_profile', {}, { get: true });\n",
+    );
+    expect(hits).toHaveLength(1);
+    expect(hits[0].message).toMatch(/two inputs only/);
+  });
+
+  it('catches rpc.bind, rpc.call and rpc.apply (dot or bracket form)', () => {
+    for (const code of [
+      'export const r = supabase.rpc.bind(supabase);',
+      "export const r = supabase.rpc.call(supabase, 'x', {});",
+      "export const r = supabase.rpc.apply(supabase, ['x', {}, { get: true }]);",
+      'export const r = supabase["rpc"].bind(supabase);',
+    ]) {
+      expect(lint(`declare const supabase: any;\n${code}\n`)).toHaveLength(1);
+    }
+  });
+
+  it('catches spread inputs, in either form', () => {
+    for (const code of [
+      'export const r = supabase.rpc(...inputs);',
+      "export const r = supabase.rpc('x', ...rest);",
+      "export const r = supabase['rpc']('x', ...rest);",
+    ]) {
+      expect(
+        lint(
+          `declare const supabase: any;\ndeclare const inputs: any;\ndeclare const rest: any;\n${code}\n`,
+        ),
+      ).toHaveLength(1);
+    }
+  });
+
+  it('still allows a spread INSIDE the args object, and the bracket form with two inputs', () => {
+    expect(
+      lint(
+        "declare const supabase: any;\ndeclare const input: any;\nexport const a = supabase.rpc('create_event', { ...input });\nexport const b = supabase['rpc']('x', {});\n",
+      ),
+    ).toHaveLength(0);
+  });
+
   it('lets a normal two-input call through', () => {
     expect(
       lint(

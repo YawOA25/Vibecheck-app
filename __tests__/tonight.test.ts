@@ -22,6 +22,7 @@ import {
   formatClock,
   groupByDay,
   hasStarted,
+  isOnNow,
   isStaffPick,
   NIGHT_ENDS_HOUR,
   nightStart,
@@ -187,6 +188,24 @@ describe('dayLabel and whenLine', () => {
     // Mon 9 PM EST = Tue 02:00 UTC.
     const monday = makeEvent('m', utc(2026, 10, 3, 2), utc(2026, 10, 3, 5));
     expect(dayLabel(monday, SAT_8PM)).toBe('Monday');
+  });
+});
+
+describe('isOnNow (Q8a: the one shared "On now" rule)', () => {
+  const party = makeEvent('o', utc(2026, 10, 1, 3), utc(2026, 10, 1, 8));
+
+  it('true from the start up to, but not at, the end', () => {
+    expect(isOnNow(party, utc(2026, 10, 1, 2, 59))).toBe(false);
+    expect(isOnNow(party, utc(2026, 10, 1, 3))).toBe(true);
+    expect(isOnNow(party, SUN_1AM)).toBe(true);
+    expect(isOnNow(party, utc(2026, 10, 1, 8))).toBe(false);
+  });
+
+  it('agrees with the "On now" label at every moment checked', () => {
+    for (let h = 0; h < 12; h += 1) {
+      const now = utc(2026, 10, 1, h);
+      expect(dayLabel(party, now) === 'On now').toBe(isOnNow(party, now));
+    }
   });
 });
 

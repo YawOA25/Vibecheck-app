@@ -93,6 +93,8 @@ export const fonts = {
 export const spacing = {
   xs: 4,
   sm: 8,
+  /** Small gap between a button and the note under it (v3 Rate footer: 10). */
+  gap10: 10,
   /** Gap between parts of a form (v3 uses 12 to 14). */
   gap12: 12,
   md: 16,
@@ -100,6 +102,8 @@ export const spacing = {
   xl: 32,
   /** Space between list content and the screen edge. */
   gutter: 16,
+  /** Side padding of v3 sheets and the Rate screen (20). */
+  sheetGutter: 20,
   /** Space between sign-in screens' content and the screen edge (v3 uses 24). */
   authGutter: 24,
 } as const;

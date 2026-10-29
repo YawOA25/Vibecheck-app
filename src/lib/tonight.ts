@@ -343,6 +343,20 @@ export function hasStarted(event: Pick<PublicEvent, 'starts_at'>, now: Date): bo
 }
 
 /**
+ * Whether an event is going on right now (the "On now" rule, in one place).
+ *
+ * @param event - needs starts_at and ends_at.
+ * @param now - the current moment.
+ * @returns true from the start time up to (not including) the end time.
+ * Why it exists (Q8a, cto): the list card's gold edge and the "On now"
+ * label used two copies of this rule; one shared helper keeps them in step.
+ */
+export function isOnNow(event: Pick<PublicEvent, 'starts_at' | 'ends_at'>, now: Date): boolean {
+  const t = now.getTime();
+  return Date.parse(event.starts_at) <= t && t < Date.parse(event.ends_at);
+}
+
+/**
  * Writes a clock time the way people say it, in New York time.
  *
  * @param date - the moment.
@@ -370,9 +384,8 @@ export function formatClock(date: Date): string {
  *   night's weekday (e.g. "Friday") for anything further away.
  */
 export function dayLabel(event: Pick<PublicEvent, 'starts_at' | 'ends_at'>, now: Date): string {
+  if (isOnNow(event, now)) return 'On now';
   const starts = new Date(event.starts_at);
-  const ends = new Date(event.ends_at);
-  if (starts <= now && now < ends) return 'On now';
   const tonight = nightOf(now);
   const eventNight = nightOf(starts);
   if (sameDate(eventNight, tonight)) return 'Today';

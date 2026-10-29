@@ -25,6 +25,7 @@
  *     pinned below the scrolling chips instead of scrolling with them.
  */
 import { fireEvent, render, screen, within } from '@testing-library/react-native';
+import { StyleSheet } from 'react-native';
 
 import RateScreenRoute, { CLOSE_LABEL, PROMPT, SAVING_LABEL, SUBMIT_LABEL } from '../app/rate/[id]';
 import { FELT_UNSAFE_HELP } from '@/lib/rating';
@@ -36,6 +37,7 @@ import { getMyRatingStatus, submitRating } from '@/lib/ratings-api';
 import { offerRecapReminder } from '@/lib/recap-notifications';
 import { tapLight, tapSuccess, tapWarning } from '@/lib/haptics';
 import type { PublicEvent } from '@/lib/tonight';
+import { spacing } from '@/theme';
 
 jest.mock('@/lib/events-read', () => ({ getEvent: jest.fn() }));
 jest.mock('@/lib/ratings-api', () => ({ getMyRatingStatus: jest.fn(), submitRating: jest.fn() }));
@@ -272,6 +274,15 @@ describe('RateScreen layout (Q5 fix #9)', () => {
     const scroll = screen.getByTestId('rate-scroll');
     expect(within(scroll).getByRole('radio', { name: 'crowd: Packed' })).toBeOnTheScreen();
     expect(within(scroll).queryByRole('button', { name: SUBMIT_LABEL })).toBeNull();
+  });
+
+  it('Q8a: the footer keeps its v3 spacing (20 px sides, 10 px gap) from theme tokens', async () => {
+    await render(<RateScreenRoute />);
+    await screen.findByText(PROMPT);
+    const style = StyleSheet.flatten(screen.getByTestId('rate-footer').props.style);
+    expect(spacing.sheetGutter).toBe(20);
+    expect(spacing.gap10).toBe(10);
+    expect(style).toMatchObject({ paddingHorizontal: spacing.sheetGutter, gap: spacing.gap10 });
   });
 
   it('keeps the Back button on the result screen', async () => {

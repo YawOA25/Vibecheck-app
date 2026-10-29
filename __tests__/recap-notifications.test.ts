@@ -96,6 +96,21 @@ describe('offerRecapReminder', () => {
     expect(notes[0].content.body).toBe('Your night at Rooftop is ready.');
   });
 
+  it('Q8a: an update after 5 AM does not name the same event on a second morning', async () => {
+    // Rated Saturday 11 PM (note for Sunday 11 AM), then updated Sunday
+    // 6 AM: after 5 AM, so that update belongs to Sunday's night and would
+    // point at Monday's morning. The event stays on Sunday's note only.
+    const SUN_6AM = new Date('2026-10-18T06:00:00-04:00');
+    await offerRecapReminder({ id: 'e1', title: 'Rooftop' }, SAT_11PM);
+    expect(await offerRecapReminder({ id: 'e1', title: 'Rooftop' }, SUN_6AM)).toBe('scheduled');
+    const notes = await Notifications.getAllScheduledNotificationsAsync();
+    expect(notes.map((n) => n.identifier)).toEqual(['recap-2026-10-18']);
+    // A DIFFERENT event rated at that time still gets Monday's note.
+    await offerRecapReminder({ id: 'e2', title: 'Basement' }, SUN_6AM);
+    const after = await Notifications.getAllScheduledNotificationsAsync();
+    expect(after.map((n) => n.identifier).sort()).toEqual(['recap-2026-10-18', 'recap-2026-10-19']);
+  });
+
   it('a phone error never escapes: "unavailable"', async () => {
     fake.scheduleNotificationAsync.mockRejectedValueOnce(new Error('not allowed in Expo Go'));
     expect(await offerRecapReminder({ id: 'e1', title: 'Rooftop' }, SAT_11PM)).toBe('unavailable');

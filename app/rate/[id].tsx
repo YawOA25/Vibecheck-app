@@ -623,12 +623,13 @@ const styles = StyleSheet.create({
   // flexShrink lets a long event name wrap instead of pushing Close off screen.
   checkedInRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flexShrink: 1 },
   // The pinned bottom block (v3: 20 px sides, 10 px between button and note;
-  // the safe area adds the phone's home-bar space below).
+  // the safe area adds the phone's home-bar space below). Theme tokens, not
+  // typed-in numbers (Q8a, cto polish).
   footer: {
-    paddingHorizontal: 20,
+    paddingHorizontal: spacing.sheetGutter,
     paddingTop: spacing.gap12,
     paddingBottom: spacing.md,
-    gap: 10,
+    gap: spacing.gap10,
   },
   dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.accent },
   label: { ...typography.label, color: colors.muted, flexShrink: 1 },

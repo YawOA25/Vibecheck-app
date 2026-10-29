@@ -51,11 +51,14 @@
  * and letting go past about a third of the sheet (or with a quick flick)
  * closes it; otherwise it springs back. While a check-in is being sent,
  * closing is blocked, as the Close button already was.
+ * Q8a: while sending, a drag let go far down springs back to fully open
+ * (before, it could rest part-way down), and Android's back button, or any
+ * other attempt to remove the screen, is ignored until the answer lands.
  * Reduce Motion: no slide in or out (the screen just fades, as built). The
  * drag still works, because the finger moves it, but letting go closes or
  * snaps back at once with no spring.
  */
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, usePreventRemove, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import {
@@ -127,6 +130,30 @@ export const DRAG_CLOSE_SPEED = 1;
 export function shouldCloseOnRelease(dy: number, vy: number, sheetHeight: number): boolean {
   return dy > sheetHeight * DRAG_CLOSE_SHARE || vy > DRAG_CLOSE_SPEED;
 }
+/**
+ * Puts the sheet back to fully open after a drag that doesn't close it:
+ * a short spring, or (under Reduce Motion) a snap with no movement.
+ *
+ * Why it exists (Q8a): the same "back into place" is needed both for a
+ * short drag and for a long drag let go while a check-in is being sent
+ * (closing is blocked then, so the sheet must not rest part-way down).
+ *
+ * @param slide - the sheet's "how far down" value.
+ * @param reduceMotion - the phone's Reduce Motion answer (null = not known yet).
+ */
+function settleSheetOpen(slide: Animated.Value, reduceMotion: boolean | null) {
+  if (motionAllowed(reduceMotion)) {
+    Animated.spring(slide, {
+      toValue: 0,
+      speed: motion.releaseSpring.speed,
+      bounciness: motion.releaseSpring.bounciness,
+      useNativeDriver: true,
+    }).start();
+  } else {
+    slide.setValue(0);
+  }
+}
+
 /** Height of the pin panel (v3: 150 px). */
 export const PIN_PANEL_HEIGHT = 150;
 /** Size of the gold pin in the pin panel (v3: 34 px). */
@@ -201,6 +228,11 @@ export default function CheckInScreen() {
   // callbacks; the state makes the sheet ignore touches on screen.
   const closing = useRef(false);
   const [isClosing, setIsClosing] = useState(false);
+  // True from the moment "Yep, I'm here" is tapped until the answer is on
+  // screen (Q8a). The `checking` state below says the same, but only after
+  // the next redraw; this ref answers at once, so a Back press in that tiny
+  // gap is still ignored.
+  const sending = useRef(false);
 
   /**
    * Closes the sheet: slides it down while the dimmed layer fades (VC-76),
@@ -248,24 +280,30 @@ export default function CheckInScreen() {
     // The sheet is sliding away: never start a check-in whose answer would
     // land on a closed screen (cto review of VC-76).
     if (closing.current) return;
+    sending.current = true;
     setPhase({ kind: 'confirm', event, checking: true });
-    const reading = await readLocationForCheckIn();
-    if (reading.kind !== 'reading') {
-      // A phone-side problem (permission, approximate, no fix): nothing was
-      // sent to the server.
-      setPhase({ kind: 'result', event, view: { source: 'phone', kind: reading.kind } });
-      return;
-    }
-    // The reading goes straight into the request and is then forgotten.
-    const outcome = await submitCheckIn(event.id, reading.reading);
-    if (outcome.ok) {
-      // The phone's "success" buzz when the check-in passed (VC-32d).
-      if (outcome.result.status === 'passed') tapSuccess();
-      setPhase({ kind: 'result', event, view: { source: 'server', result: outcome.result } });
-    } else if (outcome.kind === 'notFound') {
-      setPhase({ kind: 'notFound' });
-    } else {
-      setPhase({ kind: 'error', event, message: outcome.message });
+    try {
+      const reading = await readLocationForCheckIn();
+      if (reading.kind !== 'reading') {
+        // A phone-side problem (permission, approximate, no fix): nothing was
+        // sent to the server.
+        setPhase({ kind: 'result', event, view: { source: 'phone', kind: reading.kind } });
+        return;
+      }
+      // The reading goes straight into the request and is then forgotten.
+      const outcome = await submitCheckIn(event.id, reading.reading);
+      if (outcome.ok) {
+        // The phone's "success" buzz when the check-in passed (VC-32d).
+        if (outcome.result.status === 'passed') tapSuccess();
+        setPhase({ kind: 'result', event, view: { source: 'server', result: outcome.result } });
+      } else if (outcome.kind === 'notFound') {
+        setPhase({ kind: 'notFound' });
+      } else {
+        setPhase({ kind: 'error', event, message: outcome.message });
+      }
+    } finally {
+      // Whatever happened, the send is over: Back works again.
+      sending.current = false;
     }
   }, []);
 
@@ -332,11 +370,20 @@ export default function CheckInScreen() {
   // Android we handled it, so it doesn't close the screen by itself.
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (!checking) goBack();
+      // Q8a: also check the `sending` ref, which is set the instant the
+      // check-in starts (the `checking` state lags by one redraw).
+      if (!checking && !sending.current) goBack();
       return true;
     });
     return () => subscription.remove();
   }, [checking, goBack]);
+
+  // Q8a: a second guard for the same rule. While a check-in is being sent,
+  // the navigator refuses to remove this screen by ANY route (a back press
+  // that reaches it first, a back gesture, a stray router.back()). The
+  // blocked attempt is simply dropped: the guest can close once the answer
+  // shows.
+  usePreventRemove(checking, () => {});
 
   // --- Drag to close (VC-76, spec 3c option A) ------------------------------
   // A drag let go far enough asks for a close by bumping this counter; the
@@ -349,10 +396,14 @@ export default function CheckInScreen() {
     if (dragCloses <= handledDragCloses.current) return;
     handledDragCloses.current = dragCloses;
     // Never close while a check-in is being sent (as Close is disabled
-    // then); the request is simply dropped, not saved for later.
-    if (checking) return;
+    // then); the request is simply dropped, not saved for later, and the
+    // sheet goes back to fully open rather than resting part-way (Q8a).
+    if (checking || sending.current) {
+      settleSheetOpen(slide, reduceMotion);
+      return;
+    }
     goBack();
-  }, [dragCloses, goBack, checking]);
+  }, [dragCloses, goBack, checking, slide, reduceMotion]);
   // The drag handler is rebuilt only when one of the values it uses changes
   // (they don't change during a drag).
   const drag = useMemo(
@@ -364,19 +415,13 @@ export default function CheckInScreen() {
         // Follow the finger downwards only (dragging up does nothing).
         onPanResponderMove: (_e, g) => slide.setValue(Math.max(0, g.dy)),
         onPanResponderRelease: (_e, g) => {
-          if (shouldCloseOnRelease(g.dy, g.vy, sheetHeight)) {
+          // Far enough AND nothing being sent: ask for a close. Otherwise
+          // (not far enough, or a check-in is being sent, Q8a) the sheet
+          // springs back to fully open, or snaps back under Reduce Motion.
+          if (!checking && shouldCloseOnRelease(g.dy, g.vy, sheetHeight)) {
             setDragCloses((n) => n + 1);
-          } else if (motionAllowed(reduceMotion)) {
-            // Not far enough: spring back into place.
-            Animated.spring(slide, {
-              toValue: 0,
-              speed: motion.releaseSpring.speed,
-              bounciness: motion.releaseSpring.bounciness,
-              useNativeDriver: true,
-            }).start();
           } else {
-            // Reduce Motion: snap back with no spring.
-            slide.setValue(0);
+            settleSheetOpen(slide, reduceMotion);
           }
         },
         // Another touch took over: put the sheet back.

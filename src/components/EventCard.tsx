@@ -55,7 +55,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { PressableScale } from '@/components/PressableScale';
 import { Tag } from '@/components/Tag';
 import { showsGlow, wordColour } from '@/components/VibeMeter';
-import { hasStarted, isStaffPick, whenLine } from '@/lib/tonight';
+import { hasStarted, isOnNow, isStaffPick, whenLine } from '@/lib/tonight';
 import type { PublicEvent } from '@/lib/tonight';
 import { cardVibeSpoken, formatScore, hereText } from '@/lib/vibe';
 import type { Vibe } from '@/lib/vibe';
@@ -119,9 +119,10 @@ function EventCardView({ event, now, onPress, vibe: given, animatePress = false 
   // score, chip or "here" count can leak onto a not-started card.
   const started = hasStarted(event, now);
   const vibe = started ? given : undefined;
-  // LIVE: started and not over yet. (The list hides ended events anyway;
-  // this keeps the card honest if one is ever shown.)
-  const live = started && now.getTime() < Date.parse(event.ends_at);
+  // LIVE: started and not over yet, by the shared "On now" rule (Q8a).
+  // (The list hides ended events anyway; this keeps the card honest if one
+  // is ever shown.)
+  const live = isOnNow(event, now);
   const staffPick = isStaffPick(event);
   // VC-77: the gold edge for a live Hot or Fire party.
   const goldEdge = showsGoldEdge(live, vibe);

@@ -65,6 +65,17 @@ function blockStyle(index: number) {
   return StyleSheet.flatten(screen.getAllByTestId('skeleton-block')[index].props.style);
 }
 
+describe('busy state (Q8a)', () => {
+  it('both skeletons tell screen readers they are busy loading', async () => {
+    setReduceMotion(true);
+    await render(<ListSkeleton label="Loading events" />);
+    expect(screen.getByLabelText('Loading events')).toBeBusy();
+    await screen.unmount();
+    await render(<EventSkeleton label="Loading the event" />);
+    expect(screen.getByLabelText('Loading the event')).toBeBusy();
+  });
+});
+
 describe('ListSkeleton', () => {
   it('draws three card-shaped blocks in surfaceRaised, radius 20, read as one item', async () => {
     setReduceMotion(true);

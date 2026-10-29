@@ -15,12 +15,21 @@
  *   date of birth sent to complete_profile would end up there. With only
  *   two inputs, supabase-js always sends a POST (proved in
  *   __tests__/rpc-post-only.test.js). The app never needs the third input.
+ *   Q8a: the rule also closes the ways around that check, where ESLint
+ *   could not count the inputs: `supabase['rpc'](...)` (bracket form),
+ *   `supabase.rpc.bind/call/apply(...)` (a copy of rpc called later), and
+ *   a spread `supabase.rpc(...inputs)` (any number of inputs). The app uses
+ *   none of these; write `supabase.rpc(name, args)` instead.
  *
  * Run it with `npm run lint`.
  */
 const { defineConfig } = require('eslint/config');
 const expoConfig = require('eslint-config-expo/flat');
 const prettierConfig = require('eslint-config-prettier');
+
+/** The one message every rpc rule below shows (so they read the same). */
+const RPC_MESSAGE =
+  'Call supabase.rpc(name, args) with two inputs only. A third options input can turn on GET or HEAD, which puts the inputs (e.g. a birthdate) in the URL and server logs. See eslint.config.js.';
 
 module.exports = defineConfig([
   expoConfig,
@@ -32,8 +41,30 @@ module.exports = defineConfig([
         {
           // Any `.rpc(...)` call with 3 or more inputs.
           selector: "CallExpression[callee.property.name='rpc'][arguments.length>2]",
-          message:
-            'Call supabase.rpc(name, args) with two inputs only. A third options input can turn on GET or HEAD, which puts the inputs (e.g. a birthdate) in the URL and server logs. See eslint.config.js.',
+          message: RPC_MESSAGE,
+        },
+        {
+          // Q8a: the bracket form, `supabase['rpc'](...)`, with 3 or more inputs.
+          selector:
+            "CallExpression[callee.computed=true][callee.property.value='rpc'][arguments.length>2]",
+          message: RPC_MESSAGE,
+        },
+        {
+          // Q8a: `supabase.rpc.bind(...)`, `.call(...)` or `.apply(...)`
+          // (dot or bracket form): the copy can be called later with any
+          // inputs, so it is refused outright.
+          selector:
+            "MemberExpression[property.name=/^(bind|call|apply)$/][object.property.name='rpc'], MemberExpression[property.name=/^(bind|call|apply)$/][object.property.value='rpc']",
+          message: RPC_MESSAGE,
+        },
+        {
+          // Q8a: a spread input, `supabase.rpc(...inputs)` or
+          // `supabase['rpc']('name', ...rest)`: it could hold any number of
+          // inputs. (A spread INSIDE the args object, `{ ...input }`, is
+          // fine: it is still one input.)
+          selector:
+            "CallExpression[callee.property.name='rpc'] > SpreadElement, CallExpression[callee.property.value='rpc'] > SpreadElement",
+          message: RPC_MESSAGE,
         },
       ],
     },

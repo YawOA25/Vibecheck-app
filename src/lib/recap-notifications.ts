@@ -19,7 +19,8 @@
  *
  * One note per morning: rating two events on one night gives a single note
  * naming both ("Your night at A + 1 more is ready"). The text never holds a
- * score, because it shows on the lock screen.
+ * score, because it shows on the lock screen. And one morning per event
+ * (Q8a): an update after 5 AM doesn't name the event on a second morning.
  */
 import * as Notifications from 'expo-notifications';
 import { useRouter } from 'expo-router';
@@ -122,6 +123,20 @@ export async function offerRecapReminder(
     // Already a note for that morning (another event the same night)? Add
     // this event to it. Scheduling with the same identifier replaces it.
     const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+
+    // Q8a: one event, one morning. A night runs 5 AM to 5 AM, so a rating
+    // update made after 5 AM counts toward the NEXT night and would point
+    // at the morning after. If a note for an earlier morning still waiting
+    // already names this event, keep that one and add nothing, so the same
+    // event is never announced on two mornings.
+    const alreadyNoted = scheduled.some(
+      (n) =>
+        n.identifier !== identifier &&
+        n.identifier.startsWith(RECAP_ID_PREFIX) &&
+        notedEvents(n.content.data).some((e) => e.id === event.id),
+    );
+    if (alreadyNoted) return 'scheduled';
+
     const existing = scheduled.find((n) => n.identifier === identifier);
     const events = notedEvents(existing?.content.data).filter((e) => e.id !== event.id);
     events.push({ id: event.id, title: event.title });

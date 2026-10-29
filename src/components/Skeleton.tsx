@@ -15,7 +15,8 @@
  *
  * Accessibility: the whole skeleton is ONE item for screen readers, named
  * by `label` (e.g. "Loading events"), so they hear what's happening instead
- * of a list of empty shapes.
+ * of a list of empty shapes. It is also marked busy (accessibilityState
+ * busy, Q8a), the standard way to tell a screen reader "still loading".
  *
  * VC-76 (design/vc76-motion-spec.md 2c "Reserve heights"): the event page's
  * skeleton is sized like the real page (heading lines at the real text
@@ -167,6 +168,8 @@ export function ListSkeleton({ label }: SkeletonProps) {
       accessible
       accessibilityLabel={label}
       accessibilityRole="progressbar"
+      // Q8a: tells screen readers this part is still loading.
+      accessibilityState={{ busy: true }}
     >
       {[0, 1, 2].map((i) => (
         <SkeletonBlock key={i} height={104} corner={radius.card} />
@@ -192,6 +195,8 @@ export function EventSkeleton({ label }: SkeletonProps) {
       accessible
       accessibilityLabel={label}
       accessibilityRole="progressbar"
+      // Q8a: tells screen readers this part is still loading.
+      accessibilityState={{ busy: true }}
     >
       <View style={styles.heading}>
         {/* Same heights as the kicker, title and area lines. */}

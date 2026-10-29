@@ -10,9 +10,22 @@
  *
  * How: expo-router's `renderRouter` builds a pretend app in memory from the
  * real root layout plus simple stand-in screens. The sign-in state is faked.
+ *
+ * Why this file used to fail now and then (Q8a, "flaky route-guards test"):
+ * `renderRouter` quietly switches Jest to FAKE timers and never switches
+ * back. So every test after the first ran on fake timers, where a
+ * `findByText` "5 second" wait is not 5 real seconds: it is 100 quick
+ * loops that each jump a fake clock 50 ms. When the whole suite runs, the
+ * computer is busy, and real background work (like the fonts finishing
+ * loading) could still be pending when those 100 loops ran out, so the
+ * wait "timed out" after very little real time. The fix:
+ *   1. after each test, go back to real timers (no leak into later tests);
+ *   2. right after building the pretend app, run every waiting timer to
+ *      the end (`settleRouter`), so the screen is finished BEFORE any
+ *      check, instead of racing the fake 5 s budget.
  */
 import { Text } from 'react-native';
-import { renderRouter, screen } from 'expo-router/testing-library';
+import { act, renderRouter, screen } from 'expo-router/testing-library';
 
 import TabsLayout, { TAB_CROSSFADE, tabTransition } from '../app/(tabs)/_layout';
 import RootLayout, { ROUTE_OPTIONS } from '../app/_layout';
@@ -24,6 +37,30 @@ jest.mock('@/lib/auth-context', () => ({
   AuthProvider: ({ children }: { children: React.ReactNode }) => children,
   useAuth: jest.fn(),
 }));
+
+// renderRouter turns fake timers on and leaves them on; turn them off after
+// every test so the next one starts clean (Q8a).
+afterEach(() => {
+  jest.useRealTimers();
+});
+
+/**
+ * Builds the pretend app (renderRouter) and then lets it finish: every
+ * pending timer is run, and the promises they start are awaited, inside
+ * React's act() so the screen updates before any check (Q8a).
+ *
+ * @param routes - the route files for the pretend app (path -> component).
+ * @param initialUrl - the address the app opens at.
+ */
+async function settleRouter(
+  routes: Parameters<typeof renderRouter>[0],
+  initialUrl: string,
+): Promise<void> {
+  await renderRouter(routes, { initialUrl });
+  await act(async () => {
+    await jest.runOnlyPendingTimersAsync();
+  });
+}
 
 /**
  * Tonight as it really sits since Q4: the first tab of the "(tabs)" group
@@ -47,7 +84,7 @@ function setStatus(status: string) {
 
 /** Builds the pretend app and opens it at `url`. */
 async function openAt(url: string) {
-  await renderRouter(
+  await settleRouter(
     {
       _layout: RootLayout,
       ...TONIGHT_TAB,
@@ -55,7 +92,7 @@ async function openAt(url: string) {
       '(auth)/age-gate': () => <Text>Age gate screen</Text>,
       '(auth)/blocked': () => <Text>Sorry screen</Text>,
     },
-    { initialUrl: url },
+    url,
   );
 }
 
@@ -107,6 +144,14 @@ describe('root layout guards', () => {
     expect(screen.queryByText('Age gate screen')).toBeNull();
   });
 
+  it('Q8a: each test starts on real timers again (renderRouter left fake ones on before)', () => {
+    // The tests above all used renderRouter, which turns fake timers on.
+    // Fake timers carry a `clock` (modern) or are Jest mock functions (legacy).
+    const fake =
+      Object.prototype.hasOwnProperty.call(setTimeout, 'clock') || jest.isMockFunction(setTimeout);
+    expect(fake).toBe(false);
+  });
+
   it('offers retry and sign-out when the profile fails to load', async () => {
     setStatus('error');
     await openAt('/');
@@ -130,13 +175,13 @@ describe('admin-only screens (VC-34 Edit event)', () => {
       refreshProfile: jest.fn(),
       signOut: jest.fn(),
     });
-    await renderRouter(
+    await settleRouter(
       {
         _layout: RootLayout,
         ...TONIGHT_TAB,
         'admin/edit-event/[id]': () => <Text>Edit event screen</Text>,
       },
-      { initialUrl: '/admin/edit-event/e1' },
+      '/admin/edit-event/e1',
     );
   }
 
@@ -173,14 +218,14 @@ describe('admin-only screens (VC-47, VC-58 moderation)', () => {
       refreshProfile: jest.fn(),
       signOut: jest.fn(),
     });
-    await renderRouter(
+    await settleRouter(
       {
         _layout: RootLayout,
         ...TONIGHT_TAB,
         'admin/reports': () => <Text>Reports screen</Text>,
         'admin/moderate/[id]': () => <Text>Moderate screen</Text>,
       },
-      { initialUrl: url },
+      url,
     );
   }
 
@@ -213,7 +258,7 @@ describe('Settings and the legal screens (VC-B13, VC-32b)', () => {
    */
   async function openWithLegal(status: string, url: string) {
     setStatus(status);
-    await renderRouter(
+    await settleRouter(
       {
         _layout: RootLayout,
         ...TONIGHT_TAB,
@@ -224,7 +269,7 @@ describe('Settings and the legal screens (VC-B13, VC-32b)', () => {
         terms: () => <Text>Terms screen</Text>,
         privacy: () => <Text>Privacy screen</Text>,
       },
-      { initialUrl: url },
+      url,
     );
   }
 

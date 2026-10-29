@@ -63,6 +63,9 @@ jest.mock('@/lib/haptics', () => ({
 const mockPush = jest.fn();
 const mockBack = jest.fn();
 const mockReplace = jest.fn();
+// Q8a: records each "may the screen be removed?" answer the sheet gives the
+// navigator (true = removal blocked).
+const mockPreventRemove = jest.fn();
 jest.mock('expo-router', () => ({
   useRouter: () => ({
     push: mockPush,
@@ -71,6 +74,8 @@ jest.mock('expo-router', () => ({
     canGoBack: () => true,
   }),
   useLocalSearchParams: () => ({ id: 'e1' }),
+  usePreventRemove: (prevent: boolean, callback: () => void) =>
+    mockPreventRemove(prevent, callback),
 }));
 
 const get = getEvent as jest.Mock;
@@ -752,5 +757,64 @@ describe('the bottom sheet (Q7, fix #7)', () => {
     await drag(300);
     expect(closeCalls()).toHaveLength(0);
     expect(mockBack).not.toHaveBeenCalled();
+  });
+
+  // --- Q8a: nothing closes the sheet while a check-in is being sent ---------
+
+  it('Q8a: a drag let go far down mid-send springs back to fully open (motion on)', async () => {
+    const springSpy = jest.spyOn(Animated, 'spring');
+    read.mockReturnValue(new Promise(() => {}));
+    await openSheet(false);
+    await layOutSheet();
+    await fireEvent.press(screen.getByRole('button', { name: IM_HERE }));
+    await drag(300);
+    // Not left resting 300 points down: a spring back to 0 (fully open).
+    expect(springSpy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ toValue: 0 }),
+    );
+    expect(closeCalls()).toHaveLength(0);
+    expect(mockBack).not.toHaveBeenCalled();
+    springSpy.mockRestore();
+  });
+
+  it('Q8a Reduce Motion: a drag let go far down mid-send snaps straight back to open', async () => {
+    read.mockReturnValue(new Promise(() => {}));
+    await openSheet(true);
+    await layOutSheet();
+    await fireEvent.press(screen.getByRole('button', { name: IM_HERE }));
+    await drag(300);
+    const style = StyleSheet.flatten(screen.getByTestId('check-in-sheet').props.style);
+    expect(style.transform).toEqual([{ translateY: 0 }]);
+    expect(mockBack).not.toHaveBeenCalled();
+  });
+
+  it("Q8a: Android's back button is ignored while a check-in is being sent", async () => {
+    const addSpy = jest.spyOn(BackHandler, 'addEventListener');
+    read.mockReturnValue(new Promise(() => {}));
+    await openSheet(true);
+    // The handler from BEFORE the tap (it still thinks nothing is sending):
+    // the instant-answer guard must block it too.
+    const before = addSpy.mock.calls.at(-1)?.[1] as () => boolean;
+    await fireEvent.press(screen.getByRole('button', { name: IM_HERE }));
+    const during = addSpy.mock.calls.at(-1)?.[1] as () => boolean;
+    // Handled (true), so Android doesn't close the screen itself, and no close.
+    expect(before()).toBe(true);
+    expect(during()).toBe(true);
+    expect(mockBack).not.toHaveBeenCalled();
+    addSpy.mockRestore();
+  });
+
+  it('Q8a: the navigator is told to refuse removing the screen only while sending', async () => {
+    let finishRead: (r: ReadingOutcome) => void = () => {};
+    read.mockReturnValue(new Promise((resolve) => (finishRead = resolve)));
+    await openSheet(true);
+    expect(mockPreventRemove).toHaveBeenLastCalledWith(false, expect.any(Function));
+    await fireEvent.press(screen.getByRole('button', { name: IM_HERE }));
+    expect(mockPreventRemove).toHaveBeenLastCalledWith(true, expect.any(Function));
+    // The answer lands (a phone-side "denied"): removal is allowed again,
+    // and so is Android's back button.
+    await act(async () => finishRead({ kind: 'denied' }));
+    expect(mockPreventRemove).toHaveBeenLastCalledWith(false, expect.any(Function));
   });
 });
