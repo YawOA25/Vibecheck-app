@@ -36,7 +36,9 @@
  *     pulse slowly; still rings under Reduce Motion or when the screen
  *     isn't in view. A band change cross-fades in 400 ms (tag dot and glow);
  *   - the card's pages go hottest first, then by start time, and the card
- *     closes with a swipe down (or the screen reader's "escape" gesture);
+ *     closes with a swipe down (or the screen reader's "escape" gesture).
+ *     VC-84 fix (cto, VC-83 Batch 2 debt): when a refresh re-sorts the
+ *     pages, the card stays on the event the guest was looking at (by id);
  *   - your blue location dot, ONLY if you already allowed location for the
  *     app (for example at check-in). This screen never asks: it only reads
  *     the current permission. When it shows, a round button centres on you;
@@ -86,7 +88,12 @@ import {
   Text,
   View,
 } from 'react-native';
-import type { LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
+import type {
+  LayoutChangeEvent,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
+  ScrollViewInstance,
+} from 'react-native';
 import MapView from 'react-native-maps';
 import type { MapPressEvent, Region, UserLocationChangeEvent } from 'react-native-maps';
 
@@ -897,10 +904,37 @@ function AreaCard({
 }) {
   // The card's inner width (a page of the pager), once laid out.
   const [width, setWidth] = useState(0);
-  const [page, setPage] = useState(0);
   const n = area.events.length;
   // Hottest first, then by start time (spec §6).
   const pages = useMemo(() => pagerOrder(area.events), [area.events]);
+  // The event the guest is looking at, by id, plus the page number it was
+  // on. VC-84 fix: the minute refresh can re-sort the pages (a party turns
+  // Fire and jumps to the front). Remembering only the page NUMBER made the
+  // card switch to a different event under the guest's finger, so we
+  // remember the event itself. It starts on the first page's event (the
+  // card is drawn anew for each pick).
+  const [viewed, setViewed] = useState(() => ({
+    id: pagerOrder(area.events)[0]?.event_id ?? null,
+    index: 0,
+  }));
+  // Where that event sits in the (maybe re-sorted) pages now. If it left
+  // the area (it ended or was removed), stay on the same page number,
+  // or the last page if there are fewer now.
+  const found = pages.findIndex((p) => p.event_id === viewed.id);
+  // The event moved to another page: note its new page number too (React's
+  // "adjust state while drawing" pattern), so if it later leaves, the card
+  // stays where the guest last saw it rather than on an old number.
+  if (found >= 0 && found !== viewed.index) setViewed({ id: viewed.id, index: found });
+  const page = found >= 0 ? found : Math.max(0, Math.min(viewed.index, n - 1));
+  // The pager itself, so it can be moved to that page.
+  const pagerRef = useRef<ScrollViewInstance>(null);
+  // Keep the pager on the viewed event's page: after a re-sort its page
+  // number changes, so scroll there at once (no animation, so nothing
+  // seems to slide by itself). When the guest swiped, it is already there,
+  // so this does nothing visible.
+  useEffect(() => {
+    if (width > 0) pagerRef.current?.scrollTo({ x: page * width, animated: false });
+  }, [page, width]);
 
   // Swipe down to close. How far the card has been dragged down, in px.
   const [drag] = useState(() => new Animated.Value(0));
@@ -941,13 +975,16 @@ function AreaCard({
   const lift = shown.interpolate({ inputRange: [0, 1], outputRange: [30, 0] });
 
   /**
-   * Works out which page the pager stopped on.
+   * Works out which page the pager stopped on, and remembers that page's
+   * event (by id, so a later re-sort can't swap it; VC-84 fix).
    *
    * @param event - the scroll view's "momentum ended" event; its sideways
    *   offset divided by the page width is the page number.
    */
   function onScrollEnd(event: NativeSyntheticEvent<NativeScrollEvent>) {
-    if (width > 0) setPage(Math.round(event.nativeEvent.contentOffset.x / width));
+    if (width <= 0) return;
+    const index = Math.round(event.nativeEvent.contentOffset.x / width);
+    setViewed({ id: pages[index]?.event_id ?? null, index });
   }
 
   return (
@@ -963,6 +1000,8 @@ function AreaCard({
       {...swipe.panHandlers}
     >
       <ScrollView
+        ref={pagerRef}
+        testID="map-card-pager"
         horizontal
         pagingEnabled
         showsHorizontalScrollIndicator={false}

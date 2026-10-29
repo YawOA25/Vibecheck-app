@@ -177,6 +177,8 @@ export const typography = {
   h1: { fontFamily: fonts.display, fontSize: 36, lineHeight: 44, letterSpacing: -1 },
   /** Tonight header. */
   title: { fontFamily: fonts.display, fontSize: 32, lineHeight: 36, letterSpacing: -0.6 },
+  /** Home section titles (VC-84 "Bands": 21 px, the title font). */
+  section: { fontFamily: fonts.display, fontSize: 21, lineHeight: 26, letterSpacing: -0.4 },
   /** Card names (later screens). */
   cardTitle: { fontFamily: fonts.displaySemi, fontSize: 22, lineHeight: 24, letterSpacing: -0.6 },
   /** Paragraphs. */

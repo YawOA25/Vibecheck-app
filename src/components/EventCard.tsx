@@ -78,6 +78,17 @@ export interface EventCardProps {
    * passes false under Reduce Motion. Off by default.
    */
   animatePress?: boolean;
+  /**
+   * VC-84: a special night's name (e.g. "Halloween") to make this the
+   * night's gold-edged feature card, with the name on a gold tag. Leave it
+   * out for an ordinary card.
+   */
+  feature?: string | null;
+  /**
+   * VC-84: true when the card sits on a surface-coloured band (Staff
+   * picks), so it takes the page colour instead and stays visible as a card.
+   */
+  onBand?: boolean;
 }
 
 /** How small a pressed card gets (98%), and how long the change takes (VC-72). */
@@ -141,7 +152,15 @@ export function eventSpoken(event: PublicEvent, now: Date, vibe: Vibe | undefine
  *   "Saturday rooftop, Shaw, DC, Today · 10 PM, Staff pick, 74 here, vibe
  *   8.0 out of 10, Hot".
  */
-function EventCardView({ event, now, onPress, vibe: given, animatePress = false }: EventCardProps) {
+function EventCardView({
+  event,
+  now,
+  onPress,
+  vibe: given,
+  animatePress = false,
+  feature = null,
+  onBand = false,
+}: EventCardProps) {
   const when = whenLine(event, now);
   // VC-61: before the start, act as if there were no vibe at all, so no
   // score, chip or "here" count can leak onto a not-started card.
@@ -158,7 +177,8 @@ function EventCardView({ event, now, onPress, vibe: given, animatePress = false 
   const here = vibe ? hereText(vibe.here, false) : null;
   // One spoken summary, so screen-reader users don't have to swipe through
   // every small piece of the card.
-  const spoken = eventSpoken(event, now, vibe);
+  // VC-84: a feature card also says its night ("..., Halloween").
+  const spoken = eventSpoken(event, now, vibe) + (feature ? `, ${feature}` : '');
 
   return (
     // The shared shrink-on-press wrapper (VC-76). It is not a button
@@ -171,8 +191,15 @@ function EventCardView({ event, now, onPress, vibe: given, animatePress = false 
       accessibilityRole="button"
       accessibilityLabel={spoken}
       accessibilityHint="Opens the event"
-      testID="event-card"
-      style={({ pressed }) => [styles.card, goldEdge && styles.goldEdge, pressed && styles.pressed]}
+      style={({ pressed }) => [
+        styles.card,
+        onBand && styles.onBand,
+        goldEdge && styles.goldEdge,
+        // VC-84: the special night's feature card has a full gold edge.
+        feature !== null && styles.featureEdge,
+        pressed && styles.pressed,
+      ]}
+      testID={feature ? 'event-card-feature' : 'event-card'}
     >
       <View style={styles.left}>
         <Text style={styles.title}>{event.title}</Text>
@@ -180,8 +207,9 @@ function EventCardView({ event, now, onPress, vibe: given, animatePress = false 
           {event.area_label} · {when}
           {here ? ` · ${here}` : ''}
         </Text>
-        {staffPick || event.is_21_plus || event.is_test ? (
+        {staffPick || event.is_21_plus || event.is_test || feature ? (
           <View style={styles.tags}>
+            {feature ? <Tag label={feature.toUpperCase()} tone="feature" /> : null}
             {event.is_test ? <Tag label={TEST_LABEL} tone="gold" /> : null}
             {staffPick ? <Tag label="Staff pick" tone="gold" /> : null}
             {event.is_21_plus ? <Tag label="21+" /> : null}
@@ -270,6 +298,11 @@ const styles = StyleSheet.create({
   },
   // VC-77: the v3 gold edge (#5A4C30) on a live Hot or Fire card. Decoration only.
   goldEdge: { borderColor: colors.goldBorder },
+  // VC-84: the special night's feature card (solid gold edge, decoration;
+  // the gold tag and the spoken name carry the meaning).
+  featureEdge: { borderColor: colors.accent },
+  // VC-84: on a surface band the card takes the page colour.
+  onBand: { backgroundColor: colors.bg },
   pressed: { backgroundColor: colors.surfaceRaised },
   // flexShrink lets long names wrap instead of pushing the chip off screen.
   left: { flex: 1, flexShrink: 1, gap: 5 },

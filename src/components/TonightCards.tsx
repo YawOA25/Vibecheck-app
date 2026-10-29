@@ -142,6 +142,11 @@ export interface HeroCardProps {
   onPress: (id: string) => void;
   /** false under Reduce Motion: no press shrink, no LIVE pulse. */
   animate: boolean;
+  /**
+   * VC-84: true when the card sits on the surface-coloured Live now band,
+   * so it takes the page colour instead and still reads as a card.
+   */
+  onBand?: boolean;
 }
 
 /**
@@ -150,7 +155,15 @@ export interface HeroCardProps {
  * @returns one button: the art with LIVE and the name, then the details and
  *   the gauge (live), the vibe chip (on now) or the countdown (Next up).
  */
-function HeroCardView({ event, kind, vibe: given, now, onPress, animate }: HeroCardProps) {
+function HeroCardView({
+  event,
+  kind,
+  vibe: given,
+  now,
+  onPress,
+  animate,
+  onBand = false,
+}: HeroCardProps) {
   // Same rule as the list cards: nothing about ratings before the start.
   const vibe = hasStarted(event, now) ? given : undefined;
   const live = isOnNow(event, now);
@@ -182,7 +195,12 @@ function HeroCardView({ event, kind, vibe: given, now, onPress, animate }: HeroC
       accessibilityLabel={eventSpoken(event, now, vibe)}
       accessibilityHint="Opens the event"
       testID="hero-card"
-      style={({ pressed }) => [styles.hero, goldEdge && styles.goldEdge, pressed && styles.pressed]}
+      style={({ pressed }) => [
+        styles.hero,
+        onBand && styles.onBand,
+        goldEdge && styles.goldEdge,
+        pressed && styles.pressed,
+      ]}
     >
       <View style={styles.heroArt}>
         <GeneratedArt seed={event.id} height={HERO_ART_HEIGHT} />
@@ -236,6 +254,11 @@ export interface ArtCardProps {
   total?: number;
   /** Carousel only: the carousel's sideways scroll position. */
   scrollX?: Animated.Value;
+  /**
+   * VC-84: true when the card sits on the surface-coloured Live now band,
+   * so it takes the page colour instead and still reads as a card.
+   */
+  onBand?: boolean;
 }
 
 /**
@@ -254,6 +277,7 @@ function ArtCardView({
   index,
   total,
   scrollX,
+  onBand = false,
 }: ArtCardProps) {
   const vibe = hasStarted(event, now) ? given : undefined;
   const live = isOnNow(event, now);
@@ -308,6 +332,7 @@ function ArtCardView({
         testID="art-card"
         style={({ pressed }) => [
           styles.artCard,
+          onBand && styles.onBand,
           goldEdge && styles.goldEdge,
           pressed && styles.pressed,
         ]}
@@ -396,6 +421,7 @@ function sameArtCard(prev: ArtCardProps, next: ArtCardProps): boolean {
     prev.index === next.index &&
     prev.total === next.total &&
     prev.scrollX === next.scrollX &&
+    prev.onBand === next.onBand &&
     sameVibe(prev.vibe, next.vibe) &&
     (prev.now === next.now || timeView(prev.event, prev.now) === timeView(next.event, next.now))
   );
@@ -416,6 +442,11 @@ export interface TonightCarouselProps {
   onPress: (id: string) => void;
   /** false under Reduce Motion (no scaling, parallax or pulse). */
   animate: boolean;
+  /**
+   * VC-84: true when the card sits on the surface-coloured Live now band,
+   * so it takes the page colour instead and still reads as a card.
+   */
+  onBand?: boolean;
 }
 
 /**
@@ -429,7 +460,14 @@ export interface TonightCarouselProps {
  *   the middle of the screen, with a light "tick" each time it settles on a
  *   new card.
  */
-export function TonightCarousel({ events, vibes, now, onPress, animate }: TonightCarouselProps) {
+export function TonightCarousel({
+  events,
+  vibes,
+  now,
+  onPress,
+  animate,
+  onBand = false,
+}: TonightCarouselProps) {
   const { width } = useWindowDimensions();
   // The space before the first card and after the last one, so that every
   // card can stop in the middle of the screen.
@@ -474,9 +512,10 @@ export function TonightCarousel({ events, vibes, now, onPress, animate }: Tonigh
         index={index}
         total={total}
         scrollX={scrollX}
+        onBand={onBand}
       />
     ),
-    [vibes, now, onPress, animate, total, scrollX],
+    [vibes, now, onPress, animate, total, scrollX, onBand],
   );
 
   return (
@@ -533,6 +572,8 @@ const styles = StyleSheet.create({
   },
   // VC-77: the gold edge for a live Hot or Fire party.
   goldEdge: { borderColor: colors.goldBorder },
+  // VC-84: on the surface-coloured Live now band, cards take the page colour.
+  onBand: { backgroundColor: colors.bg },
   pressed: { backgroundColor: colors.surfaceRaised },
   heroArt: { height: HERO_ART_HEIGHT, justifyContent: 'flex-end', overflow: 'hidden' },
   pillSpot: { position: 'absolute', top: spacing.gap12, left: spacing.gap12 },

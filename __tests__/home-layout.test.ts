@@ -15,10 +15,8 @@ import {
   hasLiveScore,
   heroLabel,
   homeLayout,
-  laterLabel,
   nothingTonightText,
   orderTonight,
-  othersLabel,
   pickHero,
   startsIn,
   tonightShape,
@@ -224,11 +222,7 @@ describe('labels', () => {
     expect(heroLabel({ ...pick, kind: 'tonight' }, undefined)).toBe(TONIGHT_LABEL);
   });
 
-  it('labels the others, the later nights and the nothing-tonight note', () => {
-    expect(othersLabel(3)).toBe('ON TONIGHT · 3 MORE');
-    expect(laterLabel('week')).toBe('LATER THIS WEEK');
-    expect(laterLabel('weekend')).toBe('LATER THIS WEEKEND');
-    expect(laterLabel('custom')).toBe('LATER ON');
+  it('words the nothing-tonight note', () => {
     expect(nothingTonightText('week')).toEqual({
       title: 'Nothing on tonight yet',
       body: "Here's what's coming up this week.",

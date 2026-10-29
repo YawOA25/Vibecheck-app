@@ -264,8 +264,10 @@ describe('HomeScreen events', () => {
       events: [makeEvent({ source: 'staff_pick', is_21_plus: true })],
     });
     await render(<HomeScreen />);
-    expect(await screen.findByText('Staff pick')).toBeOnTheScreen();
-    expect(screen.getByText('21+')).toBeOnTheScreen();
+    // VC-84: a staff pick shows twice: on its own card (the hero here) and
+    // again in the Staff picks band.
+    expect(await screen.findAllByText('Staff pick')).toHaveLength(2);
+    expect(screen.getAllByText('21+')).toHaveLength(2);
   });
 
   // VC-80: tonight's events sit in the hero card, not under a TONIGHT heading.
@@ -389,13 +391,16 @@ describe('HomeScreen week view (VC-61)', () => {
     // The section logic itself (5 AM edges, daylight saving) is tested in
     // tonight.test.ts; here we check the screen draws each heading.
     // VC-80: tonight's event is the hero card; the later nights keep their
-    // headings, under the "LATER THIS WEEK" label.
+    // headings, under the "Coming up" header (VC-84), each heading now with
+    // its date ("TOMORROW, OCT 18").
     const titles = groupByDay(events, new Date()).map((s) => s.title.toUpperCase());
     expect(titles[0]).toBe('TONIGHT');
     expect(titles.length).toBeGreaterThanOrEqual(3);
     expect(screen.getByTestId('hero-card')).toHaveTextContent(/Running now/);
-    expect(screen.getByText('LATER THIS WEEK')).toBeOnTheScreen();
-    for (const title of titles.slice(1)) expect(screen.getByText(title)).toBeOnTheScreen();
+    expect(screen.getByRole('header', { name: 'Coming up' })).toBeOnTheScreen();
+    for (const title of titles.slice(1)) {
+      expect(screen.getByText(new RegExp(`^${title}(, |$)`))).toBeOnTheScreen();
+    }
   });
 
   it('asks only about started events, and shows nothing for the others even if sent', async () => {

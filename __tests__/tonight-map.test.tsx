@@ -39,7 +39,7 @@
  */
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import * as Location from 'expo-location';
-import { AccessibilityInfo, Animated, Platform } from 'react-native';
+import { AccessibilityInfo, Animated, Platform, ScrollView } from 'react-native';
 import * as Maps from 'react-native-maps';
 
 import { GLOW_FADE_MS, heatLayers } from '@/components/AreaHeat';
@@ -745,6 +745,78 @@ describe('TonightMap card pager order (VC-83 Batch 2)', () => {
       .map((c) => String(c.props.accessibilityLabel).split(',')[0]);
     expect(titles).toEqual(['Fire one', 'Good one', 'Early one', 'Later one']);
     expect(screen.getByText('1 of 4')).toBeOnTheScreen();
+  });
+
+  it('stays on the event being viewed when a refresh re-sorts the pages (VC-84 fix)', async () => {
+    jest.useFakeTimers();
+    const started = new Date(Date.now() - HOUR).toISOString();
+    /**
+     * A started Shaw party with a published score.
+     *
+     * @param id - its id; the title is "<id> one".
+     * @param score - its score.
+     * @param word - its word (default Hot).
+     * @returns a server row.
+     */
+    const scored = (id: string, score: number, word = 'Hot') =>
+      row({
+        event_id: id,
+        title: `${id} one`,
+        has_started: true,
+        is_live: true,
+        starts_at: started,
+        vibe_word: word,
+        vibe_score: score,
+      });
+    /** The pages' titles, in order. */
+    const titles = () =>
+      screen
+        .getAllByTestId('map-mini-card')
+        .map((c) => String(c.props.accessibilityLabel).split(',')[0]);
+    // The mocked ScrollView's scrollTo (one shared fake on its prototype).
+    const scrollTo = (ScrollView.prototype as unknown as { scrollTo: jest.Mock }).scrollTo;
+
+    rpc.mockResolvedValue({
+      data: [scored('A', 8), scored('B', 7.5), scored('C', 7)],
+      error: null,
+    });
+    await drawMap();
+    await fireEvent.press(screen.getByTestId('map-area-Shaw, DC'));
+    // The card lays out 324 px wide: 300 px pages inside its 12 px padding.
+    // (The handlers are called directly: RNTL's fireEvent skips views under
+    // the card's swipe handler, which declines plain touches.)
+    const W = 300;
+    await act(async () =>
+      screen.getByTestId('map-tap-card').props.onLayout({
+        nativeEvent: { layout: { width: W + 24, height: 120, x: 0, y: 0 } },
+      }),
+    );
+    // The guest swipes to page 2: "B one".
+    await act(async () =>
+      screen.getByTestId('map-card-pager').props.onMomentumScrollEnd({
+        nativeEvent: { contentOffset: { x: W, y: 0 } },
+      }),
+    );
+    expect(screen.getByText('2 of 3')).toBeOnTheScreen();
+    scrollTo.mockClear();
+
+    // B turns Fire: the refresh puts it first. The card follows B to page 1
+    // (before the fix it stayed on page 2, which was now "A one").
+    rpc.mockResolvedValue({
+      data: [scored('A', 8), scored('B', 9.4, 'Fire'), scored('C', 7)],
+      error: null,
+    });
+    await act(() => jest.advanceTimersByTimeAsync(LIST_VIBE_REFRESH_MS));
+    expect(titles()).toEqual(['B one', 'A one', 'C one']);
+    expect(screen.getByText('1 of 3')).toBeOnTheScreen();
+    expect(scrollTo).toHaveBeenLastCalledWith({ x: 0, animated: false });
+
+    // If the viewed event leaves the area, the card keeps the page number
+    // it was last seen on (page 1, where B had moved), now showing A.
+    rpc.mockResolvedValue({ data: [scored('A', 8), scored('C', 7)], error: null });
+    await act(() => jest.advanceTimersByTimeAsync(LIST_VIBE_REFRESH_MS));
+    expect(titles()).toEqual(['A one', 'C one']);
+    expect(screen.getByText('1 of 2')).toBeOnTheScreen();
   });
 });
 

@@ -15,7 +15,9 @@
  *   - the states: 1 event (hero only), 2 (hero + one wide card), 3+ (hero +
  *     carousel, each card saying "2 of 3"), none tonight (the moon note,
  *     then the later nights), and the TEST chip on a test event;
- *   - later nights: under "LATER THIS WEEK", with sticky day headings;
+ *   - later nights: under "Coming up" (VC-84), with sticky day headings;
+ *   (VC-84 moved the old "ON TONIGHT · 2 MORE" and "LATER THIS WEEK" labels
+ *   into band headers; vc84-home-sections.test.tsx covers the bands.)
  *   - motion: the carousel's neighbours at 94% with their art shifted 12 px
  *     and the LIVE dot pulsing, the header title set to shrink; none of it
  *     under Reduce Motion;
@@ -241,14 +243,14 @@ describe('tonight states', () => {
     await screen.findByTestId('hero-card');
     expect(screen.queryByTestId('art-card')).toBeNull();
     expect(screen.queryByTestId('tonight-carousel')).toBeNull();
-    expect(screen.queryByText(/ON TONIGHT/)).toBeNull();
+    expect(screen.getByRole('header', { name: 'Later tonight, 1 event' })).toBeOnTheScreen();
   });
 
   it('2 events: the hero plus one wide art card, no carousel', async () => {
     list.mockResolvedValue({ ok: true, events: [ev('a', 1), ev('b', 2)] });
     await render(<HomeScreen />);
     await screen.findByTestId('hero-card');
-    expect(screen.getByText('ON TONIGHT · 1 MORE')).toBeOnTheScreen();
+    expect(screen.getByRole('header', { name: 'Later tonight, 2 events' })).toBeOnTheScreen();
     expect(screen.getAllByTestId('art-card')).toHaveLength(1);
     expect(screen.queryByTestId('tonight-carousel')).toBeNull();
     expect(screen.getByTestId('art-card').props.accessibilityLabel).toMatch(/^Party b, /);
@@ -258,7 +260,7 @@ describe('tonight states', () => {
     list.mockResolvedValue({ ok: true, events: [ev('a', 1), ev('b', 2), ev('c', 3)] });
     await render(<HomeScreen />);
     await screen.findByTestId('tonight-carousel');
-    expect(screen.getByText('ON TONIGHT · 2 MORE')).toBeOnTheScreen();
+    expect(screen.getByRole('header', { name: 'Later tonight, 3 events' })).toBeOnTheScreen();
     const cards = screen.getAllByTestId('art-card');
     expect(cards.map((c) => c.props.accessibilityLabel)).toEqual([
       expect.stringMatching(/^Party b, .+, 1 of 2$/),
@@ -274,17 +276,17 @@ describe('tonight states', () => {
     expect(await screen.findByText('Nothing on tonight yet')).toBeOnTheScreen();
     expect(screen.getByText("Here's what's coming up this week.")).toBeOnTheScreen();
     expect(screen.queryByTestId('hero-card')).toBeNull();
-    expect(screen.getByText('TOMORROW')).toBeOnTheScreen();
-    expect(screen.getByText('MONDAY')).toBeOnTheScreen();
+    expect(screen.getByText('TOMORROW, OCT 18')).toBeOnTheScreen();
+    expect(screen.getByText('MONDAY, OCT 19')).toBeOnTheScreen();
     // Day headings stick (the list marks them as sticky rows).
     expect(screen.getByTestId('tonight-list').props.stickyHeaderIndices.length).toBeGreaterThan(0);
   });
 
-  it('tonight plus later nights: the later nights sit under "LATER THIS WEEK"', async () => {
+  it('tonight plus later nights: the later nights sit under "Coming up"', async () => {
     list.mockResolvedValue({ ok: true, events: [ev('a', 1), ev('sun', 24)] });
     await render(<HomeScreen />);
-    expect(await screen.findByText('LATER THIS WEEK')).toBeOnTheScreen();
-    expect(screen.getByText('TOMORROW')).toBeOnTheScreen();
+    expect(await screen.findByRole('header', { name: 'Coming up' })).toBeOnTheScreen();
+    expect(screen.getByText('TOMORROW, OCT 18')).toBeOnTheScreen();
     expect(screen.queryByText('Nothing on tonight yet')).toBeNull();
     // The later event is an ordinary list card.
     expect(screen.getByTestId('event-card').props.accessibilityLabel).toMatch(/^Party sun, /);

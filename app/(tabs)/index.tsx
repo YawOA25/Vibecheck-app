@@ -83,6 +83,22 @@
  *     Under Reduce Motion: no title shrink, no scaling, no parallax and no
  *     LIVE pulse.
  *
+ *   - VC-84 (home sections, Direction A "Bands", founder chose it
+ *     2026-10-29; design/vc84-home-sections-spec.md): the page is split
+ *     into full-width colour bands so it no longer reads as one run of cards.
+ *     "Live now" (surface colour, gold line on top: the events that have
+ *     started tonight, with the VC-80 hero when it is a live pick), "Later
+ *     tonight" (tonight's events still to start; a "Next up" hero sits
+ *     here), "Staff picks" (up to 5 staff-picked events still to come,
+ *     repeated from their own night) and "Coming up" (tomorrow onwards, each
+ *     night's sticky heading saying its date and count, e.g. "FRIDAY, OCT
+ *     30 · 2 EVENTS"). Each section title is 21 px with its count beside it;
+ *     the tonight bands have a gold "See all" that switches the date filter
+ *     to Tonight. Special nights (Halloween, New Year's Eve, a small list in
+ *     src/lib/home-sections.ts) get a gold heading and tag, and their first
+ *     event a gold-edged feature card. Empty bands are left out. The rules
+ *     are plain functions in src/lib/home-sections.ts; no new data.
+ *
  * Not here on purpose (VC-31, not approved for the MVP): genre filters, the
  * featured host card, photos and clips.
  *
@@ -113,6 +129,7 @@ import { Button } from '@/components/Button';
 import { DateFilterBar } from '@/components/DateFilterBar';
 import { EventCard } from '@/components/EventCard';
 import { FormMessage } from '@/components/FormMessage';
+import { Band, DayHeading, SectionHeader } from '@/components/HomeSections';
 import { Icon } from '@/components/Icon';
 import { LiveDot } from '@/components/LiveDot';
 import { ListSkeleton } from '@/components/Skeleton';
@@ -134,14 +151,16 @@ import {
 import type { DateFilter } from '@/lib/date-filter';
 import { listHomeEvents } from '@/lib/events-read';
 import { tapLight, tapSelection } from '@/lib/haptics';
+import { heroLabel, homeLayout, nothingTonightText } from '@/lib/home-layout';
 import {
-  heroLabel,
-  homeLayout,
-  laterLabel,
-  nothingTonightText,
-  othersLabel,
-} from '@/lib/home-layout';
-import type { HomeLayout } from '@/lib/home-layout';
+  COMING_UP_TITLE,
+  STAFF_PICKS_TITLE,
+  comingUpDays,
+  specialNight,
+  staffPicks,
+  tonightBands,
+} from '@/lib/home-sections';
+import type { DaySection, TonightBand } from '@/lib/home-sections';
 import { motionAllowed, useReduceMotion } from '@/lib/reduce-motion';
 import { sendTestError } from '@/lib/sentry';
 import { groupByDay, hasStarted, nightOf } from '@/lib/tonight';
@@ -159,6 +178,10 @@ export const EMPTY_BODY = WEEK_EMPTY.body;
 export const LIST_TITLE = FILTER_LABELS.week;
 /** The empty state's way back to the default filter (VC-63). */
 export const SHOW_WEEK_LABEL = 'Show this week';
+/** VC-84: what the tonight bands' "See all" says to screen readers. */
+export const SEE_ALL_TONIGHT_SPOKEN = "See all tonight's events";
+/** VC-84: the Tonight filter, which the tonight bands' "See all" picks. */
+const TONIGHT_FILTER: DateFilter = { kind: 'tonight' };
 /** The button under the last card when more events follow (VC-66). */
 export const LOAD_MORE_LABEL = 'Load more events';
 /** How long the list takes to fade in when a new load lands (VC-72). */
@@ -232,7 +255,7 @@ type ListState =
 export default function HomeScreen() {
   const router = useRouter();
   // The list, so a tap on the already-open Home tab can scroll it to the top.
-  const listRef = useRef<SectionList<PublicEvent, { title: string }>>(null);
+  const listRef = useRef<SectionList<PublicEvent, DaySection>>(null);
   // VC-80: how far the list has scrolled, followed on the phone's UI thread
   // (native driver) so the header can shrink smoothly with it.
   const [scrollY] = useState(() => new Animated.Value(0));
@@ -603,10 +626,30 @@ export default function HomeScreen() {
   // VC-80: whether the filter covers tonight (for the "Nothing on tonight
   // yet" note), worked out from the list's load moment.
   const coversTonight = loadedAt !== null && filterCoversNight(filter, nightOf(loadedAt), loadedAt);
+  // VC-84: the later nights with their "FRIDAY, OCT 30 · 2 EVENTS" headings
+  // (and special-night gold), the tonight bands, the staff picks, and
+  // tonight's special-night name (Halloween) for the tonight band headers.
+  const days = useMemo(() => comingUpDays(layout.later), [layout.later]);
+  const bands = useMemo(() => tonightBands(layout, listNow), [layout, listNow]);
+  const picks = useMemo(
+    () => (state.kind === 'ready' ? staffPicks(state.events, listNow) : []),
+    [state, listNow],
+  );
+  const tonightSpecial = loadedAt ? specialNight(nightOf(loadedAt)) : null;
+  // VC-84 "See all" on the tonight bands: picks the Tonight filter (the
+  // page then shows only tonight). No link when Tonight is already picked.
+  const seeAllTonight = useMemo(
+    () => (filter.kind === 'tonight' ? undefined : () => chooseFilter(TONIGHT_FILTER)),
+    [filter.kind, chooseFilter],
+  );
 
-  /** Draws one card. Kept steady so unchanged cards aren't re-drawn. */
-  const renderItem = useCallback<SectionListRenderItem<PublicEvent, { title: string }>>(
-    ({ item }) => (
+  /**
+   * Draws one card. Kept steady so unchanged cards aren't re-drawn. VC-84:
+   * on a special night (Halloween) the night's first card is its gold-edged
+   * feature card.
+   */
+  const renderItem = useCallback<SectionListRenderItem<PublicEvent, DaySection>>(
+    ({ item, index, section }) => (
       <EventCard
         event={item}
         now={listNow}
@@ -614,17 +657,21 @@ export default function HomeScreen() {
         vibe={vibes[item.id]}
         onPress={openEvent}
         animatePress={animatePress}
+        feature={index === 0 ? section.special : null}
       />
     ),
     [listNow, vibes, openEvent, animatePress],
   );
 
-  /** Draws one night's heading ("TONIGHT", "TOMORROW", ...). */
+  /** Draws one night's heading ("FRIDAY, OCT 30 · 2 EVENTS", VC-84). */
   const renderSectionHeader = useCallback(
-    ({ section }: { section: SectionListData<PublicEvent, { title: string }> }) => (
-      <Text style={styles.sectionTitle} accessibilityRole="header">
-        {section.title.toUpperCase()}
-      </Text>
+    ({ section }: { section: SectionListData<PublicEvent, DaySection> }) => (
+      <DayHeading
+        heading={section.heading}
+        countText={section.countText}
+        spoken={section.spoken}
+        special={section.special}
+      />
     ),
     [],
   );
@@ -681,7 +728,7 @@ export default function HomeScreen() {
               testID="tonight-list"
               // VC-80: only the later nights are sections; tonight is drawn
               // above them (the hero and carousel, in the list's header).
-              sections={layout.later}
+              sections={days}
               keyExtractor={(event) => event.id}
               renderItem={renderItem}
               renderSectionHeader={renderSectionHeader}
@@ -698,13 +745,17 @@ export default function HomeScreen() {
               ItemSeparatorComponent={Gap}
               ListHeaderComponent={
                 <TonightPart
-                  layout={layout}
+                  bands={bands}
+                  picks={picks}
+                  hasLater={days.length > 0}
+                  special={tonightSpecial}
+                  onSeeAll={seeAllTonight}
                   vibes={vibes}
                   now={listNow}
                   onOpen={openEvent}
                   animate={animatePress}
                   filterKind={filter.kind}
-                  showNothingTonight={coversTonight && layout.later.length > 0}
+                  showNothingTonight={coversTonight && bands.length === 0 && days.length > 0}
                   refreshError={refreshError}
                   listId={state.kind === 'ready' ? state.loadId : 0}
                 />
@@ -850,9 +901,18 @@ function CollapsingTitle({
   );
 }
 
-/** What the tonight part (the list's header) needs. */
+/** What the top of the list (above the later nights) needs. */
 interface TonightPartProps {
-  layout: HomeLayout;
+  /** VC-84: the Live now and Later tonight bands (empty ones left out). */
+  bands: TonightBand[];
+  /** VC-84: the staff picks still to come (at most 5). */
+  picks: PublicEvent[];
+  /** true when later nights follow (then the "Coming up" header shows). */
+  hasLater: boolean;
+  /** Tonight's special night name (e.g. "Halloween"), or null. */
+  special: string | null;
+  /** "See all" on the tonight bands, or undefined for no link. */
+  onSeeAll?: () => void;
   vibes: Record<string, Vibe>;
   now: Date;
   onOpen: (id: string) => void;
@@ -868,14 +928,18 @@ interface TonightPartProps {
 }
 
 /**
- * The top of the list (VC-80): the hero card, the other tonight events (a
- * wide card for one, the carousel for two or more), the "Nothing on tonight
- * yet" note when it applies, and the label over the later nights.
+ * The top of the list (VC-80, split into bands by VC-84): the Live now and
+ * Later tonight bands, the "Nothing on tonight yet" note when it applies,
+ * the Staff picks band, and the "Coming up" header over the later nights.
  *
  * @returns the views above the later nights' sections.
  */
 function TonightPart({
-  layout,
+  bands,
+  picks,
+  hasLater,
+  special,
+  onSeeAll,
   vibes,
   now,
   onOpen,
@@ -885,7 +949,6 @@ function TonightPart({
   refreshError,
   listId,
 }: TonightPartProps) {
-  const { hero, others, later, shape } = layout;
   return (
     <View>
       {refreshError ? (
@@ -893,8 +956,93 @@ function TonightPart({
           <FormMessage message={refreshError} />
         </View>
       ) : null}
+      {bands.map((band) => (
+        <TonightBandView
+          key={band.kind}
+          band={band}
+          special={special}
+          onSeeAll={onSeeAll}
+          vibes={vibes}
+          now={now}
+          onOpen={onOpen}
+          animate={animate}
+          listId={listId}
+        />
+      ))}
+      {showNothingTonight ? <NothingTonight kind={filterKind} /> : null}
+      {picks.length > 0 ? (
+        // Staff picks repeat from their own night below (spec: allowed, max 5).
+        <Band tone="picks" testID="band-picks">
+          <SectionHeader title={STAFF_PICKS_TITLE} count={picks.length} testID="section-picks" />
+          {picks.map((event, i) => (
+            <View key={event.id}>
+              {i > 0 ? <View style={styles.afterHero} /> : null}
+              <EventCard
+                event={event}
+                now={now}
+                vibe={vibes[event.id]}
+                onPress={onOpen}
+                animatePress={animate}
+                onBand
+              />
+            </View>
+          ))}
+        </Band>
+      ) : null}
+      {hasLater ? (
+        <View style={styles.comingUp}>
+          <SectionHeader title={COMING_UP_TITLE} count={null} testID="section-coming-up" />
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+/** What one tonight band needs (see TonightPartProps for the shared ones). */
+interface TonightBandViewProps {
+  band: TonightBand;
+  special: string | null;
+  onSeeAll?: () => void;
+  vibes: Record<string, Vibe>;
+  now: Date;
+  onOpen: (id: string) => void;
+  animate: boolean;
+  listId: number;
+}
+
+/**
+ * One tonight band (VC-84): its header ("Live now 3", "See all"), then the
+ * VC-80 hero when it belongs here (with its small "ON FIRE RIGHT NOW" or
+ * "NEXT UP" label), then the band's other events: one wide art card for
+ * one, the sideways carousel for two or more.
+ *
+ * @returns the band.
+ */
+function TonightBandView({
+  band,
+  special,
+  onSeeAll,
+  vibes,
+  now,
+  onOpen,
+  animate,
+  listId,
+}: TonightBandViewProps) {
+  const { hero, others } = band;
+  // Cards on the surface-coloured Live now band take the page colour.
+  const onBand = band.kind === 'live';
+  return (
+    <Band tone={band.kind === 'live' ? 'live' : 'plain'} testID={`band-${band.kind}`}>
+      <SectionHeader
+        title={band.title}
+        count={band.count}
+        special={special}
+        onSeeAll={onSeeAll}
+        seeAllSpoken={SEE_ALL_TONIGHT_SPOKEN}
+        testID={`section-${band.kind}`}
+      />
       {hero ? (
-        <View style={styles.block}>
+        <View>
           <View style={styles.labelRow}>
             {/* The pulsing dot next to "ON FIRE RIGHT NOW" (decoration). */}
             {hero.kind === 'live' ? <LiveDot animate={animate} testID="hero-label-dot" /> : null}
@@ -909,14 +1057,13 @@ function TonightPart({
             now={now}
             onPress={onOpen}
             animate={animate}
+            onBand={onBand}
           />
         </View>
       ) : null}
-      {shape === 'pair' && others[0] ? (
-        <View style={styles.block}>
-          <Text style={styles.blockLabel} accessibilityRole="header">
-            {othersLabel(1)}
-          </Text>
+      {others.length === 1 ? (
+        <View>
+          {hero ? <View style={styles.afterHero} /> : null}
           <ArtCard
             event={others[0]}
             vibe={vibes[others[0].id]}
@@ -924,37 +1071,28 @@ function TonightPart({
             onPress={onOpen}
             animate={animate}
             variant="wide"
+            onBand={onBand}
           />
         </View>
       ) : null}
-      {shape === 'carousel' ? (
-        <View style={styles.block}>
-          <Text style={styles.blockLabel} accessibilityRole="header">
-            {othersLabel(others.length)}
-          </Text>
-          {/* The carousel runs edge to edge, past the list's side margins. */}
-          <View style={styles.bleed}>
-            {/* `key`: a reloaded list gets a fresh carousel, back at its first
-                card and with no remembered "settled" card, so the first
-                swipe after a reload can't give a stray tick. */}
-            <TonightCarousel
-              key={listId}
-              events={others}
-              vibes={vibes}
-              now={now}
-              onPress={onOpen}
-              animate={animate}
-            />
-          </View>
+      {others.length >= 2 ? (
+        // The carousel runs edge to edge, past the band's side margins.
+        <View style={styles.bleed}>
+          {/* `key`: a reloaded list gets a fresh carousel, back at its first
+              card and with no remembered "settled" card, so the first
+              swipe after a reload can't give a stray tick. */}
+          <TonightCarousel
+            key={listId}
+            events={others}
+            vibes={vibes}
+            now={now}
+            onPress={onOpen}
+            animate={animate}
+            onBand={onBand}
+          />
         </View>
       ) : null}
-      {shape === 'none' && showNothingTonight ? <NothingTonight kind={filterKind} /> : null}
-      {shape !== 'none' && later.length > 0 ? (
-        <Text style={[styles.blockLabel, styles.laterLabel]} accessibilityRole="header">
-          {laterLabel(filterKind)}
-        </Text>
-      ) : null}
-    </View>
+    </Band>
   );
 }
 
@@ -1090,21 +1228,21 @@ const styles = StyleSheet.create({
     // flexGrow lets the empty state fill a list that can still be pulled down.
     flexGrow: 1,
   },
-  // VC-80: day headings stick to the top, so they carry the page colour
-  // (cards scrolling under them don't show through).
-  sectionTitle: {
-    ...typography.label,
-    color: colors.muted,
-    paddingTop: spacing.md,
-    paddingBottom: spacing.sm,
-    backgroundColor: colors.bg,
+  // VC-80: the small hero label ("ON FIRE RIGHT NOW") with its live dot,
+  // between a band's header and the hero card.
+  labelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingBottom: spacing.gap10,
   },
-  // VC-80: one part of the tonight block (a label over a card or carousel).
-  block: { paddingTop: spacing.md, gap: spacing.gap10 },
-  labelRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   blockLabel: { ...typography.label, color: colors.muted },
-  // The "LATER THIS WEEK" label, with room above it.
-  laterLabel: { paddingTop: spacing.lg },
+  // VC-84: the 14 px card gap between a band's hero and its wide card, and
+  // between stacked staff-pick cards.
+  afterHero: { height: 14 },
+  // VC-84: the "Coming up" header, 22 px under the band above it (each
+  // night's heading below brings its own space).
+  comingUp: { paddingTop: 22 },
   // Lets the carousel run past the list's 16 px side margins.
   bleed: { marginHorizontal: -spacing.gutter },
   // The "Nothing on tonight yet" card sits a little lower.

@@ -8,6 +8,9 @@
  *      one other);
  *   2. LATER (tomorrow onwards) underneath, as the usual cards with a day
  *      heading per night that sticks to the top while you scroll.
+ * VC-84 then splits these into colour bands (Live now, Later tonight, Staff
+ * picks, Coming up); that split lives in src/lib/home-sections.ts and uses
+ * the hero and order worked out here unchanged.
  *
  * Everything here is a plain function with no React and no server calls,
  * so the tests can pin every rule (tonight.test.ts style). The screen
@@ -227,29 +230,6 @@ export function heroLabel(pick: HeroPick, vibe: Vibe | undefined): string {
     default:
       return TONIGHT_LABEL;
   }
-}
-
-/**
- * The label over the carousel (or the single wide card).
- *
- * @param more - how many tonight events besides the hero.
- * @returns e.g. "ON TONIGHT · 3 MORE".
- */
-export function othersLabel(more: number): string {
-  return `ON TONIGHT · ${more} MORE`;
-}
-
-/**
- * The label over the later nights, under the tonight part.
- *
- * @param kind - the date filter's kind.
- * @returns "LATER THIS WEEK", "LATER THIS WEEKEND", or "LATER ON" for a
- *   Custom range. ("Tonight" never has later nights.)
- */
-export function laterLabel(kind: DateFilter['kind']): string {
-  if (kind === 'week') return 'LATER THIS WEEK';
-  if (kind === 'weekend') return 'LATER THIS WEEKEND';
-  return 'LATER ON';
 }
 
 /**

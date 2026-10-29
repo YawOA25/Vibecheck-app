@@ -19,8 +19,10 @@ export interface TagProps {
    * 'gold': gold edge and text, for "Staff pick" so it stands out (VC-14
    * says staff content must be clearly labelled).
    * 'muted': filled grey, for the "Early" vibe state (no score yet).
+   * 'feature': filled gold with dark text, for a special night's name such
+   * as "HALLOWEEN" (VC-84), so the night stands out from a staff pick.
    */
-  tone?: 'plain' | 'gold' | 'muted';
+  tone?: 'plain' | 'gold' | 'muted' | 'feature';
 }
 
 /**
@@ -30,8 +32,23 @@ export interface TagProps {
  */
 export function Tag({ label, tone = 'plain' }: TagProps) {
   return (
-    <View style={[styles.chip, tone === 'gold' && styles.gold, tone === 'muted' && styles.muted]}>
-      <Text style={[styles.text, tone === 'gold' && styles.goldText]}>{label}</Text>
+    <View
+      style={[
+        styles.chip,
+        tone === 'gold' && styles.gold,
+        tone === 'muted' && styles.muted,
+        tone === 'feature' && styles.feature,
+      ]}
+    >
+      <Text
+        style={[
+          styles.text,
+          tone === 'gold' && styles.goldText,
+          tone === 'feature' && styles.featureText,
+        ]}
+      >
+        {label}
+      </Text>
     </View>
   );
 }
@@ -51,4 +68,7 @@ const styles = StyleSheet.create({
   text: { ...typography.caption, fontSize: 12, lineHeight: 16, color: colors.text },
   // Gold text on the dark background reads at 10.4:1.
   goldText: { color: colors.accent, fontFamily: typography.label.fontFamily },
+  // VC-84: dark text on solid gold reads at 9.8:1.
+  feature: { backgroundColor: colors.accent, borderColor: colors.accent },
+  featureText: { color: colors.onAccent, fontFamily: typography.label.fontFamily },
 });
