@@ -1,9 +1,9 @@
 /**
  * Admin "New event" screen (task VC-B04), in the v3 look.
  *
- * Who sees it: only admins. The Admin tab's hub (app/(tabs)/admin.tsx, Q4)
- * has the "New event" row, and only admins have that tab, and the root layout (app/_layout.tsx) only lets admins open
- * this address. The real lock is on the server: `create_event` refuses
+ * Who sees it: only admins. It opens from the gold plus in the bottom bar
+ * (VC-82, src/components/TabBar.tsx), which only admins see, and the root
+ * layout (app/_layout.tsx) only lets admins open this address. The real lock is on the server: `create_event` refuses
  * anyone who isn't an admin, even with a hand-made request.
  *
  * What the admin does (goal: under 1 minute on the phone, at the party):
@@ -122,7 +122,7 @@ export default function NewEventScreen() {
     else setMessage(outcome.message);
   }
 
-  /** Leaves the screen, back to Tonight. */
+  /** Leaves the screen, back to where the admin was (usually Home). */
   function close() {
     if (router.canGoBack()) router.back();
     else router.replace('/');

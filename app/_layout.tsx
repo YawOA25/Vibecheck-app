@@ -7,10 +7,11 @@
  *   2. decides which screens exist right now, based on that state:
  *        signed out            -> only the sign-in screen
  *        signed in, no profile -> only the age gate
- *        signed in + profile   -> the app itself: the bottom tabs (Tonight,
- *                                 Me, and Admin for admins; app/(tabs)/,
- *                                 Q4) and the screens that slide in over
- *                                 them (event pages, check-in, rate...)
+ *        signed in + profile   -> the app itself: the bottom tabs (Home
+ *                                 and Me, plus the Add event button for
+ *                                 admins; app/(tabs)/, VC-82) and the
+ *                                 screens that slide in over them (event
+ *                                 pages, check-in, rate...)
  *        ... and an admin      -> also the New and Edit event screens
  *                                 (VC-B04, VC-34), the report queue and
  *                                 the Moderate screen (VC-47, VC-58)
@@ -172,10 +173,13 @@ function RootNavigator({ fontsReady }: { fontsReady: boolean }) {
     >
       {/* Signed in AND passed the 18+ gate: the app itself. */}
       <Stack.Protected guard={status === 'ready'}>
-        {/* The bottom tabs (Q4): Tonight ("/"), Me ("/me") and, for admins,
-            the Admin hub ("/admin"). See app/(tabs)/_layout.tsx. Every other
+        {/* The bottom tabs (VC-82): Home ("/") and Me ("/me"); admins also
+            get the Add event plus. See app/(tabs)/_layout.tsx. Every other
             screen below opens OVER the tabs, so the tab bar hides there. */}
         <Stack.Screen name="(tabs)" options={ROUTE_OPTIONS.swap} />
+        {/* The old Admin hub address "/admin" (gone in VC-82): it only
+            redirects to Me (app/admin/index.tsx), with no animation. */}
+        <Stack.Screen name="admin/index" options={{ animation: 'none' }} />
         {/* The event page (VC-B05), GPS check-in (VC-B06) and the
             party-code placeholder (VC-B07 will fill it in). */}
         <Stack.Screen name="event/[id]" options={{ title: 'Event', ...ROUTE_OPTIONS.push }} />
@@ -198,9 +202,10 @@ function RootNavigator({ fontsReady }: { fontsReady: boolean }) {
         <Stack.Screen name="settings" options={{ title: 'Settings', ...ROUTE_OPTIONS.push }} />
       </Stack.Protected>
 
-      {/* Admins only (VC-B04, VC-34): the New and Edit event screens. This only keeps the
-          screen out of reach for others; the server's create_event refuses
-          non-admins by itself. */}
+      {/* Admins only (VC-B04, VC-34): the New and Edit event screens. New
+          event opens from the bar's gold plus (VC-82), which only admins
+          see; this guard ALSO stops anyone else reaching it by address,
+          and the server's create_event refuses non-admins by itself. */}
       <Stack.Protected guard={status === 'ready' && profile?.role === 'admin'}>
         <Stack.Screen
           name="admin/new-event"
@@ -212,7 +217,8 @@ function RootNavigator({ fontsReady }: { fontsReady: boolean }) {
           options={{ title: 'Edit event', ...ROUTE_OPTIONS.form }}
         />
         {/* Moderation (VC-47, VC-58): the report queue and one event's
-            Moderate screen. Every admin_ server function refuses non-admins. */}
+            Moderate screen, opened from Me > Admin tools since VC-82. Every
+            admin_ server function refuses non-admins. */}
         <Stack.Screen name="admin/reports" options={{ title: 'Reports', ...ROUTE_OPTIONS.push }} />
         <Stack.Screen
           name="admin/moderate/[id]"

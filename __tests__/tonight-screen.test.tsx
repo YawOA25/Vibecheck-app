@@ -155,14 +155,22 @@ describe('HomeScreen header', () => {
 
   // Q4 "launch look": Me, New event, Reports and Sign out moved to the tab
   // bar, the Admin hub and Settings, so the header has no buttons at all,
-  // even for an admin.
-  it('shows no header pills, even to an admin (Q4)', async () => {
+  // even for an admin. VC-82: New event is the bar's gold plus and Reports
+  // is on Me, so the home header must still not grow its own Add event.
+  it('shows no header pills, even to an admin (Q4, VC-82)', async () => {
     (useAuth as jest.Mock).mockReturnValue({
       profile: { id: 'admin-1', display_name: 'Yaw', role: 'admin', is_tester: false },
       signOut,
     });
     await render(<HomeScreen />);
-    for (const name of ['New event', 'Reports', 'Sign out', 'Me', 'Me, your nights out']) {
+    for (const name of [
+      'New event',
+      'Add event',
+      'Reports',
+      'Sign out',
+      'Me',
+      'Me, your nights out',
+    ]) {
       expect(screen.queryByRole('button', { name })).toBeNull();
     }
   });

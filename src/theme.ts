@@ -136,14 +136,25 @@ export const iconSize = { sm: 16, md: 20, tab: 22, lg: 28 } as const;
 export const iconStroke = { regular: 1.5, small: 1.75 } as const;
 
 /**
- * The bottom tab bar's measurements (Q4 spec 2.2): 56 px tall (plus the
- * phone's home-bar space below), 4 px between icon and label, and the
- * 24 x 2 gold bar that marks the open tab.
+ * The bottom bar's measurements (VC-82, design/vc82-bottom-bar-spec.md
+ * section 2; replaced the Q4 full-width bar). A floating pill:
+ *   - 16 px from each side, 12 px above the phone's home-bar space;
+ *   - at least 64 tall (it grows a little with very large text);
+ *   - 3 px between icon and label;
+ *   - a 16 x 3 gold bar under the open tab's label, 7 px from the bottom;
+ *   - admins: a 56 px gold plus in a 76 px middle slot, wrapped in a 6 px
+ *     ring of the page colour, its circle sitting 14 px above the pill.
  */
 export const tabBar = {
-  height: 56,
-  iconLabelGap: 4,
-  indicator: { width: 24, height: 2 },
+  sideMargin: 16,
+  bottomMargin: 12,
+  pillHeight: 64,
+  iconLabelGap: 3,
+  indicator: { width: 16, height: 3, bottom: 7 },
+  plusSize: 56,
+  plusRing: 6,
+  plusRaise: 14,
+  plusSlotWidth: 76,
 } as const;
 
 /** Smallest size a tappable thing may be (44 px), so it's easy to hit with a thumb. */

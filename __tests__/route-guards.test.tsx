@@ -248,6 +248,61 @@ describe('admin-only screens (VC-47, VC-58 moderation)', () => {
   });
 });
 
+/**
+ * VC-82: New event now opens from the bar's gold plus, which only admins
+ * see. Hiding the plus is not the lock: the root layout must still refuse
+ * the "/admin/new-event" address to everyone else (a typed or shared link).
+ */
+describe('admin-only screens (VC-82 New event from the plus)', () => {
+  /**
+   * Pretends a person in the given state and role, then opens the New event
+   * address with a stand-in New event screen.
+   *
+   * @param status - the sign-in state.
+   * @param role - 'user' or 'admin'.
+   * @param isTester - whether they are a tester.
+   */
+  async function openNewEventAs(status: string, role: 'user' | 'admin', isTester = false) {
+    (useAuth as jest.Mock).mockReturnValue({
+      status,
+      profile:
+        status === 'ready' ? { id: 'p1', display_name: 'Ava', role, is_tester: isTester } : null,
+      refreshProfile: jest.fn(),
+      signOut: jest.fn(),
+    });
+    await settleRouter(
+      {
+        _layout: RootLayout,
+        ...TONIGHT_TAB,
+        '(auth)/sign-in': () => <Text>Sign-in screen</Text>,
+        'admin/new-event': () => <Text>New event screen</Text>,
+      },
+      '/admin/new-event',
+    );
+  }
+
+  it('lets an admin open New event by address', async () => {
+    await openNewEventAs('ready', 'admin');
+    expect(await screen.findByText('New event screen')).toBeOnTheScreen();
+  });
+
+  it('sends a normal user or a non-admin tester to the home tab instead', async () => {
+    await openNewEventAs('ready', 'user');
+    expect(await screen.findByText('Tonight screen')).toBeOnTheScreen();
+    expect(screen.queryByText('New event screen')).toBeNull();
+    await screen.unmount();
+    await openNewEventAs('ready', 'user', true);
+    expect(await screen.findByText('Tonight screen')).toBeOnTheScreen();
+    expect(screen.queryByText('New event screen')).toBeNull();
+  });
+
+  it('sends a signed-out person to sign-in', async () => {
+    await openNewEventAs('signedOut', 'admin');
+    expect(await screen.findByText('Sign-in screen')).toBeOnTheScreen();
+    expect(screen.queryByText('New event screen')).toBeNull();
+  });
+});
+
 describe('Settings and the legal screens (VC-B13, VC-32b)', () => {
   /**
    * Builds the pretend app with stand-ins for every state's first screen

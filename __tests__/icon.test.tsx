@@ -31,7 +31,7 @@ function getIcon(testID: string) {
 }
 
 describe('Icon', () => {
-  it('has exactly the 15 icons of the Q4 spec', () => {
+  it('has exactly the 15 icons of the Q4 spec (VC-82 swapped clipboard and plus-circle for house and plus)', () => {
     expect(ICON_NAMES).toHaveLength(15);
     expect([...ICON_NAMES].sort()).toEqual(
       [
@@ -39,15 +39,15 @@ describe('Icon', () => {
         'check',
         'chevron-left',
         'chevron-right',
-        'clipboard',
         'close',
         'flag',
         'gear',
+        'house',
         'info',
         'moon',
         'person',
         'pin',
-        'plus-circle',
+        'plus',
         'share',
         'shield',
       ].sort(),

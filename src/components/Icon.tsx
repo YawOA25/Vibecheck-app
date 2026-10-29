@@ -61,7 +61,7 @@ const ICONS = {
   pin: [path('M12 22s7-6.5 7-12a7 7 0 0 0-14 0c0 5.5 7 12 7 12z'), circle(12, 10, 2.5)],
   /** Privacy notes. */
   shield: [path('M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z')],
-  /** The Tonight tab. */
+  /** Quiet / empty states on the home list (was the Tonight tab's icon). */
   moon: [path('M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z')],
   /** The Me tab. */
   person: [circle(12, 8, 4), path('M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6')],
@@ -70,14 +70,11 @@ const ICONS = {
     circle(12, 12, 3),
     path('M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1'),
   ],
-  /** The Admin tab. */
-  clipboard: [
-    { kind: 'rect', x: 5, y: 4, width: 14, height: 17, rx: 2.5 },
-    path('M9 3h6v3H9zM9 11h6M9 15h4'),
-  ],
-  /** "New event" on the Admin hub. */
-  'plus-circle': [circle(12, 12, 9), path('M12 8v8M8 12h8')],
-  /** "Reports" on the Admin hub. */
+  /** The Home tab (VC-82): a simple line house, same 24 grid as the set. */
+  house: [path('M4 11l8-7 8 7v9h-5v-6H9v6H4z')],
+  /** The admins' gold "Add event" button in the bottom bar (VC-82). */
+  plus: [path('M12 5v14M5 12h14')],
+  /** "Reports" under Admin tools on the Me tab (VC-82; was the Admin hub). */
   flag: [path('M5 21V4M5 4h11l-2 4 2 4H5')],
 } satisfies Record<string, Shape[]>;
 
@@ -95,6 +92,12 @@ export interface IconProps {
   size?: number;
   /** Line colour, always a theme colour. Default: the main text colour. */
   color?: ColorValue;
+  /**
+   * Line thickness, only when a design asks for a heavier line than the set
+   * (VC-82: the gold plus uses 2.5 so it reads on gold). Default: 1.5, or
+   * 1.75 for 16 px icons.
+   */
+  strokeWidth?: number;
   /** Optional id for tests. */
   testID?: string;
 }
@@ -105,11 +108,20 @@ export interface IconProps {
  * @param props.name - which icon (see the table above).
  * @param props.size - pixels; default 20.
  * @param props.color - line colour; default `colors.text`.
+ * @param props.strokeWidth - optional heavier line (VC-82 plus).
  * @returns the icon, hidden from screen readers.
  */
-export function Icon({ name, size = iconSize.md, color = colors.text, testID }: IconProps) {
-  // 16 px icons get a slightly thicker line so they don't look faint.
-  const strokeWidth = size <= iconSize.sm ? iconStroke.small : iconStroke.regular;
+export function Icon({
+  name,
+  size = iconSize.md,
+  color = colors.text,
+  strokeWidth: strokeOverride,
+  testID,
+}: IconProps) {
+  // 16 px icons get a slightly thicker line so they don't look faint; a
+  // design-chosen thickness (strokeOverride) wins over both.
+  const strokeWidth =
+    strokeOverride ?? (size <= iconSize.sm ? iconStroke.small : iconStroke.regular);
   return (
     <Svg
       testID={testID}

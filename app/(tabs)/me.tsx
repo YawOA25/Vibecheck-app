@@ -23,6 +23,13 @@
  * The round gear button next to the name opens Settings (sign out, delete
  * account, terms and privacy), as in the v3 design (VC-B13).
  *
+ * VC-82 (founder approved 2026-10-29): admins also see "ADMIN TOOLS" under
+ * the stats, with a Reports row (the heads-up report queue, which leads on
+ * to each event's Moderate screen). It used to live on the Admin tab, which
+ * VC-82 removed; New event moved to the gold plus in the bottom bar. A
+ * normal guest never sees this section, and the Reports and Moderate
+ * screens stay locked to admins in the root layout and on the server.
+ *
  * Since Q4 ("launch look") this is the Me tab of the bottom bar
  * (app/(tabs)/me.tsx, still at "/me"), so it has no Back button. Tapping
  * the Me tab while already here scrolls back to the top.
@@ -34,6 +41,7 @@
  * No shrinking under Reduce Motion (src/components/PressableScale.tsx).
  */
 import { useFocusEffect, useRouter, useScrollToTop } from 'expo-router';
+import type { Href } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
 import type { ComponentRef } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -43,6 +51,7 @@ import { Button } from '@/components/Button';
 import { FadeIn } from '@/components/FadeIn';
 import { FormMessage } from '@/components/FormMessage';
 import { Icon } from '@/components/Icon';
+import type { IconName } from '@/components/Icon';
 import { PressableScale } from '@/components/PressableScale';
 import { wordColour } from '@/components/VibeMeter';
 import { useAuth } from '@/lib/auth-context';
@@ -64,6 +73,28 @@ import {
   typography,
 } from '@/theme';
 
+/** One row under Admin tools: its words, icon and where it goes. */
+interface AdminToolInfo {
+  label: string;
+  sub: string;
+  icon: IconName;
+  href: Href;
+}
+
+/**
+ * The Admin tools rows (VC-82), admins only. Exported so tests use the same
+ * words. Moderate has no row of its own: it needs an event, so it opens
+ * from a report in this queue (as before VC-82).
+ */
+export const ADMIN_TOOLS: AdminToolInfo[] = [
+  {
+    label: 'Reports',
+    sub: 'Review reported heads-ups and moderate events',
+    icon: 'flag',
+    href: '/admin/reports',
+  },
+];
+
 /** What the screen is showing. */
 type Phase =
   | { kind: 'loading' }
@@ -78,6 +109,9 @@ type Phase =
 export default function MeScreen() {
   const router = useRouter();
   const { profile } = useAuth();
+  // VC-82: only admins see the Admin tools section (the screens it opens
+  // are locked to admins again in the root layout and on the server).
+  const isAdmin = profile?.role === 'admin';
   const [phase, setPhase] = useState<Phase>({ kind: 'loading' });
   // Bumped by "Try again" to load once more.
   const [attempt, setAttempt] = useState(0);
@@ -144,6 +178,8 @@ export default function MeScreen() {
         </View>
 
         {stats ? <StatsRow stats={stats} /> : null}
+
+        {isAdmin ? <AdminTools onOpen={(href) => router.push(href)} /> : null}
 
         {phase.kind === 'loading' ? (
           <View style={styles.centre} accessible accessibilityLabel="Loading">
@@ -218,6 +254,44 @@ function SettingsButton({ onPress }: { onPress: () => void }) {
     >
       <Icon name="gear" size={iconSize.md} color={colors.text} />
     </PressableScale>
+  );
+}
+
+/**
+ * The "ADMIN TOOLS" section (VC-82, admins only): a gold label over one
+ * card row per tool (today just Reports).
+ *
+ * @param props.onOpen - opens a tool's screen, given its address.
+ * @returns the section.
+ */
+function AdminTools({ onOpen }: { onOpen: (href: Href) => void }) {
+  return (
+    <View testID="admin-tools">
+      <Text style={styles.adminLabel} accessibilityRole="header">
+        ADMIN TOOLS
+      </Text>
+      <View style={styles.adminRows}>
+        {ADMIN_TOOLS.map((tool) => (
+          // Same card look as the old Admin hub rows: shrinks to 0.97 while
+          // pressed (VC-76), read as e.g. "Reports. Review reported ...".
+          <PressableScale
+            key={tool.label}
+            scaleTo={motion.pressScale.row}
+            onPress={() => onOpen(tool.href)}
+            accessibilityRole="button"
+            accessibilityLabel={`${tool.label}. ${tool.sub}.`}
+            style={({ pressed }) => [styles.adminRow, pressed && styles.rowPressed]}
+          >
+            <Icon name={tool.icon} size={iconSize.md} color={colors.accent} />
+            <View style={styles.rowText}>
+              <Text style={styles.adminRowTitle}>{tool.label}</Text>
+              <Text style={styles.muted}>{tool.sub}</Text>
+            </View>
+            <Icon name="chevron-right" size={iconSize.md} color={colors.muted} />
+          </PressableScale>
+        ))}
+      </View>
+    </View>
   );
 }
 
@@ -369,6 +443,23 @@ const styles = StyleSheet.create({
   lastNightText: { flex: 1, gap: spacing.xs },
   goldLabel: { ...typography.label, color: colors.accent },
   sectionLabel: { ...typography.label, color: colors.muted, marginBottom: spacing.xs },
+  // VC-82 Admin tools: a gold label (as in the mock) over card rows.
+  adminLabel: { ...typography.label, color: colors.accent, marginBottom: spacing.xs },
+  adminRows: { gap: spacing.gap12 },
+  // The old Admin hub's row card: surface, 1 px edge, radius 20, 64+ tall.
+  adminRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.gap12,
+    minHeight: 64,
+    paddingVertical: spacing.md,
+    paddingHorizontal: 18,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.card,
+  },
+  adminRowTitle: { ...typography.button, color: colors.text },
   row: {
     flexDirection: 'row',
     alignItems: 'center',

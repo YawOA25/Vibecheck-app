@@ -1,21 +1,25 @@
 /**
- * The bottom tabs (Q4 "launch look", spec section 2.3): Tonight, Me and,
- * for admins only, Admin.
+ * The bottom tabs: Home and Me for everyone (VC-82, design/vc82-bottom-bar-
+ * spec.md; founder approved 2026-10-29). Admins also get a gold plus in the
+ * middle of the bar that opens New event.
  *
  * How it fits in: the folder name "(tabs)" is in brackets, so it doesn't
- * change any address. Tonight is still "/", Me is still "/me", and the
- * Admin hub is "/admin". The root layout (app/_layout.tsx) opens this group
- * only for people who are signed in and past the 18+ gate, so signed-out
- * and blocked people never see the bar.
+ * change any address. Home is still "/" (the same screen as the old
+ * "Tonight" tab, only renamed) and Me is still "/me". The root layout
+ * (app/_layout.tsx) opens this group only for people who are signed in and
+ * past the 18+ gate, so signed-out and blocked people never see the bar.
  *
  * Every other screen (event page, check-in, rate, recap, settings, the
  * admin forms...) lives in the root Stack, so it slides in OVER the tabs and
  * the bar is hidden there, as the design wants.
  *
- * Admin tab: `Tabs.Protected` with `guard={isAdmin}` removes the Admin tab
- * (and its "/admin" address) for everyone else. That only hides the button;
- * the server already refuses every admin action from non-admins, and the
- * admin forms themselves are guarded again in the root layout.
+ * What happened to the Admin tab (VC-82): it is gone. Its one daily job,
+ * New event, is now the plus; Reports (which leads to Moderate) moved to
+ * Me, under "Admin tools", shown only to admins. The old "/admin" address
+ * now lands on Me (app/admin/index.tsx). The plus is passed to the bar only
+ * when the profile says "admin"; that only hides the button. The New event,
+ * Reports and Moderate screens are guarded again in the root layout, and
+ * the server refuses every admin action from non-admins.
  *
  * Switching tabs (VC-76, design/vc76-motion-spec.md section 1): the founder
  * hasn't chosen yet between a soft 150 ms cross-fade (the designer's
@@ -27,7 +31,9 @@
  * Expo Router's own tabs ignore that option, so it isn't set; the home
  * list's minute refresh already stops while its tab is out of view.)
  */
+import { useRouter } from 'expo-router';
 import { Tabs } from 'expo-router/js-tabs';
+import { useCallback } from 'react';
 import type { ColorValue } from 'react-native';
 
 import { Icon } from '@/components/Icon';
@@ -82,19 +88,25 @@ function tabIcon(name: IconName) {
 /**
  * The tabs navigator.
  *
- * @returns Tonight and Me for everyone signed in, plus Admin for admins.
+ * @returns Home and Me for everyone signed in, with the Add event plus in
+ *   the bar for admins.
  */
 export default function TabsLayout() {
+  const router = useRouter();
   const { profile } = useAuth();
-  // Only admins get the Admin tab (the server checks every admin action too).
+  // Only admins get the plus (the root layout and the server check too).
   const isAdmin = profile?.role === 'admin';
   // VC-76: shortens the tab fade under Reduce Motion.
   const reduceMotion = useReduceMotion();
+  // The plus opens today's New event form over the tabs. After saving, the
+  // form goes back and Home reloads with its "added" note (VC-63b).
+  const openNewEvent = useCallback(() => router.push('/admin/new-event'), [router]);
   return (
     <Tabs
-      // Our own bar (src/components/TabBar.tsx) with the gold indicator.
-      tabBar={(props) => <TabBar {...props} />}
-      // Android back from Me or Admin goes to Tonight first, then leaves.
+      // Our own bar (src/components/TabBar.tsx): the floating pill with the
+      // sliding gold indicator, and the plus only when we pass onAddEvent.
+      tabBar={(props) => <TabBar {...props} onAddEvent={isAdmin ? openNewEvent : undefined} />}
+      // Android back from Me goes to Home first, then leaves the app.
       backBehavior="firstRoute"
       screenOptions={{
         // Each screen draws its own big title, so no top bar.
@@ -104,12 +116,10 @@ export default function TabsLayout() {
         sceneStyle: { backgroundColor: colors.bg },
       }}
     >
-      {/* index.tsx is Tonight ("/"). Listed first: it's the home tab. */}
-      <Tabs.Screen name="index" options={{ title: 'Tonight', tabBarIcon: tabIcon('moon') }} />
+      {/* index.tsx is Home ("/"), the old Tonight tab renamed (VC-82).
+          Listed first: it's the home tab. */}
+      <Tabs.Screen name="index" options={{ title: 'Home', tabBarIcon: tabIcon('house') }} />
       <Tabs.Screen name="me" options={{ title: 'Me', tabBarIcon: tabIcon('person') }} />
-      <Tabs.Protected guard={isAdmin}>
-        <Tabs.Screen name="admin" options={{ title: 'Admin', tabBarIcon: tabIcon('clipboard') }} />
-      </Tabs.Protected>
     </Tabs>
   );
 }

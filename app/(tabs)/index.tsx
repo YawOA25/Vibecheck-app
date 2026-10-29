@@ -8,8 +8,8 @@
  *     FRIDAY", still starting Saturday at 1 AM Sunday; see
  *     src/lib/tonight.ts) over the "This week" title, and nothing on the
  *     right (Q4 "launch look": the Me, New event, Reports and Sign out
- *     pills are gone. Me and Admin are tabs in the bottom bar now, and
- *     Sign out lives in Settings);
+ *     pills are gone. Me is a tab in the bottom bar, admins add events
+ *     with the bar's gold plus (VC-82), and Sign out lives in Settings);
  *   - the events, one section per night ("Tonight", "Tomorrow", then
  *     weekday names, VC-61), each as a card (src/components/EventCard.tsx).
  *     Tapping a card opens the event page;
@@ -88,9 +88,10 @@
  *
  * expo-router makes `app/(tabs)/index.tsx` the app's home address ("/"):
  * the "(tabs)" folder doesn't change the address. It is the first tab of
- * the bottom bar (app/(tabs)/_layout.tsx). The root layout only allows it
- * for signed-in people who passed the 18+ gate. Tapping the Tonight tab
- * while already here scrolls the list back to the top (useScrollToTop).
+ * the bottom bar, labelled "Home" since VC-82 (app/(tabs)/_layout.tsx). The
+ * root layout only allows it for signed-in people who passed the 18+ gate.
+ * Tapping the Home tab while already here scrolls the list back to the
+ * top (useScrollToTop).
  */
 import { useFocusEffect, useRouter, useScrollToTop } from 'expo-router';
 import type { SectionListData, SectionListRenderItem, ListViewToken } from 'react-native';
@@ -230,7 +231,7 @@ type ListState =
  */
 export default function HomeScreen() {
   const router = useRouter();
-  // The list, so a tap on the already-open Tonight tab can scroll it to the top.
+  // The list, so a tap on the already-open Home tab can scroll it to the top.
   const listRef = useRef<SectionList<PublicEvent, { title: string }>>(null);
   // VC-80: how far the list has scrolled, followed on the phone's UI thread
   // (native driver) so the header can shrink smoothly with it.
