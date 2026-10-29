@@ -28,10 +28,10 @@
  * LIVE pulse, no carousel scaling and no parallax. Snapping stays, because
  * the person's own finger drives it.
  */
-import { memo, useCallback, useId, useState } from 'react';
+import { memo, useCallback, useId, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Animated, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
-import type { NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
+import type { ListRenderItem, NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 
 import { VibeBadge, eventSpoken, showsGoldEdge } from '@/components/EventCard';
@@ -226,8 +226,14 @@ export interface ArtCardProps {
    * 'wide' (full width, the "2 events tonight" case).
    */
   variant: 'carousel' | 'wide';
-  /** Carousel only: this card's place, for "2 of 4" in the spoken summary. */
-  position?: { index: number; total: number };
+  /**
+   * Carousel only: this card's place (0 = first) and how many cards there
+   * are, for "2 of 4" in the spoken summary and for its scaling. Two plain
+   * numbers rather than one { index, total } object, because a new object
+   * on every draw would count as a change and re-draw the card for nothing.
+   */
+  index?: number;
+  total?: number;
   /** Carousel only: the carousel's sideways scroll position. */
   scrollX?: Animated.Value;
 }
@@ -245,7 +251,8 @@ function ArtCardView({
   onPress,
   animate,
   variant,
-  position,
+  index,
+  total,
   scrollX,
 }: ArtCardProps) {
   const vibe = hasStarted(event, now) ? given : undefined;
@@ -256,36 +263,35 @@ function ArtCardView({
   // "2 of 4" tells screen-reader users where they are in the carousel.
   const spoken =
     eventSpoken(event, now, vibe) +
-    (position ? `, ${position.index + 1} of ${position.total}` : '');
+    (index !== undefined && total !== undefined ? `, ${index + 1} of ${total}` : '');
 
   // Carousel motion (spec): this card is full size when it is in the
   // middle and 94% one step either side; its art drifts 12 px the other
   // way. Both follow the scroll on the phone's UI thread (native driver).
   // Off under Reduce Motion, and for the wide card.
-  const moving = carousel && animate && scrollX !== undefined && position !== undefined;
-  const steps = moving
-    ? [
-        (position.index - 1) * CAROUSEL_STEP,
-        position.index * CAROUSEL_STEP,
-        (position.index + 1) * CAROUSEL_STEP,
-      ]
-    : null;
-  const scale =
-    steps && scrollX
-      ? scrollX.interpolate({
-          inputRange: steps,
-          outputRange: [NEIGHBOUR_SCALE, 1, NEIGHBOUR_SCALE],
-          extrapolate: 'clamp',
-        })
-      : 1;
-  const drift =
-    steps && scrollX
-      ? scrollX.interpolate({
-          inputRange: steps,
-          outputRange: [-PARALLAX_PX, 0, PARALLAX_PX],
-          extrapolate: 'clamp',
-        })
-      : 0;
+  // Built once per card place (useMemo), not on every draw: a fresh
+  // interpolation each time would hand the native side new animated
+  // values on every minute tick for nothing.
+  const { scale, drift } = useMemo(() => {
+    if (!carousel || !animate || scrollX === undefined || index === undefined) {
+      return { scale: 1, drift: 0 };
+    }
+    // The scroll positions where this card is one step left, in the
+    // middle, and one step right.
+    const steps = [(index - 1) * CAROUSEL_STEP, index * CAROUSEL_STEP, (index + 1) * CAROUSEL_STEP];
+    return {
+      scale: scrollX.interpolate({
+        inputRange: steps,
+        outputRange: [NEIGHBOUR_SCALE, 1, NEIGHBOUR_SCALE],
+        extrapolate: 'clamp',
+      }),
+      drift: scrollX.interpolate({
+        inputRange: steps,
+        outputRange: [-PARALLAX_PX, 0, PARALLAX_PX],
+        extrapolate: 'clamp',
+      }),
+    };
+  }, [carousel, animate, scrollX, index]);
 
   return (
     <Animated.View
@@ -337,8 +343,66 @@ function ArtCardView({
   );
 }
 
-/** An art card, re-drawn only when its own inputs change. */
-export const ArtCard = memo(ArtCardView);
+/**
+ * What a card shows that depends on the clock: started yet, on now, the
+ * "when" words (which the spoken summary also uses) and the countdown.
+ *
+ * @param event - the event.
+ * @param now - the current moment.
+ * @returns one string; equal strings mean the card would look the same.
+ */
+function timeView(event: PublicEvent, now: Date): string {
+  return [
+    hasStarted(event, now),
+    isOnNow(event, now),
+    whenLine(event, now),
+    startsIn(event, now),
+  ].join('|');
+}
+
+/**
+ * Whether two vibes would draw the same. Every vibe refresh brings brand
+ * new objects from the server even when nothing changed, so comparing the
+ * objects themselves would always say "changed"; this compares their
+ * contents instead (a vibe is small, plain data).
+ *
+ * @param a - the vibe drawn last time (or undefined).
+ * @param b - the vibe now (or undefined).
+ * @returns true when they hold the same values.
+ */
+function sameVibe(a: Vibe | undefined, b: Vibe | undefined): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/**
+ * Decides whether an art card can skip a re-draw (React's memo check).
+ * The screen hands every card a new `now` each minute and a new vibe each
+ * refresh, so a plain check would re-draw every card every time. Here a
+ * card re-draws only when something it SHOWS changes: its clock-based
+ * words (timeView), its vibe's values, or any other input.
+ *
+ * @param prev - the inputs last time.
+ * @param next - the inputs now.
+ * @returns true to keep the last drawing.
+ */
+function sameArtCard(prev: ArtCardProps, next: ArtCardProps): boolean {
+  return (
+    prev.event === next.event &&
+    prev.onPress === next.onPress &&
+    prev.animate === next.animate &&
+    prev.variant === next.variant &&
+    prev.index === next.index &&
+    prev.total === next.total &&
+    prev.scrollX === next.scrollX &&
+    sameVibe(prev.vibe, next.vibe) &&
+    (prev.now === next.now || timeView(prev.event, prev.now) === timeView(next.event, next.now))
+  );
+}
+
+/** An art card, re-drawn only when what it shows changes. */
+export const ArtCard = memo(ArtCardView, sameArtCard);
 
 /** What a TonightCarousel needs. */
 export interface TonightCarouselProps {
@@ -356,6 +420,10 @@ export interface TonightCarouselProps {
 
 /**
  * Renders the sideways carousel.
+ *
+ * The screen gives it a new `key` for each freshly loaded list, so a
+ * reload starts a new carousel: back at the first card, with `settled`
+ * at 0 again (no stray tick on the first swipe after a reload).
  *
  * @returns a horizontal list that snaps card by card, the current card in
  *   the middle of the screen, with a light "tick" each time it settles on a
@@ -388,24 +456,36 @@ export function TonightCarousel({ events, vibes, now, onPress, animate }: Tonigh
     [settled],
   );
 
+  const total = events.length;
+  /**
+   * Draws one carousel card. Kept steady with useCallback, and the card
+   * gets only plain values (no new objects), so ArtCard's memo check can
+   * skip the cards that look the same after a minute tick or vibe refresh.
+   */
+  const renderItem = useCallback<ListRenderItem<PublicEvent>>(
+    ({ item, index }) => (
+      <ArtCard
+        event={item}
+        vibe={vibes[item.id]}
+        now={now}
+        onPress={onPress}
+        animate={animate}
+        variant="carousel"
+        index={index}
+        total={total}
+        scrollX={scrollX}
+      />
+    ),
+    [vibes, now, onPress, animate, total, scrollX],
+  );
+
   return (
     <Animated.FlatList
       testID="tonight-carousel"
       horizontal
       data={events}
-      keyExtractor={(event) => event.id}
-      renderItem={({ item, index }) => (
-        <ArtCard
-          event={item}
-          vibe={vibes[item.id]}
-          now={now}
-          onPress={onPress}
-          animate={animate}
-          variant="carousel"
-          position={{ index, total: events.length }}
-          scrollX={scrollX}
-        />
-      )}
+      keyExtractor={eventKey}
+      renderItem={renderItem}
       ItemSeparatorComponent={CarouselGap}
       showsHorizontalScrollIndicator={false}
       // Snap one card at a time; "fast" makes a flick stop at the next card.
@@ -420,6 +500,17 @@ export function TonightCarousel({ events, vibes, now, onPress, animate }: Tonigh
       onMomentumScrollEnd={onSettle}
     />
   );
+}
+
+/**
+ * A carousel card's list key: its event id (one steady function, so it is
+ * not rebuilt on every draw).
+ *
+ * @param event - the event.
+ * @returns its id.
+ */
+function eventKey(event: PublicEvent): string {
+  return event.id;
 }
 
 /**

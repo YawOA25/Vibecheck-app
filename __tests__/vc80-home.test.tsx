@@ -20,7 +20,8 @@
  *     and the LIVE dot pulsing, the header title set to shrink; none of it
  *     under Reduce Motion;
  *   - haptics: a tick on a chip pick and on the carousel settling on a new
- *     card, a light tap on pull to refresh.
+ *     card, a light tap on pull to refresh, and no stray tick (carousel or
+ *     day heading) after the list reloads.
  */
 import { act, fireEvent, render, screen, within } from '@testing-library/react-native';
 import { AccessibilityInfo, Animated, StyleSheet } from 'react-native';
@@ -343,6 +344,68 @@ describe('haptics', () => {
 
     await fireEvent.press(screen.getByRole('radio', { name: 'Tonight' }));
     expect(tapSelection).toHaveBeenCalledTimes(2);
+  });
+
+  it('gives no stray carousel tick on the first swipe after a reload', async () => {
+    // Hero "a" (Next up), carousel b, c, d.
+    list.mockResolvedValue({
+      ok: true,
+      events: [ev('a', 1), ev('b', 2), ev('c', 3), ev('d', 4)],
+    });
+    await render(<HomeScreen />);
+    // Settle on the third carousel card: one tick.
+    await fireEvent(await screen.findByTestId('tonight-carousel'), 'momentumScrollEnd', {
+      nativeEvent: { contentOffset: { x: 2 * CAROUSEL_STEP, y: 0 } },
+    });
+    expect(tapSelection).toHaveBeenCalledTimes(1);
+
+    // Pull to refresh brings a new list.
+    list.mockResolvedValue({ ok: true, events: [ev('a', 1), ev('e', 2), ev('f', 3)] });
+    await act(async () => {
+      await screen.getByTestId('tonight-list').props.refreshControl.props.onRefresh();
+    });
+    await screen.findByRole('button', { name: /Party e/ });
+    // The reloaded carousel starts over at its first card, so stopping
+    // there is no "new card" (before the fix it still remembered card 3).
+    await fireEvent(screen.getByTestId('tonight-carousel'), 'momentumScrollEnd', {
+      nativeEvent: { contentOffset: { x: 0, y: 0 } },
+    });
+    expect(tapSelection).toHaveBeenCalledTimes(1);
+  });
+
+  it('gives no stray day-heading tick when a reloaded list first draws', async () => {
+    // Nothing tonight: only later nights, so the list has day sections.
+    list.mockResolvedValue({ ok: true, events: [ev('a', 24), ev('b', 48)] });
+    await render(<HomeScreen />);
+    await screen.findByTestId('tonight-list');
+    /**
+     * Tells the list which row is at the top, as React Native would. The
+     * section list works the night out from the row's place: each night is
+     * a heading, its cards, then an end row, so row 1 is the first night's
+     * card and row 4 the second night's card.
+     *
+     * @param index - the row's place in the whole list.
+     */
+    const topIs = (index: number) =>
+      act(() => {
+        screen.getByTestId('tonight-list').props.onViewableItemsChanged({
+          viewableItems: [{ isViewable: true, item: ev('a', 24), key: String(index), index }],
+          changed: [],
+        });
+      });
+    await topIs(1);
+    // The person scrolls on to the next night: one tick.
+    await act(() => screen.getByTestId('tonight-list').props.onScrollBeginDrag());
+    await topIs(4);
+    expect(tapSelection).toHaveBeenCalledTimes(1);
+
+    // A pull to refresh reloads; the new list draws its first night.
+    await act(async () => {
+      await screen.getByTestId('tonight-list').props.refreshControl.props.onRefresh();
+    });
+    await topIs(1);
+    // That first draw is not the person's own scrolling: no tick.
+    expect(tapSelection).toHaveBeenCalledTimes(1);
   });
 
   it('gives a light tap when a pull to refresh starts', async () => {

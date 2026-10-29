@@ -210,7 +210,18 @@ const NO_LIST = new Date(0);
 type ListState =
   | { kind: 'loading' }
   | { kind: 'error'; message: string }
-  | { kind: 'ready'; events: PublicEvent[]; loadedAt: Date; hasMore: boolean };
+  | {
+      kind: 'ready';
+      events: PublicEvent[];
+      loadedAt: Date;
+      hasMore: boolean;
+      /**
+       * Which list load this is (the load number from `loadSeq`). A new
+       * number means a freshly loaded list, so the tonight carousel starts
+       * over at its first card. "Load more" keeps the number (same list).
+       */
+      loadId: number;
+    };
 
 /**
  * Renders the home screen (the week's events).
@@ -383,7 +394,12 @@ export default function HomeScreen() {
       // VC-76: the old list (if one was kept, dimmed) gives way now, and a
       // newly landed list fades in.
       setDimmed(false);
-      if (outcome.ok) setFadeKey((n) => n + 1);
+      if (outcome.ok) {
+        setFadeKey((n) => n + 1);
+        // A new list: forget the night that was at the top, so its first
+        // draw never counts as "the person scrolled to a new night" (tick).
+        topNight.current = null;
+      }
       setState(
         outcome.ok
           ? {
@@ -391,6 +407,7 @@ export default function HomeScreen() {
               events: outcome.events,
               loadedAt: now,
               hasMore: outcome.hasMore === true,
+              loadId: seq,
             }
           : { kind: 'error', message: outcome.message },
       );
@@ -443,11 +460,14 @@ export default function HomeScreen() {
       return;
     }
     if (outcome.ok) {
+      // A new list: no day-heading tick for its first draw (see above).
+      topNight.current = null;
       setState({
         kind: 'ready',
         events: outcome.events,
         loadedAt: now,
         hasMore: outcome.hasMore === true,
+        loadId: seq,
       });
       setRefreshError(null);
       setLoadMoreError(null);
@@ -685,6 +705,7 @@ export default function HomeScreen() {
                   filterKind={filter.kind}
                   showNothingTonight={coversTonight && layout.later.length > 0}
                   refreshError={refreshError}
+                  listId={state.kind === 'ready' ? state.loadId : 0}
                 />
               }
               // VC-80: the header shrink follows the scroll on the UI thread.
@@ -841,6 +862,8 @@ interface TonightPartProps {
   showNothingTonight: boolean;
   /** A pull-to-refresh failure message, shown at the very top. */
   refreshError: string | null;
+  /** Which list load is on screen (changes on every reload, see ListState). */
+  listId: number;
 }
 
 /**
@@ -859,6 +882,7 @@ function TonightPart({
   filterKind,
   showNothingTonight,
   refreshError,
+  listId,
 }: TonightPartProps) {
   const { hero, others, later, shape } = layout;
   return (
@@ -909,7 +933,11 @@ function TonightPart({
           </Text>
           {/* The carousel runs edge to edge, past the list's side margins. */}
           <View style={styles.bleed}>
+            {/* `key`: a reloaded list gets a fresh carousel, back at its first
+                card and with no remembered "settled" card, so the first
+                swipe after a reload can't give a stray tick. */}
             <TonightCarousel
+              key={listId}
               events={others}
               vibes={vibes}
               now={now}
