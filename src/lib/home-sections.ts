@@ -10,8 +10,9 @@
  *                     live or on-now pick;
  *   2. Later tonight  tonight's events that haven't started (plain band).
  *                     A "Next up" hero sits here instead;
- *   3. Staff picks    the staff-picked events still to come, repeated from
- *                     the rest of the list (at most 5; surface band);
+ *   3. Staff picks    the staff-picked events that haven't ended (on now
+ *                     or still to come), repeated from the rest of the
+ *                     list (at most 5; surface band);
  *   4. Coming up      tomorrow onwards, one block per night, each night's
  *                     heading saying its date and how many events it has.
  * Empty sections are simply left out (spec: no "0" sections).
@@ -56,7 +57,13 @@ export const STAFF_PICKS_MAX = 5;
 
 /** Section titles (exported so tests use the same words). */
 export const LIVE_NOW_TITLE = 'Live now';
-/** The first band's title when everything started tonight has already ended. */
+/**
+ * The first band's title when everything started tonight has already ended.
+ * Not in the spec, which only names "Live now": the spec doesn't cover a
+ * band where nothing is on any more (an event that ended while the screen
+ * was open), and calling that "Live now" would be untrue. Kept and reported
+ * to the product-manager (VC-84 polish).
+ */
 export const EARLIER_TONIGHT_TITLE = 'Earlier tonight';
 export const LATER_TONIGHT_TITLE = 'Later tonight';
 export const STAFF_PICKS_TITLE = 'Staff picks';

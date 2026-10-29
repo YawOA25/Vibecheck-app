@@ -89,8 +89,9 @@
  *     "Live now" (surface colour, gold line on top: the events that have
  *     started tonight, with the VC-80 hero when it is a live pick), "Later
  *     tonight" (tonight's events still to start; a "Next up" hero sits
- *     here), "Staff picks" (up to 5 staff-picked events still to come,
- *     repeated from their own night) and "Coming up" (tomorrow onwards, each
+ *     here), "Staff picks" (up to 5 staff-picked events that haven't ended,
+ *     so on now or still to come, repeated from their own night) and
+ *     "Coming up" (tomorrow onwards, each
  *     night's sticky heading saying its date and count, e.g. "FRIDAY, OCT
  *     30 · 2 EVENTS"). Each section title is 21 px with its count beside it;
  *     the tonight bands have a gold "See all" that switches the date filter
@@ -905,7 +906,7 @@ function CollapsingTitle({
 interface TonightPartProps {
   /** VC-84: the Live now and Later tonight bands (empty ones left out). */
   bands: TonightBand[];
-  /** VC-84: the staff picks still to come (at most 5). */
+  /** VC-84: the staff picks that haven't ended (on now or still to come; at most 5). */
   picks: PublicEvent[];
   /** true when later nights follow (then the "Coming up" header shows). */
   hasLater: boolean;
@@ -1058,6 +1059,9 @@ function TonightBandView({
             onPress={onOpen}
             animate={animate}
             onBand={onBand}
+            // VC-84 polish: on a special night (Halloween) the hero, tonight's
+            // first card, is the night's gold-edged feature card.
+            feature={special}
           />
         </View>
       ) : null}

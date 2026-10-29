@@ -47,7 +47,10 @@
  * Speed (VC-76, spec 3d): the card is wrapped in React.memo, so when the
  * home list re-draws (e.g. the minute vibe refresh), only cards whose own
  * inputs changed are re-drawn. For that, `onPress` receives the event's id,
- * so the list can pass one shared function to every card.
+ * so the list can pass one shared function to every card. VC-84 polish:
+ * the memo check compares what the card SHOWS (sameEventCard), because
+ * every vibe poll brings new vibe objects and a new "now" even when nothing
+ * on the card changed.
  */
 import { memo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
@@ -232,11 +235,64 @@ function EventCardView({
 }
 
 /**
- * The card, re-drawn only when its own inputs change (VC-76 speed fix).
- * React.memo compares the props one by one; the home list keeps them
- * steady (one shared onPress, the same vibe object until it changes).
+ * Whether two vibes would draw the same. Every vibe refresh brings brand
+ * new objects from the server even when nothing changed, so comparing the
+ * objects themselves would always say "changed"; this compares their
+ * contents instead (a vibe is small, plain data). Shared with the home
+ * hero and carousel cards (src/components/TonightCards.tsx).
+ *
+ * @param a - the vibe drawn last time (or undefined).
+ * @param b - the vibe now (or undefined).
+ * @returns true when they hold the same values.
  */
-export const EventCard = memo(EventCardView);
+export function sameVibe(a: Vibe | undefined, b: Vibe | undefined): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/**
+ * What a list card shows that depends on the clock: started yet (the vibe
+ * appears), on now (the LIVE dot) and the "when" words (also in the spoken
+ * summary).
+ *
+ * @param event - the event.
+ * @param now - the current moment.
+ * @returns one string; equal strings mean the card would look the same.
+ */
+function cardTimeView(event: PublicEvent, now: Date): string {
+  return [hasStarted(event, now), isOnNow(event, now), whenLine(event, now)].join('|');
+}
+
+/**
+ * Decides whether a list card can skip a re-draw (React's memo check,
+ * VC-84 polish). The home list hands every card a new `now` each minute and
+ * a new vibe object on each poll, so React's plain check re-drew every card
+ * every time. Here a card re-draws only when something it SHOWS changes:
+ * its clock-based words, its vibe's values, or any other input.
+ *
+ * @param prev - the inputs last time.
+ * @param next - the inputs now.
+ * @returns true to keep the last drawing.
+ */
+export function sameEventCard(prev: EventCardProps, next: EventCardProps): boolean {
+  return (
+    prev.event === next.event &&
+    prev.onPress === next.onPress &&
+    prev.animatePress === next.animatePress &&
+    prev.feature === next.feature &&
+    prev.onBand === next.onBand &&
+    sameVibe(prev.vibe, next.vibe) &&
+    (prev.now === next.now ||
+      cardTimeView(prev.event, prev.now) === cardTimeView(next.event, next.now))
+  );
+}
+
+/**
+ * The card, re-drawn only when what it shows changes (VC-76 speed fix,
+ * compare tightened in VC-84 polish: see sameEventCard).
+ */
+export const EventCard = memo(EventCardView, sameEventCard);
 
 /**
  * The vibe on the right of a card (v3: "8.8", or "Early" over "3 so far").

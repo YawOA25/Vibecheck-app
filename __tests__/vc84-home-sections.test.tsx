@@ -258,6 +258,30 @@ describe('special nights', () => {
     ).toBeOnTheScreen();
   });
 
+  it('on Halloween night, the hero (tonight’s first card) is the gold-edged feature card', async () => {
+    // VC-84 polish (cto): before, tonight had the tag but no feature card.
+    pinClock(SAT_31);
+    list.mockResolvedValue({ ok: true, events: [ev('party', 1), ev('late', 2)] });
+    await render(<HomeScreen />);
+    const hero = await screen.findByTestId('hero-card');
+    // Solid gold edge, the HALLOWEEN tag, and it says its night.
+    expect(StyleSheet.flatten(hero.props.style).borderColor).toBe(colors.accent);
+    expect(within(hero).getByText('HALLOWEEN')).toBeOnTheScreen();
+    expect(hero.props.accessibilityLabel).toMatch(/^Party party, .+, Halloween$/);
+    // Only one feature card for the night: the other tonight card stays plain.
+    const other = screen.getByTestId('art-card');
+    expect(StyleSheet.flatten(other.props.style).borderColor).not.toBe(colors.accent);
+    expect(within(other).queryByText('HALLOWEEN')).toBeNull();
+  });
+
+  it('on an ordinary night the hero is not a feature card', async () => {
+    list.mockResolvedValue({ ok: true, events: [ev('party', 1)] });
+    await render(<HomeScreen />);
+    const hero = await screen.findByTestId('hero-card');
+    expect(StyleSheet.flatten(hero.props.style).borderColor).not.toBe(colors.accent);
+    expect(hero.props.accessibilityLabel).not.toMatch(/Halloween/);
+  });
+
   it('an ordinary week has no special heading, tag or feature card', async () => {
     list.mockResolvedValue({ ok: true, events: [ev('sun', 24), ev('mon', 48)] });
     await render(<HomeScreen />);

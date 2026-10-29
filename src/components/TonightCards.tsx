@@ -28,13 +28,18 @@
  * LIVE pulse, no carousel scaling and no parallax. Snapping stays, because
  * the person's own finger drives it.
  */
-import { memo, useCallback, useId, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Animated, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
-import type { ListRenderItem, NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
+import type {
+  FlatList,
+  ListRenderItem,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
+} from 'react-native';
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 
-import { VibeBadge, eventSpoken, showsGoldEdge } from '@/components/EventCard';
+import { VibeBadge, eventSpoken, sameVibe, showsGoldEdge } from '@/components/EventCard';
 import { GeneratedArt } from '@/components/GeneratedArt';
 import { LivePill } from '@/components/LiveDot';
 import { PressableScale } from '@/components/PressableScale';
@@ -85,13 +90,16 @@ function metaLine(event: PublicEvent, now: Date, vibe: Vibe | undefined): string
  * sure a tester never mistakes a test event for a real party (VC-63b).
  *
  * @param props.event - the event.
+ * @param props.feature - VC-84: a special night's name (e.g. "Halloween")
+ *   to show first on a gold tag, or null.
  * @returns the chips row, or nothing when there are none.
  */
-function Tags({ event }: { event: PublicEvent }) {
+function Tags({ event, feature = null }: { event: PublicEvent; feature?: string | null }) {
   const staffPick = isStaffPick(event);
-  if (!staffPick && !event.is_21_plus && !event.is_test) return null;
+  if (!staffPick && !event.is_21_plus && !event.is_test && !feature) return null;
   return (
     <View style={styles.tags}>
+      {feature ? <Tag label={feature.toUpperCase()} tone="feature" /> : null}
       {event.is_test ? <Tag label="TEST" tone="gold" /> : null}
       {staffPick ? <Tag label="Staff pick" tone="gold" /> : null}
       {event.is_21_plus ? <Tag label="21+" /> : null}
@@ -147,6 +155,14 @@ export interface HeroCardProps {
    * so it takes the page colour instead and still reads as a card.
    */
   onBand?: boolean;
+  /**
+   * VC-84 polish: tonight's special night name (e.g. "Halloween") when
+   * tonight IS a special night. The hero is tonight's first card, so it
+   * becomes the night's gold-edged feature card (the same treatment the
+   * night gets under "Coming up"), with the name on a gold tag. Leave it
+   * out (or null) on an ordinary night.
+   */
+  feature?: string | null;
 }
 
 /**
@@ -163,6 +179,7 @@ function HeroCardView({
   onPress,
   animate,
   onBand = false,
+  feature = null,
 }: HeroCardProps) {
   // Same rule as the list cards: nothing about ratings before the start.
   const vibe = hasStarted(event, now) ? given : undefined;
@@ -192,13 +209,17 @@ function HeroCardView({
       animate={animate}
       onPress={() => onPress(event.id)}
       accessibilityRole="button"
-      accessibilityLabel={eventSpoken(event, now, vibe)}
+      // A feature card also says its night ("..., Halloween"), as on the list.
+      accessibilityLabel={eventSpoken(event, now, vibe) + (feature ? `, ${feature}` : '')}
       accessibilityHint="Opens the event"
       testID="hero-card"
       style={({ pressed }) => [
         styles.hero,
         onBand && styles.onBand,
         goldEdge && styles.goldEdge,
+        // VC-84 polish: the special night's feature card has a full gold
+        // edge (decoration; the tag and the spoken name carry the meaning).
+        feature !== null && styles.featureEdge,
         pressed && styles.pressed,
       ]}
     >
@@ -217,7 +238,7 @@ function HeroCardView({
       <View style={styles.heroInfo}>
         <View style={styles.infoText}>
           <Text style={styles.meta}>{metaLine(event, now, vibe)}</Text>
-          <Tags event={event} />
+          <Tags event={event} feature={feature} />
         </View>
         {right}
       </View>
@@ -225,8 +246,33 @@ function HeroCardView({
   );
 }
 
-/** The hero card, re-drawn only when its own inputs change (VC-76 speed rule). */
-export const HeroCard = memo(HeroCardView);
+/**
+ * Decides whether the hero card can skip a re-draw (React's memo check,
+ * VC-84 polish). Same idea as sameArtCard below: the screen hands the hero a
+ * new `now` each minute and a new vibe object on each poll, so React's
+ * plain check re-drew it every time. It re-draws only when something it
+ * SHOWS changes: its clock-based words (timeView, which includes the "Next
+ * up" countdown), its vibe's values, or any other input.
+ *
+ * @param prev - the inputs last time.
+ * @param next - the inputs now.
+ * @returns true to keep the last drawing.
+ */
+function sameHeroCard(prev: HeroCardProps, next: HeroCardProps): boolean {
+  return (
+    prev.event === next.event &&
+    prev.kind === next.kind &&
+    prev.onPress === next.onPress &&
+    prev.animate === next.animate &&
+    prev.onBand === next.onBand &&
+    prev.feature === next.feature &&
+    sameVibe(prev.vibe, next.vibe) &&
+    (prev.now === next.now || timeView(prev.event, prev.now) === timeView(next.event, next.now))
+  );
+}
+
+/** The hero card, re-drawn only when what it shows changes (sameHeroCard). */
+export const HeroCard = memo(HeroCardView, sameHeroCard);
 
 /** What an ArtCard needs. */
 export interface ArtCardProps {
@@ -386,22 +432,6 @@ function timeView(event: PublicEvent, now: Date): string {
 }
 
 /**
- * Whether two vibes would draw the same. Every vibe refresh brings brand
- * new objects from the server even when nothing changed, so comparing the
- * objects themselves would always say "changed"; this compares their
- * contents instead (a vibe is small, plain data).
- *
- * @param a - the vibe drawn last time (or undefined).
- * @param b - the vibe now (or undefined).
- * @returns true when they hold the same values.
- */
-function sameVibe(a: Vibe | undefined, b: Vibe | undefined): boolean {
-  if (a === b) return true;
-  if (!a || !b) return false;
-  return JSON.stringify(a) === JSON.stringify(b);
-}
-
-/**
  * Decides whether an art card can skip a re-draw (React's memo check).
  * The screen hands every card a new `now` each minute and a new vibe each
  * refresh, so a plain check would re-draw every card every time. Here a
@@ -453,8 +483,10 @@ export interface TonightCarouselProps {
  * Renders the sideways carousel.
  *
  * The screen gives it a new `key` for each freshly loaded list, so a
- * reload starts a new carousel: back at the first card, with `settled`
- * at 0 again (no stray tick on the first swipe after a reload).
+ * reload starts a new carousel: back at the first card, with the viewed
+ * card reset to it (no stray tick on the first swipe after a reload).
+ * Between reloads (VC-84 polish) the carousel stays on the card the guest
+ * is looking at even when cards join or leave it.
  *
  * @returns a horizontal list that snaps card by card, the current card in
  *   the middle of the screen, with a light "tick" each time it settles on a
@@ -474,24 +506,58 @@ export function TonightCarousel({
   const sideInset = Math.max(spacing.gutter, (width - CAROUSEL_CARD_WIDTH) / 2);
   // The sideways scroll position, followed on the UI thread.
   const [scrollX] = useState(() => new Animated.Value(0));
-  // The card the carousel last settled on (for the "tick" on a new one).
-  const [settled, setSettled] = useState(0);
+  const n = events.length;
+  // The card the guest is looking at, by event id, plus the place it was
+  // at. VC-84 polish: when an event starts it moves from the Later tonight
+  // carousel to Live now, so the cards after it each move one place left.
+  // Remembering only the place made the carousel show a different card
+  // under the guest; remembering the card itself lets us follow it (the
+  // same fix as the map pager, src/components/TonightMap.tsx). It starts on
+  // the first card (and a reload starts a fresh carousel, see above).
+  const [viewed, setViewed] = useState(() => ({ id: events[0]?.id ?? null, index: 0 }));
+  // Where that card sits now. If it left the carousel (it started, ended
+  // or was removed), stay at the same place, or the last one if there are
+  // fewer cards now.
+  const found = events.findIndex((e) => e.id === viewed.id);
+  const place = found >= 0 ? found : Math.max(0, Math.min(viewed.index, n - 1));
+  // Note the change while drawing (React's "adjust state while drawing"
+  // pattern): the card moved, so remember its new place; or it left, so
+  // the card now at that place becomes the viewed one (then settling there
+  // later gives no stray "new card" tick). Both settle after one extra draw.
+  if (found >= 0 && found !== viewed.index) {
+    setViewed({ id: viewed.id, index: found });
+  } else if (found < 0 && events[place] !== undefined) {
+    setViewed({ id: events[place].id, index: place });
+  }
+  // The list itself, so it can be moved to that place.
+  const listRef = useRef<FlatList<PublicEvent>>(null);
+  // Keep the carousel on the viewed card: when its place changes, jump
+  // there at once (no animation, so nothing seems to slide by itself).
+  // After the guest's own swipe it is already there, so this does nothing
+  // visible.
+  useEffect(() => {
+    listRef.current?.scrollToOffset({ offset: place * CAROUSEL_STEP, animated: false });
+  }, [place]);
 
   /**
    * The carousel stopped moving: if it stopped on a different card than
    * before, give the light selection tick (spec: never on plain scroll).
+   * Compared by event id, so a card that only moved place (see above)
+   * doesn't tick.
    *
    * @param event - the scroll event with the final position.
    */
   const onSettle = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      const index = Math.round(event.nativeEvent.contentOffset.x / CAROUSEL_STEP);
-      if (index !== settled) {
-        setSettled(index);
+      const raw = Math.round(event.nativeEvent.contentOffset.x / CAROUSEL_STEP);
+      const index = Math.max(0, Math.min(raw, n - 1));
+      const id = events[index]?.id ?? null;
+      if (id !== viewed.id) {
+        setViewed({ id, index });
         tapSelection();
       }
     },
-    [settled],
+    [events, n, viewed.id],
   );
 
   const total = events.length;
@@ -520,6 +586,7 @@ export function TonightCarousel({
 
   return (
     <Animated.FlatList
+      ref={listRef}
       testID="tonight-carousel"
       horizontal
       data={events}
@@ -572,6 +639,9 @@ const styles = StyleSheet.create({
   },
   // VC-77: the gold edge for a live Hot or Fire party.
   goldEdge: { borderColor: colors.goldBorder },
+  // VC-84 polish: a special night's feature hero (same solid gold edge as
+  // the list's feature card, src/components/EventCard.tsx).
+  featureEdge: { borderColor: colors.accent },
   // VC-84: on the surface-coloured Live now band, cards take the page colour.
   onBand: { backgroundColor: colors.bg },
   pressed: { backgroundColor: colors.surfaceRaised },
