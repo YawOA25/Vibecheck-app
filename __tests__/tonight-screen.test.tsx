@@ -73,6 +73,9 @@ jest.mock('expo-router', () => ({
   },
 }));
 jest.mock('@/lib/vibe-api', () => ({ getEventsVibe: jest.fn() }));
+// VC-79: the Map side of Tonight reads through supabase; these tests stay on
+// the list, so a fake client is enough.
+jest.mock('@/lib/supabase', () => ({ supabase: { rpc: jest.fn() } }));
 const vibesFor = getEventsVibe as jest.Mock;
 
 /**

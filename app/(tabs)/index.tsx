@@ -54,8 +54,15 @@
  *     there was no list at all). Cards only re-draw when their own data
  *     changes (memoised rows), and the list draws 8 cards at a time.
  *
- * Not here on purpose (VC-31, not approved for the MVP): the map, genre
- * filters, the featured host card, photos and clips.
+ *   - VC-79 (map view, founder approved 2026-10-28): a "List / Map" switch
+ *     at the top right. Map shows the same date filter's events as area
+ *     circles on a map (src/components/TonightMap.tsx); the chips drive
+ *     both. It starts on List and is remembered until the app restarts.
+ *     iPhone only for now: on Android the Map side says "Map coming soon"
+ *     with a way back to the list (no Google Maps key yet).
+ *
+ * Not here on purpose (VC-31, not approved for the MVP): genre filters, the
+ * featured host card, photos and clips.
  *
  * expo-router makes `app/(tabs)/index.tsx` the app's home address ("/"):
  * the "(tabs)" folder doesn't change the address. It is the first tab of
@@ -86,6 +93,9 @@ import { FormMessage } from '@/components/FormMessage';
 import { Icon } from '@/components/Icon';
 import { ListSkeleton } from '@/components/Skeleton';
 import { StatusPanel } from '@/components/StatusPanel';
+import { TonightMap } from '@/components/TonightMap';
+import { TwoWaySwitch } from '@/components/TwoWaySwitch';
+import type { SwitchOption } from '@/components/TwoWaySwitch';
 import { takeCreatedEvent } from '@/lib/created-event';
 import {
   FILTER_LABELS,
@@ -123,6 +133,13 @@ export const LIST_FADE_MS = motion.base.duration;
  * so it reads as "on its way out" without the screen going blank.
  */
 export const DIMMED_OPACITY = 0.4;
+/** List or map (VC-79). */
+export type TonightView = 'list' | 'map';
+/** The List / Map switch's two options (spoken "List view" / "Map view"). */
+export const VIEW_OPTIONS: readonly [SwitchOption<TonightView>, SwitchOption<TonightView>] = [
+  { key: 'list', label: 'List', spoken: 'List view' },
+  { key: 'map', label: 'Map', spoken: 'Map view' },
+];
 /**
  * A stand-in "now" for when no list is loaded. Never shown: cards are only
  * drawn once a list is ready. Made once here (not per draw) so the memoised
@@ -161,6 +178,10 @@ export default function HomeScreen() {
   const [state, setState] = useState<ListState>({ kind: 'loading' });
   // The date filter (VC-63). Kept in memory only, so it resets on restart.
   const [filter, setFilter] = useState<DateFilter>(THIS_WEEK);
+  // VC-79: list or map. Kept in memory only, so it's back to List on restart.
+  const [view, setView] = useState<TonightView>('list');
+  /** Back to the list (the map's "See the list" buttons). */
+  const showList = useCallback(() => setView('list'), []);
   // Numbers each list load. Only the newest load's answer is used, so a
   // slow answer for an old filter (or an old pull to refresh) never
   // replaces the list for the filter now picked.
@@ -488,19 +509,23 @@ export default function HomeScreen() {
     // No bottom edge: the tab bar below takes care of the home-bar space.
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <View style={styles.header}>
-        {/* The kicker line over the title; nothing on the right (Q4). */}
-        <View style={styles.titleBlock}>
-          <Text style={styles.kicker}>{filterKicker(filter, new Date())}</Text>
-          {/* accessibilityRole="header" lets screen readers announce this as a heading.
+        {/* The kicker line over the title; the List / Map switch on the
+            right (VC-79). */}
+        <View style={styles.titleRow}>
+          <View style={styles.titleBlock}>
+            <Text style={styles.kicker}>{filterKicker(filter, new Date())}</Text>
+            {/* accessibilityRole="header" lets screen readers announce this as a heading.
               Developers only (__DEV__ is false in store builds): a long-press
               on the title sends a test crash report to Sentry (VC-26). */}
-          <Text
-            style={styles.title}
-            accessibilityRole="header"
-            onLongPress={__DEV__ ? confirmTestError : undefined}
-          >
-            {filterTitle(filter, new Date())}
-          </Text>
+            <Text
+              style={styles.title}
+              accessibilityRole="header"
+              onLongPress={__DEV__ ? confirmTestError : undefined}
+            >
+              {filterTitle(filter, new Date())}
+            </Text>
+          </View>
+          <TwoWaySwitch options={VIEW_OPTIONS} value={view} onChange={setView} />
         </View>
         <DateFilterBar filter={filter} now={new Date()} onChange={chooseFilter} />
         {createdNote ? (
@@ -515,9 +540,14 @@ export default function HomeScreen() {
         ) : null}
       </View>
 
-      {state.kind === 'loading' ? <ListSkeleton label="Loading events" /> : null}
-      {state.kind === 'error' ? <ErrorState message={state.message} onRetry={retry} /> : null}
-      {state.kind === 'ready' ? (
+      {view === 'map' ? (
+        <TonightMap filter={filter} onSeeList={showList} onOpenEvent={openEvent} />
+      ) : null}
+      {view === 'list' && state.kind === 'loading' ? <ListSkeleton label="Loading events" /> : null}
+      {view === 'list' && state.kind === 'error' ? (
+        <ErrorState message={state.message} onRetry={retry} />
+      ) : null}
+      {view === 'list' && state.kind === 'ready' ? (
         // The list's fade-in wrapper (VC-72); testID lets tests read its opacity.
         <Animated.View style={[styles.fill, { opacity: listOpacity }]} testID="tonight-list-fade">
           {/* VC-76: while a new filter loads, the old list stays at 40% and
@@ -700,7 +730,14 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.gap12,
     gap: spacing.md,
   },
-  titleBlock: { gap: spacing.xs },
+  // VC-79: the title on the left, the List / Map switch on the right.
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+  },
+  titleBlock: { flexShrink: 1, gap: spacing.xs },
   kicker: { ...typography.label, color: colors.muted },
   // The "Saved for ... Switch to ..." note (VC-63b), in the success colour.
   createdNote: { ...typography.bodySm, color: colors.success },

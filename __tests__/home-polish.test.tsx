@@ -21,6 +21,7 @@ import { AccessibilityInfo, Animated, StyleSheet } from 'react-native';
 import HomeScreen, { DIMMED_OPACITY, EMPTY_TITLE, LIST_FADE_MS } from '../app/(tabs)/index';
 import { EventCard, PRESS_MS, PRESS_SCALE } from '@/components/EventCard';
 import { listHomeEvents } from '@/lib/events-read';
+import { resetReduceMotionForTests } from '@/lib/reduce-motion';
 import type { PublicEvent } from '@/lib/tonight';
 import { getEventsVibe } from '@/lib/vibe-api';
 import { colors } from '@/theme';
@@ -29,6 +30,9 @@ jest.mock('@/lib/auth-context', () => ({ useAuth: jest.fn() }));
 jest.mock('@/lib/events-read', () => ({ listHomeEvents: jest.fn() }));
 jest.mock('@/lib/sentry', () => ({ sendTestError: jest.fn(() => true) }));
 jest.mock('@/lib/vibe-api', () => ({ getEventsVibe: jest.fn() }));
+// VC-79: the Map side of Tonight reads through supabase; these tests stay on
+// the list, so a fake client is enough.
+jest.mock('@/lib/supabase', () => ({ supabase: { rpc: jest.fn() } }));
 // The "mock" prefix lets jest.mock (which runs first) use this fake.
 const mockPush = jest.fn();
 jest.mock('expo-router', () => ({
@@ -74,6 +78,9 @@ function makeEvent(id = 'e1'): PublicEvent {
  */
 function setReduceMotion(on: boolean) {
   jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(on);
+  // The shared copy too (VC-79): the List / Map switch in the header reads it
+  // straight away, and it would otherwise keep the previous test's answer.
+  resetReduceMotionForTests(on);
 }
 
 /**

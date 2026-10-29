@@ -302,8 +302,9 @@ select is(public.check_in('99999999-0000-4000-8000-000000000029',
 -- ---- 12. No raw coordinates stored anywhere (2) -----------------------------
 reset role;
 -- (a) The only columns that can hold a fractional number are the event's own
---     secret pin (event_private.lat/lng, admin-set), the rating score, and
---     the published vibe's score and night average (VC-51 totals).
+--     secret pin (event_private.lat/lng, admin-set), the rating score, the
+--     published vibe's score and night average (VC-51 totals), and the map's
+--     fixed area centres (area_centroids.lat/lng, VC-79).
 select is_empty(
   $$ select table_schema || '.' || table_name || '.' || column_name
      from information_schema.columns
@@ -322,7 +323,11 @@ select is_empty(
          ('private', 'vibe_snapshots', 'energy_average'),
          ('private', 'vibe_snapshots', 'night_crowd_average'),
          ('private', 'vibe_snapshots', 'night_music_average'),
-         ('private', 'vibe_snapshots', 'night_energy_average')) $$,
+         ('private', 'vibe_snapshots', 'night_energy_average'),
+         -- VC-79: the fixed, public centre of each neighbourhood (seeded in
+         -- the migration, the same for every event there), never a guest's.
+         ('public', 'area_centroids', 'lat'),
+         ('public', 'area_centroids', 'lng')) $$,
   'no table has a column that could hold a guest''s coordinates');
 -- (b) The distinctive reading from section 9 (38.9001234, -77.0004321)
 --     appears in no row of any table in public or private. query_to_xml
