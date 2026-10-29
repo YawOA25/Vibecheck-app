@@ -101,6 +101,7 @@ import { useFocusEffect } from 'expo-router';
 import * as Location from 'expo-location';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AccessibilityInfo,
   Animated,
   AppState,
   PanResponder,
@@ -122,7 +123,14 @@ import type { MapPressEvent, Region, UserLocationChangeEvent } from 'react-nativ
 
 import { AreaHeat } from '@/components/AreaHeat';
 import { Button } from '@/components/Button';
-import { GlassCircleButton, MAP_EASE, MapVignette, glass } from '@/components/MapGlass';
+import {
+  EDGE_FADE_SHARE,
+  GLASS_BUTTON_SIZE,
+  GlassCircleButton,
+  MAP_EASE,
+  MapVignette,
+  glass,
+} from '@/components/MapGlass';
 import { MapCluster, MapDot } from '@/components/MapDots';
 import { MapMiniCard } from '@/components/MapMiniCard';
 import { MapTag } from '@/components/MapTag';
@@ -242,8 +250,36 @@ export const CARD_RISE_MS = 280;
  */
 export const CARD_LIFT = 0.18;
 
-/** Space kept around the circles when the map frames them (spec §4: 48 px). */
-const FIT_PADDING = { top: 48, right: 48, bottom: 48, left: 48 };
+/** Space kept at the sides when the map frames the circles (spec §4: 48 px). */
+const FIT_SIDE = 48;
+
+/**
+ * The least space kept at the top and bottom when framing: the floating
+ * top bar (40 px) with 12 px of margin above and below it.
+ */
+const FIT_MIN_EDGE = 12 + GLASS_BUTTON_SIZE + 12;
+
+/**
+ * The space kept round the circles when the map frames them (cto, VC-85).
+ *
+ * Why: the edge fade darkens the top and bottom 22% of the map, and the
+ * glass bar floats over the top. A tag framed inside those bands would sit
+ * on a dark wash (or under the bar) and lose its strong text contrast. So
+ * the top and bottom keep 22% of the map's height clear, and never less
+ * than the bar plus its margins.
+ *
+ * @param size - the map's size on screen, in px.
+ * @returns the edge padding for fitToCoordinates.
+ */
+export function fitPadding(size: MapSize): {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+} {
+  const edge = Math.max(Math.round(size.height * EDGE_FADE_SHARE), FIT_MIN_EDGE);
+  return { top: edge, right: FIT_SIDE, bottom: edge, left: FIT_SIDE };
+}
 
 /** The map's view when there's nothing to show: central DC, about 12 km across. */
 export const DC_REGION: Region = { ...DC_CENTRE, latitudeDelta: 0.11, longitudeDelta: 0.11 };
@@ -395,6 +431,9 @@ function IosMap({ filter, onSeeList, onOpenEvent }: TonightMapProps) {
   useEffect(() => {
     if (!hint) return;
     hintShown = true;
+    // VoiceOver doesn't read a note that just appears, so say it once.
+    // (Android reads it through the pill's live region below.)
+    AccessibilityInfo.announceForAccessibility(LEGEND_TEXT);
     // It goes away by itself after a few seconds.
     const timer = setTimeout(() => setHint(false), HINT_MS);
     return () => clearTimeout(timer);
@@ -496,8 +535,14 @@ function IosMap({ filter, onSeeList, onOpenEvent }: TonightMapProps) {
     framedFor.current = key;
     const coords = fitCoordinates(layout);
     if (coords.length === 0) mapRef.current?.animateToRegion(DC_REGION, moving ? 300 : 0);
-    else mapRef.current?.fitToCoordinates(coords, { edgePadding: FIT_PADDING, animated: moving });
-  }, [mapReady, state.kind, layout, filterKey, attempt, moving, viewerId]);
+    else {
+      // Before the map has been measured, assume a typical phone's size.
+      const edgePadding = fitPadding(mapSize ?? DEFAULT_MAP_SIZE);
+      mapRef.current?.fitToCoordinates(coords, { edgePadding, animated: moving });
+    }
+    // Framing happens once per load (framedFor), so a later size change
+    // never moves the map; mapSize is listed only to read its latest value.
+  }, [mapReady, state.kind, layout, filterKey, attempt, moving, viewerId, mapSize]);
 
   // VC-85: how long each new tag waits before fading in (hottest first).
   const appearDelays = useMemo(() => tagAppearDelays(plan.markers), [plan]);
@@ -742,7 +787,7 @@ function IosMap({ filter, onSeeList, onOpenEvent }: TonightMapProps) {
           </View>
         ) : null}
         {hint && !menuOpen ? (
-          <View style={styles.pill} testID="map-hint">
+          <View style={styles.pill} testID="map-hint" accessibilityLiveRegion="polite">
             <Text style={styles.pillText} maxFontSizeMultiplier={1.3}>
               {LEGEND_TEXT}
             </Text>

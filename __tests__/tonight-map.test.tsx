@@ -50,7 +50,7 @@ import * as Maps from 'react-native-maps';
 
 import { GLOW_FADE_MS, heatLayers, ringAlphas } from '@/components/AreaHeat';
 import { BUBBLE_SIZE, bubbleEdge } from '@/components/MapDots';
-import { MAP_EASE } from '@/components/MapGlass';
+import { EDGE_FADE_SHARE, MAP_EASE } from '@/components/MapGlass';
 import { TAG_REDRAW_MS } from '@/components/MapTag';
 import {
   ANDROID_TITLE,
@@ -70,13 +70,14 @@ import {
   SEE_LIST_LABEL,
   TonightMap,
   ZOOM_RANGE,
+  fitPadding,
   isSwipeDown,
   resetMapHintForTests,
   swipeCloses,
 } from '@/components/TonightMap';
 import { useAuth } from '@/lib/auth-context';
 import { THIS_WEEK, filterWindow } from '@/lib/date-filter';
-import { CLOSE_DELTA, MAX_PULSES } from '@/lib/map-cluster';
+import { CLOSE_DELTA, DEFAULT_MAP_SIZE, MAX_PULSES } from '@/lib/map-cluster';
 import { TOO_EARLY } from '@/lib/map-read';
 import { resetReduceMotionForTests } from '@/lib/reduce-motion';
 import { supabase } from '@/lib/supabase';
@@ -353,6 +354,34 @@ describe('TonightMap sleek look (VC-85 step 1)', () => {
     expect(BUBBLE_SIZE).toBe(34);
     expect(style.borderColor).toBe(bubbleEdge('Hot'));
     expect(bubbleEdge('Hot')).toBe('rgba(214, 185, 123, 0.55)');
+  });
+
+  it('frames the circles clear of the top bar and the dark edge bands', async () => {
+    await drawMap();
+    // 22% of the map's height at the top and bottom (the fades' reach),
+    // 48 px at the sides. Jest never measures, so the typical phone size.
+    const edge = Math.round(DEFAULT_MAP_SIZE.height * EDGE_FADE_SHARE);
+    expect(commands.fitToCoordinates.mock.calls[0][1].edgePadding).toEqual({
+      top: edge,
+      right: 48,
+      bottom: edge,
+      left: 48,
+    });
+    // A short map still keeps the bar plus its margins (12 + 40 + 12).
+    expect(fitPadding({ width: 390, height: 200 }).top).toBe(64);
+    expect(fitPadding({ width: 390, height: 800 })).toEqual({
+      top: 176,
+      right: 48,
+      bottom: 176,
+      left: 48,
+    });
+  });
+
+  it('announces the first-open hint to screen readers', async () => {
+    const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility');
+    await drawMap();
+    expect(announce).toHaveBeenCalledWith(LEGEND_TEXT);
+    expect(screen.getByTestId('map-hint').props.accessibilityLiveRegion).toBe('polite');
   });
 
   it('floats a glass top bar naming the dates and the city', async () => {

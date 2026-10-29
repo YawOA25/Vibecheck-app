@@ -48,6 +48,12 @@ export const glass = {
  */
 export const MAP_EASE = Easing.bezier(0.22, 1, 0.36, 1);
 
+/**
+ * How far in from the top and from the bottom the edge fade reaches, as a
+ * share of the map's height (spec: 22%).
+ */
+export const EDGE_FADE_SHARE = 0.22;
+
 /** A round glass button's size (spec: 40). */
 export const GLASS_BUTTON_SIZE = 40;
 
@@ -148,12 +154,14 @@ export function MapVignette() {
             <Stop offset="0.82" stopColor={bg} stopOpacity={0.55} />
             <Stop offset="1" stopColor={bg} stopOpacity={0.92} />
           </RadialGradient>
-          {/* 85% dark at the very top and bottom, clear by 22% in (top)
-              and in the lowest 30% it darkens again (bottom). */}
+          {/* 85% dark at the very top and bottom, clear 22% in from each
+              edge (spec). The map frames its tags inside these clear
+              middle 56% (FIT_SHARE in TonightMap.tsx), so text never sits
+              in the dark bands. */}
           <LinearGradient id="vcEdgeFade" x1="0" y1="0" x2="0" y2="1">
             <Stop offset="0" stopColor={bg} stopOpacity={0.85} />
-            <Stop offset="0.22" stopColor={bg} stopOpacity={0} />
-            <Stop offset="0.7" stopColor={bg} stopOpacity={0} />
+            <Stop offset={EDGE_FADE_SHARE} stopColor={bg} stopOpacity={0} />
+            <Stop offset={1 - EDGE_FADE_SHARE} stopColor={bg} stopOpacity={0} />
             <Stop offset="1" stopColor={bg} stopOpacity={0.85} />
           </LinearGradient>
         </Defs>
