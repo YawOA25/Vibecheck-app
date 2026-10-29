@@ -12,6 +12,13 @@ import {
 import { cleanCode, cleanEmail, looksLikeEmail } from '@/lib/sign-in-input';
 
 describe('describeSignInError', () => {
+  it('tells a new person on the sign-in path that there is no account (VC-74)', () => {
+    const noAccount = "We couldn't find an account for that email. Go back to create one.";
+    expect(describeSignInError({ code: 'otp_disabled', status: 422 })).toBe(noAccount);
+    expect(describeSignInError({ code: 'user_not_found' })).toBe(noAccount);
+    expect(describeSignInError({ message: 'Signups not allowed for otp' })).toBe(noAccount);
+  });
+
   it('explains rate limits, bad codes and the team-only email rule', () => {
     expect(describeSignInError({ code: 'over_email_send_rate_limit' })).toMatch(/wait/);
     expect(describeSignInError({ status: 429 })).toMatch(/wait/);

@@ -17,6 +17,7 @@ import { Pressable, Text } from 'react-native';
 import { AuthProvider, useAuth } from '@/lib/auth-context';
 import { ageLockKey } from '@/lib/age-lock';
 import { offerRecapReminder } from '@/lib/recap-notifications';
+import { DEVICE_REFUSAL_KEY } from '@/lib/device-age-refusal';
 import { supabase } from '@/lib/supabase';
 
 jest.mock('@/lib/supabase', () => ({
@@ -70,11 +71,36 @@ beforeEach(async () => {
 
 /** Shows the status and some buttons, so tests can read and press them. */
 function Probe() {
-  const { status, profile, signOut, markAgeBlocked, deleteAccount } = useAuth();
+  const {
+    status,
+    profile,
+    signOut,
+    markAgeBlocked,
+    deleteAccount,
+    pendingBirthdate,
+    startSignUp,
+    refuseBeforeSignIn,
+  } = useAuth();
   return (
     <>
       <Text>status:{status}</Text>
       <Text>name:{profile?.display_name ?? '-'}</Text>
+      <Text>dob:{pendingBirthdate ?? '-'}</Text>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="start sign-up"
+        onPress={() => startSignUp('1995-05-05')}
+      />
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="refuse before sign-in"
+        onPress={() => void refuseBeforeSignIn()}
+      />
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="delete locked account"
+        onPress={() => void deleteAccount({ rememberRefusal: true })}
+      />
       <Pressable accessibilityRole="button" accessibilityLabel="out" onPress={signOut} />
       <Pressable
         accessibilityRole="button"
@@ -297,5 +323,71 @@ describe('AuthProvider', () => {
     // Dismissing it goes to sign-in.
     await fireEvent.press(screen.getByRole('button', { name: 'out' }));
     expect(await screen.findByText('status:signedOut')).toBeOnTheScreen();
+  });
+  // ---- VC-74: date of birth first; VC-75: locked logins can be deleted ----
+
+  it('a refusal before sign-in shows the sorry screen, notes only the time, and calls no server', async () => {
+    auth.getSession.mockResolvedValue({ data: { session: null } });
+    await renderProbe();
+    await screen.findByText('status:signedOut');
+    await fireEvent.press(screen.getByRole('button', { name: 'refuse before sign-in' }));
+    expect(await screen.findByText('status:blocked')).toBeOnTheScreen();
+    // Only a timestamp under one fixed key: no date of birth, age or email.
+    expect(await AsyncStorage.getAllKeys()).toEqual([DEVICE_REFUSAL_KEY]);
+    expect(await AsyncStorage.getItem(DEVICE_REFUSAL_KEY)).toMatch(/^\d+$/);
+    // Nothing went to the server.
+    expect(rpc).not.toHaveBeenCalled();
+    expect(from).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalled();
+    // "OK" (signOut) closes the sorry screen.
+    await fireEvent.press(screen.getByRole('button', { name: 'out' }));
+    expect(await screen.findByText('status:signedOut')).toBeOnTheScreen();
+  });
+
+  it('keeps an accepted date in memory only, and forgets it on sign-out', async () => {
+    auth.getSession.mockResolvedValue({ data: { session: null } });
+    await renderProbe();
+    await screen.findByText('status:signedOut');
+    await fireEvent.press(screen.getByRole('button', { name: 'start sign-up' }));
+    expect(screen.getByText('dob:1995-05-05')).toBeOnTheScreen();
+    // Never written to phone storage.
+    expect(await AsyncStorage.getAllKeys()).toEqual([]);
+    await fireEvent.press(screen.getByRole('button', { name: 'out' }));
+    expect(await screen.findByText('dob:-')).toBeOnTheScreen();
+  });
+
+  it('a returning person (profile found) never keeps the date', async () => {
+    auth.getSession.mockResolvedValue({ data: { session: null } });
+    maybeSingle.mockResolvedValue({ data: PROFILE, error: null });
+    await renderProbe();
+    await screen.findByText('status:signedOut');
+    await fireEvent.press(screen.getByRole('button', { name: 'start sign-up' }));
+    await act(async () => emitAuthChange('SIGNED_IN', SESSION));
+    expect(await screen.findByText('status:ready')).toBeOnTheScreen();
+    expect(screen.getByText('dob:-')).toBeOnTheScreen();
+  });
+
+  it('a new login (no profile) keeps the date for the age-gate screen', async () => {
+    auth.getSession.mockResolvedValue({ data: { session: null } });
+    maybeSingle.mockResolvedValue({ data: null, error: null });
+    await renderProbe();
+    await screen.findByText('status:signedOut');
+    await fireEvent.press(screen.getByRole('button', { name: 'start sign-up' }));
+    await act(async () => emitAuthChange('SIGNED_IN', SESSION));
+    expect(await screen.findByText('status:needsProfile')).toBeOnTheScreen();
+    expect(screen.getByText('dob:1995-05-05')).toBeOnTheScreen();
+  });
+
+  it('a locked login can delete itself; the phone then notes the refusal', async () => {
+    auth.getSession.mockResolvedValue({ data: { session: SESSION } });
+    maybeSingle.mockResolvedValue({ data: null, error: null });
+    rpc.mockResolvedValue({ data: true, error: null });
+    invoke.mockResolvedValue({ data: { deleted: true }, error: null });
+    await renderProbe();
+    await screen.findByText('status:blocked');
+    await fireEvent.press(screen.getByRole('button', { name: 'delete locked account' }));
+    expect(invoke).toHaveBeenCalledWith('delete-account', { method: 'POST' });
+    await waitFor(() => expect(auth.signOut).toHaveBeenCalledWith({ scope: 'local' }));
+    expect(await AsyncStorage.getItem(DEVICE_REFUSAL_KEY)).toMatch(/^\d+$/);
   });
 });

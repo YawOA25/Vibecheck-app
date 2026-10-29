@@ -197,3 +197,38 @@ describe('AgeGateScreen', () => {
     expect(signOut).toHaveBeenCalled();
   });
 });
+
+// VC-74: the date of birth was asked first, on the sign-in screen.
+describe('AgeGateScreen with a date from the first screen', () => {
+  beforeEach(() => {
+    (useAuth as jest.Mock).mockReturnValue({
+      refreshProfile,
+      signOut,
+      markAgeBlocked,
+      pendingBirthdate: '1995-05-05',
+    });
+  });
+
+  it('asks only for the name and sends the date given earlier', async () => {
+    await render(<AgeGateScreen />);
+    // The date isn't asked twice.
+    expect(screen.queryByLabelText('Date of birth')).toBeNull();
+    await fireEvent.changeText(screen.getByLabelText('Your name'), ' Ava ');
+    await fireEvent.press(screen.getByRole('button', { name: 'Continue' }));
+
+    expect(rpc).toHaveBeenCalledWith('complete_profile', {
+      p_display_name: 'Ava',
+      p_birthdate: '1995-05-05',
+    });
+    expect(refreshProfile).toHaveBeenCalled();
+  });
+
+  it('still follows the server when it refuses (the server check counts)', async () => {
+    rpc.mockResolvedValue({ data: null, error: { code: 'VCLCK', message: 'locked' } });
+    await render(<AgeGateScreen />);
+    await fireEvent.changeText(screen.getByLabelText('Your name'), 'Ava');
+    await fireEvent.press(screen.getByRole('button', { name: 'Continue' }));
+    expect(markAgeBlocked).toHaveBeenCalledWith('locked');
+    expect(refreshProfile).not.toHaveBeenCalled();
+  });
+});

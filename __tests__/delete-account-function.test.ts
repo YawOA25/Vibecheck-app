@@ -74,18 +74,11 @@ describe('delete-account function', () => {
     expect(deps.deleteAccount).not.toHaveBeenCalled();
   });
 
-  it('treats "already deleted" as done, a locked login as 409, and other errors as 500', async () => {
+  it('treats "already deleted" as done and other errors as 500', async () => {
     const gone = fakeDeps({ deleteAccount: jest.fn(async () => ({ error: { code: 'VCNFD' } })) });
     expect(
       await handleDeleteAccount({ method: 'POST', authorization: 'Bearer token-ava' }, gone),
     ).toEqual({ status: 200, body: { deleted: true } });
-
-    const locked = fakeDeps({
-      deleteAccount: jest.fn(async () => ({ error: { code: 'VCLCK' } })),
-    });
-    expect(
-      await handleDeleteAccount({ method: 'POST', authorization: 'Bearer token-ava' }, locked),
-    ).toEqual({ status: 409, body: { error: 'locked' } });
 
     const broken = fakeDeps({
       deleteAccount: jest.fn(async () => ({ error: { code: 'XX000' } })),

@@ -16,8 +16,11 @@
  *      does nothing. This is the "you can only delete yourself" rule; the
  *      database function it calls can't be reached by app users at all
  *      (pgTAP test 027).
- *   6. The answer: 200 {deleted: true}; 409 {error: 'locked'} for a login
- *      locked by the 18+ gate (database code VCLCK); 500 for anything else.
+ *   6. The answer: 200 {deleted: true}; 500 for anything else.
+ *      Since VC-75 a login locked by the 18+ gate (ages 13-17) is deleted
+ *      like any other: the database keeps only a fingerprint of its email
+ *      (an HMAC), so the old 409 "locked" answer is gone. The locked person
+ *      reaches this from the "sorry" screen (app/(auth)/blocked.tsx).
  *
  * Privacy: nothing here logs the user id, the token or the email. Only the
  * database error CODE is logged on a failure, so the founder can see why in
@@ -111,7 +114,6 @@ export async function handleDeleteAccount(
     // Already gone (two taps racing, or a retry after a lost answer): the
     // person wanted their account deleted, and it is.
     if (error.code === 'VCNFD') return { status: 200, body: { deleted: true } };
-    if (error.code === 'VCLCK') return { status: 409, body: { error: 'locked' } };
     logError(`delete_account failed with code ${error.code ?? 'unknown'}`);
     return { status: 500, body: { error: 'failed' } };
   } catch {

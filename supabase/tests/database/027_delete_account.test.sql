@@ -23,8 +23,9 @@
 --     re-made as of its own moment, minus guest 1, so the waiting ratings
 --     stay unpublished. Event B (3 waiting) is published as of now. Event C
 --     (no published score yet) is left alone.
---   * Errors: deleting the same person again gives VCNFD; a login locked by
---     the 18+ gate gives VCLCK and is kept.
+--   * Errors: deleting the same person again gives VCNFD. Since VC-75 a
+--     login locked by the 18+ gate is deleted too, keeping only its email
+--     fingerprint mark (more in 028_age_refusal_hmac.test.sql).
 --
 -- Everything runs inside BEGIN ... ROLLBACK: nothing is kept. Only made-up
 -- test accounts are used (never the practice accounts).
@@ -50,8 +51,9 @@ insert into auth.users (id, email) values
   ('27272727-9999-4999-8999-0000000000f0', 'delete-locked@test.vibecheck.invalid');
 insert into public.profiles (id, display_name, birthdate, is_tester, role) values
   ('27272727-9999-4999-8999-0000000000a1', 'Delete Admin', current_date - interval '30 years', false, 'admin');
-insert into private.age_gate_refusals (user_id)
-values ('27272727-9999-4999-8999-0000000000f0');
+-- Since VC-75 the mark is the email's fingerprint, not the login id.
+insert into private.age_gate_refusals (email_hmac)
+values (private.age_refusal_email_hmac('delete-locked@test.vibecheck.invalid'));
 
 -- Events A, B, C on now; D created by the admin.
 insert into public.events (id, title, area_label, starts_at, ends_at, is_test, created_by) values
@@ -272,15 +274,18 @@ select ok((select created_by is null from public.events where id = '27272727-000
                where user_id = '27272727-9999-4999-8999-000000000002'),
   'their event stays without the creator link; log rows and bans lose the admin id');
 
--- ---- 10. Errors (3) ---------------------------------------------------------
+-- ---- 10. Errors, and a locked login (3) ------------------------------------
 set local role service_role;
 select throws_ok($$ select public.delete_account('27272727-9999-4999-8999-000000000001') $$,
   'VCNFD', null, 'deleting the same person again: VCNFD');
-select throws_ok($$ select public.delete_account('27272727-9999-4999-8999-0000000000f0') $$,
-  'VCLCK', null, 'a login locked by the 18+ gate is refused (its mark must last 12 months)');
+-- VC-75: a login locked by the 18+ gate CAN be deleted now; its email
+-- fingerprint mark stays (it isn't linked to the login).
+select lives_ok($$ select public.delete_account('27272727-9999-4999-8999-0000000000f0') $$,
+  'a login locked by the 18+ gate can be deleted (VC-75)');
 reset role;
-select ok(exists (select 1 from private.age_gate_refusals where user_id = '27272727-9999-4999-8999-0000000000f0'),
-  'the locked login''s mark is kept');
+select ok(not exists (select 1 from auth.users where id = '27272727-9999-4999-8999-0000000000f0')
+          and exists (select 1 from private.age_gate_refusals where email_hmac = private.age_refusal_email_hmac('delete-locked@test.vibecheck.invalid')),
+  'the locked login is gone and only its email fingerprint mark is kept');
 
 select * from finish();
 rollback;

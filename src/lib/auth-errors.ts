@@ -39,6 +39,13 @@ export const ProfileErrorCode = {
 const FALLBACK = 'Something went wrong. Please try again.';
 
 /**
+ * Shown on the sign-in path (VC-74) when the email has no account yet. It
+ * points new people back to the first screen, where sign-up starts with the
+ * date of birth.
+ */
+export const NO_ACCOUNT = "We couldn't find an account for that email. Go back to create one.";
+
+/**
  * Says whether an error looks like "no internet" rather than a refusal.
  *
  * @param error - the error to inspect.
@@ -86,10 +93,18 @@ export function describeSignInError(error: ErrorLike): string {
     // sign-in emails to members of the founder's Supabase team.
     case 'email_address_not_authorized':
       return "Sign-in emails can only go to the VibeCheck team's addresses for now.";
+    // VC-74: "Already have an account? Sign in" never creates a login
+    // (shouldCreateUser: false). Supabase then answers an unknown email with
+    // one of these codes (which one depends on the Auth version).
+    case 'otp_disabled':
+    case 'user_not_found':
+      return NO_ACCOUNT;
   }
   if (error.status === 429) {
     return 'Too many tries. Please wait a few minutes and try again.';
   }
+  // Older Auth versions send no code, only this message.
+  if (/signups not allowed/i.test(error.message ?? '')) return NO_ACCOUNT;
   return FALLBACK;
 }
 

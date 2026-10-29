@@ -8,8 +8,9 @@
 --   refused with VCLCK. The app can ask "am I locked?" about itself only.
 -- * Under 13: the login itself is deleted at once and nothing is stored.
 -- * App users can't read, change or delete the marks.
--- * Retention: marks (and their logins) older than 12 months are deleted by
---   the cleanup function, which pg_cron runs daily; newer ones are kept.
+-- * Retention: marks (and their profile-less logins) older than 12 months
+--   are deleted by the cleanup function, which pg_cron runs daily; newer ones
+--   are kept. (Updated for VC-75: the mark is now an email fingerprint.)
 -- * Adults are not affected, and is_adult_user now uses the New York date.
 --
 -- How "acting as a user" works: see 002_profiles.test.sql. Everything is
@@ -18,7 +19,7 @@
 begin;
 create extension if not exists pgtap with schema extensions;
 
-select plan(38);
+select plan(39);
 
 -- ---- Setup (as the database owner) -----------------------------------------
 -- Logins with no profile yet (the state right after the email code), plus
@@ -44,18 +45,20 @@ select
 grant select on lock_dates to authenticated;
 
 -- ---- 1. The mark's shape: no birthdate, ever (4 checks) --------------------
+-- Since VC-75 the mark is an HMAC fingerprint of the email, not the login id
+-- (see 028_age_refusal_hmac.test.sql for the fingerprint itself).
 select columns_are('private', 'age_gate_refusals',
-  array['user_id', 'refused_at', 'reason'],
-  'the mark holds only the login id, the time and the reason (no birthdate, age or email)');
-select col_is_pk('private', 'age_gate_refusals', 'user_id',
-  'one mark per login');
+  array['email_hmac', 'refused_at', 'reason'],
+  'the mark holds only the email fingerprint, the time and the reason (no birthdate, age, id or email)');
+select col_is_pk('private', 'age_gate_refusals', 'email_hmac',
+  'one mark per email fingerprint');
 select is(
-  (select confdeltype from pg_constraint
+  (select count(*)::int from pg_constraint
    where conrelid = 'private.age_gate_refusals'::regclass and contype = 'f'),
-  'c'::"char", 'the mark is deleted with the login (on delete cascade)');
+  0, 'the mark is not linked to the login (deleting the login keeps it, VC-75)');
 select throws_ok(
-  $$ insert into private.age_gate_refusals (user_id, reason)
-     values ('b0000000-0000-4000-8000-000000000007', 'age_15') $$,
+  $$ insert into private.age_gate_refusals (email_hmac, reason)
+     values (repeat('a', 64), 'age_15') $$,
   '23514', null, 'the reason can only be the fixed word under_18');
 
 -- ---- 2. A 15-year-old is refused and locked (7 checks) ----------------------
@@ -87,13 +90,13 @@ select is(private.is_adult_user(), false, 'the refused teen can''t see events');
 select throws_ok($$ select * from private.age_gate_refusals $$,
   '42501', null, 'the teen can''t read the marks');
 select throws_ok(
-  $$ delete from private.age_gate_refusals where user_id = 'b0000000-0000-4000-8000-000000000001' $$,
+  $$ delete from private.age_gate_refusals $$,
   '42501', null, 'the teen can''t delete their own mark');
 select throws_ok(
   $$ update private.age_gate_refusals set refused_at = now() - interval '5 years' $$,
   '42501', null, 'the teen can''t back-date their mark');
 select throws_ok(
-  $$ insert into private.age_gate_refusals (user_id) values ('b0000000-0000-4000-8000-000000000003') $$,
+  $$ insert into private.age_gate_refusals (email_hmac) values (repeat('b', 64)) $$,
   '42501', null, 'the teen can''t lock someone else');
 select throws_ok($$ select private.purge_expired_age_refusals() $$,
   '42501', null, 'the teen can''t run the cleanup');
@@ -108,12 +111,12 @@ select throws_ok($$ select public.age_gate_locked() $$,
 reset role;
 select results_eq(
   $$ select reason from private.age_gate_refusals
-     where user_id = 'b0000000-0000-4000-8000-000000000001' $$,
+     where email_hmac = private.age_refusal_email_hmac('teen@test.vibecheck.invalid') $$,
   $$ values ('under_18'::text) $$,
   'exactly one mark, with the fixed reason');
 select ok(
   (select refused_at between now() - interval '1 minute' and now() + interval '1 minute'
-   from private.age_gate_refusals where user_id = 'b0000000-0000-4000-8000-000000000001'),
+   from private.age_gate_refusals where email_hmac = private.age_refusal_email_hmac('teen@test.vibecheck.invalid')),
   'the mark is timestamped now');
 select is(
   (select count(*)::int from auth.users where id = 'b0000000-0000-4000-8000-000000000001'),
@@ -145,7 +148,7 @@ select is_empty(
   $$ select id from auth.users where id = 'b0000000-0000-4000-8000-000000000002' $$,
   'the child''s login (and the email it held) is gone');
 select is_empty(
-  $$ select user_id from private.age_gate_refusals where user_id = 'b0000000-0000-4000-8000-000000000002' $$,
+  $$ select 1 from private.age_gate_refusals where email_hmac = private.age_refusal_email_hmac('child@test.vibecheck.invalid') $$,
   'no mark is kept for the child');
 select is_empty(
   $$ select id from public.profiles where id = 'b0000000-0000-4000-8000-000000000002' $$,
@@ -161,16 +164,16 @@ select is(public.age_gate_locked(), false, 'an adult is never locked');
 select is(private.is_adult_user(), true, 'the adult can see events');
 reset role;
 select is_empty(
-  $$ select user_id from private.age_gate_refusals where user_id = 'b0000000-0000-4000-8000-000000000003' $$,
+  $$ select 1 from private.age_gate_refusals where email_hmac = private.age_refusal_email_hmac('adult@test.vibecheck.invalid') $$,
   'no mark is written for an adult');
 
 -- ---- 8. Retention: 12 months, then everything goes (5 checks) --------------
 -- As the owner: one mark 13 months old (no profile), one 13 months old whose
 -- login somehow has a profile (must be left alone), one 11 months old.
-insert into private.age_gate_refusals (user_id, refused_at) values
-  ('b0000000-0000-4000-8000-000000000005', now() - interval '13 months'),
-  ('b0000000-0000-4000-8000-000000000006', now() - interval '13 months'),
-  ('b0000000-0000-4000-8000-000000000007', now() - interval '11 months');
+insert into private.age_gate_refusals (email_hmac, refused_at) values
+  (private.age_refusal_email_hmac('old-mark@test.vibecheck.invalid'), now() - interval '13 months'),
+  (private.age_refusal_email_hmac('old-mark-with-profile@test.vibecheck.invalid'), now() - interval '13 months'),
+  (private.age_refusal_email_hmac('recent-mark@test.vibecheck.invalid'), now() - interval '11 months');
 insert into public.profiles (id, display_name, birthdate) values
   ('b0000000-0000-4000-8000-000000000006', 'Safe', '1990-01-01');
 
@@ -185,21 +188,27 @@ select is_empty(
   'a 13-month-old refused login is deleted, and its mark with it');
 select is(
   (select count(*)::int from private.age_gate_refusals
-   where user_id in ('b0000000-0000-4000-8000-000000000001',
-                     'b0000000-0000-4000-8000-000000000006',
-                     'b0000000-0000-4000-8000-000000000007')),
-  3, 'newer marks (and a login with a profile) are kept');
+   where email_hmac in (private.age_refusal_email_hmac('teen@test.vibecheck.invalid'),
+                        private.age_refusal_email_hmac('recent-mark@test.vibecheck.invalid'))),
+  2, 'newer marks are kept');
+-- The expired mark of a login that has a profile goes, but the login stays.
+select ok(
+  exists (select 1 from auth.users where id = 'b0000000-0000-4000-8000-000000000006')
+  and not exists (select 1 from private.age_gate_refusals
+                  where email_hmac = private.age_refusal_email_hmac('old-mark-with-profile@test.vibecheck.invalid')),
+  'a login with a profile is never deleted by the cleanup (its expired mark is)');
 select is(
   (select count(*)::int from cron.job
    where jobname = 'vc-purge-expired-age-refusals'
      and command = 'select private.purge_expired_age_refusals()'),
   1, 'pg_cron runs the cleanup on a schedule');
 
--- Deleting a login (for example account deletion) removes its mark (1 check).
+-- Deleting a login (for example account deletion) KEEPS its mark since
+-- VC-75, so the same email is still refused for the rest of the 12 months.
 delete from auth.users where id = 'b0000000-0000-4000-8000-000000000001';
-select is_empty(
-  $$ select user_id from private.age_gate_refusals where user_id = 'b0000000-0000-4000-8000-000000000001' $$,
-  'deleting the login deletes its mark');
+select isnt_empty(
+  $$ select 1 from private.age_gate_refusals where email_hmac = private.age_refusal_email_hmac('teen@test.vibecheck.invalid') $$,
+  'deleting the login keeps its email fingerprint mark');
 
 -- ---- 9. is_adult_user uses the New York date (1 check) ---------------------
 -- A profile one day short of 18 by the New York date. With the old UTC rule

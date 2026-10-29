@@ -9,10 +9,19 @@
  *   - 'ready'        : signed in with a profile (passed the 18+ gate)
  *   - 'blocked'      : refused by the 18+ gate (VC-30) -> show the "sorry"
  *                      screen. This sticks after signing out and back in,
- *                      because the server keeps a refusal mark for the login.
+ *                      because the server keeps a refusal mark for the
+ *                      email (an HMAC fingerprint since VC-75). It is also
+ *                      shown while signed OUT right after the phone refused
+ *                      an under-18 date before any email was asked (VC-74).
  *   - 'error'        : couldn't load the profile (for example no internet)
  * The root layout (app/_layout.tsx) uses `status` to decide which screens
  * exist at all, so a signed-out person can't open the Tonight screen.
+ *
+ * Sign-up order (VC-74): the date of birth is asked FIRST, on the sign-in
+ * screen. An 18+ date is kept here in memory only (`pendingBirthdate`), never
+ * saved on the phone and never sent anywhere until complete_profile, which
+ * the age-gate screen calls after the email code. Signing out, a refusal or
+ * a loaded profile forgets it.
  *
  * Why a "context": React's way to share one value with every screen without
  * passing it through each one by hand. Screens read it with `useAuth()`.
@@ -24,6 +33,7 @@ import type { ReactNode } from 'react';
 import { requestAccountDeletion } from '@/lib/account-api';
 import type { DeleteAccountResult } from '@/lib/account-api';
 import { checkAgeLock, rememberAgeLock } from '@/lib/age-lock';
+import { rememberDeviceRefusal } from '@/lib/device-age-refusal';
 import { cancelRecapReminders } from '@/lib/recap-notifications';
 import { supabase } from '@/lib/supabase';
 
@@ -61,8 +71,27 @@ export interface AuthState {
    * Deletes the account on the server, then signs out and clears this
    * phone (VC-B13). Resolves with { ok: false, message } if the server
    * didn't delete it; the person then stays signed in.
+   * Pass { rememberRefusal: true } from the "sorry" screen (VC-75), so the
+   * phone keeps refusing new under-18 answers after the login is gone.
    */
-  deleteAccount: () => Promise<DeleteAccountResult>;
+  deleteAccount: (options?: { rememberRefusal?: boolean }) => Promise<DeleteAccountResult>;
+  /**
+   * The 18+ date of birth given on the first sign-up screen (VC-74), as
+   * "YYYY-MM-DD", or null. Memory only; the age-gate screen sends it to
+   * complete_profile after the email code.
+   */
+  pendingBirthdate: string | null;
+  /**
+   * Starts a new sign-up after the first screen accepted an 18+ date.
+   * @param isoBirthdate - the date as "YYYY-MM-DD" (kept in memory only).
+   */
+  startSignUp: (isoBirthdate: string) => void;
+  /**
+   * The first screen refused an under-18 date (VC-74): notes it on the
+   * phone (time only) and shows the "sorry" screen. Nothing is sent to the
+   * server and no email has been asked for.
+   */
+  refuseBeforeSignIn: () => Promise<void>;
 }
 
 /** What we know about a login after loading: its profile, or why there's none. */
@@ -120,6 +149,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // the phone has signed out. It keeps the "sorry" screen up (instead of
   // jumping straight to sign-in) until the person taps to dismiss it.
   const [blockedAfterSignOut, setBlockedAfterSignOut] = useState(false);
+  // VC-74: the 18+ date from the first screen, in memory only, until the
+  // age-gate screen sends it (see the top of this file).
+  const [pendingBirthdate, setPendingBirthdate] = useState<string | null>(null);
 
   // 1. Watch the login. getSession() reads a saved login from the phone;
   //    onAuthStateChange tells us about every sign-in, sign-out and token renewal.
@@ -162,6 +194,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!userId) return;
     const value = await fetchProfile(userId);
     setLoaded({ userId, value });
+    // A profile (or a lock) is there now: the date isn't needed any more.
+    if (value !== null && value !== 'error') setPendingBirthdate(null);
   }, [userId]);
 
   // 2. Load the profile whenever a different person signs in. State is only
@@ -170,7 +204,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!userId) return;
     let active = true;
     void fetchProfile(userId).then((value) => {
-      if (active) setLoaded({ userId, value });
+      if (!active) return;
+      setLoaded({ userId, value });
+      // A returning person (profile) or a locked login: forget the date
+      // from the first screen, it will never be sent (VC-74).
+      if (value !== null && value !== 'error') setPendingBirthdate(null);
     });
     return () => {
       active = false;
@@ -181,6 +219,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signOut = useCallback(async () => {
     // Dismisses the under-13 "sorry" screen too (see blockedAfterSignOut).
     setBlockedAfterSignOut(false);
+    setPendingBirthdate(null);
     // The recap notes name this person's events: remove them first, so the
     // next person on this phone never sees them (VC-B12, cto privacy fix).
     await cancelRecapReminders();
@@ -200,14 +239,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
    * @returns { ok: true } after deleting, or { ok: false, message } when the
    *   server didn't delete it (nothing on the phone is changed then).
    */
-  const deleteAccount = useCallback(async (): Promise<DeleteAccountResult> => {
-    const result = await requestAccountDeletion();
-    if (!result.ok) return result;
-    await cancelRecapReminders();
-    // signOut can fail if the network drops; the local login is removed
-    // either way (supabase-js clears it before talking to the server).
-    await supabase.auth.signOut({ scope: 'local' }).catch(() => undefined);
-    return result;
+  const deleteAccount = useCallback(
+    async (options?: { rememberRefusal?: boolean }): Promise<DeleteAccountResult> => {
+      const result = await requestAccountDeletion();
+      if (!result.ok) return result;
+      // From the "sorry" screen (VC-75): the server keeps only the email's
+      // fingerprint; the phone notes the refusal time so a new under-18
+      // answer on this phone is refused too.
+      if (options?.rememberRefusal) await rememberDeviceRefusal();
+      await cancelRecapReminders();
+      // signOut can fail if the network drops; the local login is removed
+      // either way (supabase-js clears it before talking to the server).
+      await supabase.auth.signOut({ scope: 'local' }).catch(() => undefined);
+      return result;
+    },
+    [],
+  );
+
+  /** Keeps an accepted 18+ date in memory for the coming sign-up (VC-74). */
+  const startSignUp = useCallback((isoBirthdate: string) => {
+    setPendingBirthdate(isoBirthdate);
+  }, []);
+
+  /**
+   * The first screen refused an under-18 date (VC-74). Returns once the
+   * phone note is written and the "sorry" screen is showing.
+   */
+  const refuseBeforeSignIn = useCallback(async () => {
+    setPendingBirthdate(null);
+    await rememberDeviceRefusal();
+    // The same flag the under-13 path uses: the "sorry" screen shows while
+    // signed out, and its "OK" button (signOut) closes it.
+    setBlockedAfterSignOut(true);
   }, []);
 
   /**
@@ -221,6 +284,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const markAgeBlocked = useCallback(
     async (refusal: AgeRefusal) => {
       if (!userId) return;
+      setPendingBirthdate(null);
       if (refusal === 'deleted') {
         setBlockedAfterSignOut(true);
         // The login no longer exists on the server; drop it from the phone.
@@ -255,6 +319,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signOut,
       markAgeBlocked,
       deleteAccount,
+      pendingBirthdate,
+      startSignUp,
+      refuseBeforeSignIn,
     };
   }, [
     session,
@@ -265,6 +332,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     signOut,
     markAgeBlocked,
     deleteAccount,
+    pendingBirthdate,
+    startSignUp,
+    refuseBeforeSignIn,
   ]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

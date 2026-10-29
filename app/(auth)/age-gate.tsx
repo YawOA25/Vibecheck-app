@@ -3,8 +3,17 @@
  * (task VC-B03c, spec team/projects/vibecheck/design/v3-ui-spec.md, 2.3).
  *
  * Shown once, right after the first sign-in. The person enters their name
- * and their date of birth; the app then calls the server function
- * `complete_profile`, which creates the profile only for people 18 or older.
+ * (and, see below, maybe their date of birth); the app then calls the server
+ * function `complete_profile`, which creates the profile only for people 18
+ * or older.
+ *
+ * Since VC-74 the date of birth is normally asked FIRST, on the sign-in
+ * screen, before any email. An 18+ date given there waits in memory
+ * (`pendingBirthdate` in src/lib/auth-context.tsx), so this screen asks for
+ * the name only and sends that date. The date box still shows when there is
+ * no such date: someone who chose "Already have an account? Sign in" but has
+ * no profile yet (for example an old login that never finished sign-up).
+ * Either way the server's check is the one that counts.
  *
  * Who decides (VC-30): EVERY real date goes to the server, and the server
  * alone decides. That matters because the server also remembers an under-18
@@ -62,7 +71,10 @@ const BAD_DATE = 'Enter a real date, like 04 / 18 / 1998.';
  * @returns the screen view. It takes no inputs.
  */
 export default function AgeGateScreen() {
-  const { refreshProfile, signOut, markAgeBlocked } = useAuth();
+  const { refreshProfile, signOut, markAgeBlocked, pendingBirthdate } = useAuth();
+  // VC-74: the date from the first screen, if there is one ("YYYY-MM-DD").
+  // Then the date box is not shown at all.
+  const presetBirthdate = pendingBirthdate ?? null;
   const [name, setName] = useState('');
   // The date box's text, for example "04 / 18 / 1998".
   const [birthText, setBirthText] = useState('');
@@ -75,7 +87,7 @@ export default function AgeGateScreen() {
   const [message, setMessage] = useState<string | null>(null);
 
   // "Continue" stays off until there is a name and all 8 date digits (spec 2.3).
-  const ready = name.length > 0 && dateDigits(birthText).length === 8;
+  const ready = name.length > 0 && (presetBirthdate !== null || dateDigits(birthText).length === 8);
 
   /**
    * Checks the form for typing mistakes, then sends the answer to the
@@ -85,15 +97,20 @@ export default function AgeGateScreen() {
    */
   async function submit() {
     const displayName = name.trim();
-    const birth = parseDateInput(birthText);
+    // The date to send: the one from the first screen (already checked
+    // there), or the one typed here.
+    const birth = presetBirthdate === null ? parseDateInput(birthText) : null;
     // Only a date that can't be a birthdate (not a real date, in the future,
-    // or before 1900) stops here. An under-18 date is deliberately NOT
-    // stopped on the phone: it goes to the server so the refusal is recorded
-    // there (VC-30).
-    const badDate = !birth || checkBirthdate(birth, new Date()) === 'invalid';
+    // or before 1900) stops here. An under-18 date typed HERE is
+    // deliberately NOT stopped on the phone: it goes to the server so the
+    // refusal is recorded there (VC-30).
+    const badDate =
+      presetBirthdate === null && (!birth || checkBirthdate(birth, new Date()) === 'invalid');
     setNameError(displayName.length < 1 ? 'Enter your name.' : null);
     setDateError(badDate ? BAD_DATE : null);
-    if (displayName.length < 1 || !birth || badDate) return;
+    if (displayName.length < 1 || badDate) return;
+    const isoBirthdate = presetBirthdate ?? (birth ? toIsoDate(birth) : null);
+    if (!isoBirthdate) return;
 
     setBusy(true);
     setMessage(null);
@@ -102,7 +119,7 @@ export default function AgeGateScreen() {
     // 'refused_deleted' (see the age-gate-lock migration).
     const { data, error } = await supabase.rpc('complete_profile', {
       p_display_name: displayName,
-      p_birthdate: toIsoDate(birth),
+      p_birthdate: isoBirthdate,
     });
     if (!error && data === 'refused_deleted') {
       // Under 13: the server deleted the login. Sign this phone out and
@@ -150,28 +167,30 @@ export default function AgeGateScreen() {
             autoComplete="name"
             textContentType="name"
             // VC-76: "Next" on the keyboard moves on to the date of birth.
-            returnKeyType="next"
-            submitBehavior="submit"
+            returnKeyType={presetBirthdate === null ? 'next' : 'done'}
+            submitBehavior={presetBirthdate === null ? 'submit' : 'blurAndSubmit'}
             onSubmitEditing={() => birthRef.current?.focus()}
           />
 
-          <TextField
-            label="Date of birth"
-            value={birthText}
-            // Tidies the text as it is typed: digits only, " / " added by itself.
-            onChangeText={(text) => {
-              setBirthText(formatDateInput(text));
-              setDateError(null);
-            }}
-            error={dateError}
-            helper="Month, day, then year."
-            accessibilityHint="Month, day, year, eight digits"
-            keyboardType="number-pad"
-            maxLength={DATE_INPUT_MAX_LENGTH}
-            placeholder="MM / DD / YYYY"
-            inputRef={birthRef}
-            returnKeyType="done"
-          />
+          {presetBirthdate === null ? (
+            <TextField
+              label="Date of birth"
+              value={birthText}
+              // Tidies the text as it is typed: digits only, " / " added by itself.
+              onChangeText={(text) => {
+                setBirthText(formatDateInput(text));
+                setDateError(null);
+              }}
+              error={dateError}
+              helper="Month, day, then year."
+              accessibilityHint="Month, day, year, eight digits"
+              keyboardType="number-pad"
+              maxLength={DATE_INPUT_MAX_LENGTH}
+              placeholder="MM / DD / YYYY"
+              inputRef={birthRef}
+              returnKeyType="done"
+            />
+          ) : null}
 
           <Button
             label="Continue"

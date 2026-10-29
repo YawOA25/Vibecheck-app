@@ -22,6 +22,12 @@ import { PRIVACY, TERMS } from '@/copy/legal';
 import { mailtoLink } from '@/lib/contact';
 
 jest.mock('@/lib/supabase', () => ({ supabase: { auth: {} } }));
+// The sign-in screen reads the sign-in state and the phone's age note
+// (VC-74); neither matters for the legal links, so both are simple fakes.
+jest.mock('@/lib/auth-context', () => ({
+  useAuth: () => ({ startSignUp: jest.fn(), refuseBeforeSignIn: jest.fn() }),
+}));
+jest.mock('@/lib/device-age-refusal', () => ({ hasRecentDeviceRefusal: jest.fn() }));
 // The "mock" prefix lets jest.mock (which runs first) use this fake.
 const mockPush = jest.fn();
 jest.mock('expo-router', () => ({

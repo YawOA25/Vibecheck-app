@@ -2,8 +2,9 @@
  * The phone's copy of the age-gate lock (task VC-30).
  *
  * What it is: when the server refuses a login because the person is under 18,
- * it stores a "refusal mark" for that login (see the migration
- * supabase/migrations/20261026170000_age_gate_lock.sql). This file keeps a
+ * it stores a "refusal mark" (since VC-75 an HMAC fingerprint of the
+ * login's email; see supabase/migrations/20261026170000_age_gate_lock.sql
+ * and 20261028130000_age_refusal_hmac.sql). This file keeps a
  * matching yes/no flag on the phone, so the app can show the "sorry" screen
  * at once, even before the server answers or when the phone is offline.
  *

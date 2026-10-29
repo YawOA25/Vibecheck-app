@@ -2,10 +2,29 @@
  * Sign-in screen: email one-time code (task VC-B03), in the v3 look
  * (task VC-B03c, spec team/projects/vibecheck/design/v3-ui-spec.md, 2.1-2.2).
  *
- * How it works, in two steps on one screen:
+ * How it works, in steps on one screen:
+ *   0. Age step (VC-74, the first thing a new person sees): "Date of birth".
+ *      It is checked ON THE PHONE ONLY, before any email is asked for, and
+ *      nothing is sent anywhere:
+ *        - under 18 (under 13 and 13-17 alike): the "sorry" screen at once.
+ *          No email is collected and the server is never called. The phone
+ *          notes the refusal TIME (no date, no age) for 12 months so tapping
+ *          back and typing an older year is refused too
+ *          (src/lib/device-age-refusal.ts, which also states the limits);
+ *        - 18 or older: the date waits in memory (auth-context
+ *          `startSignUp`) and the person moves on to the email step. After
+ *          the code, the age-gate screen asks for their name and sends that
+ *          date to `complete_profile`, whose server check still decides.
+ *      Returning people tap "Already have an account? Sign in" instead and
+ *      skip the age step. That path asks Supabase NOT to create a login
+ *      (shouldCreateUser: false), so it can't be used to sign up while
+ *      dodging the age step; an unknown email gets "no account" instead.
+ *      A login with no profile that signs in this way (it never finished
+ *      sign-up) still meets the date of birth question and the server gate
+ *      on the age-gate screen.
  *   1. Email step: the person types their email and taps "Continue".
- *      Supabase emails them a code of EMAIL_CODE_LENGTH digits (and creates
- *      their login the first time).
+ *      Supabase emails them a code of EMAIL_CODE_LENGTH digits (and, on the
+ *      sign-up path only, creates their login the first time).
  *   2. Code step: they type the code into one box per digit. When the last
  *      digit goes in, the code is checked straight away (the "Continue" button does the
  *      same). If it's right, Supabase signs them in, and the root layout
@@ -43,7 +62,16 @@ import { GeneratedArt } from '@/components/GeneratedArt';
 import { Headline } from '@/components/Headline';
 import { ReviewerSignIn } from '@/components/ReviewerSignIn';
 import { TextField } from '@/components/TextField';
+import {
+  checkBirthdate,
+  DATE_INPUT_MAX_LENGTH,
+  formatDateInput,
+  parseDateInput,
+  toIsoDate,
+} from '@/lib/age';
+import { useAuth } from '@/lib/auth-context';
 import { describeSignInError } from '@/lib/auth-errors';
+import { hasRecentDeviceRefusal } from '@/lib/device-age-refusal';
 import { SIGN_IN_ART_SEED } from '@/lib/generated-art';
 import { cleanCode, cleanEmail, EMAIL_CODE_LENGTH, looksLikeEmail } from '@/lib/sign-in-input';
 import { supabase } from '@/lib/supabase';
@@ -63,6 +91,16 @@ export const RESEND_WAIT_SECONDS = 30;
 /** Shown when the email box is empty or doesn't look like an email. */
 const BAD_EMAIL = 'Enter an email like you@example.com.';
 
+/** Shown for a date that can't be a birthdate (13th month, 30 February, the future). */
+const BAD_DATE = 'Enter a real date, like 04 / 18 / 1998.';
+
+/**
+ * Which way the person came to the email step (VC-74):
+ *   'signUp' - passed the age step; Supabase may create a new login.
+ *   'signIn' - "Already have an account? Sign in"; no new login is created.
+ */
+type EmailMode = 'signUp' | 'signIn';
+
 /** A message under the code step's links: a failed resend, or "New code sent.". */
 interface Notice {
   text: string;
@@ -76,9 +114,16 @@ interface Notice {
  */
 export default function SignInScreen() {
   const router = useRouter();
-  // Which step we're on: typing the email, typing the code, or (dev builds
-  // only) the reviewer email-and-password form.
-  const [step, setStep] = useState<'email' | 'code' | 'reviewer'>('email');
+  const { startSignUp, refuseBeforeSignIn } = useAuth();
+  // Which step we're on: the date of birth (first, VC-74), typing the email,
+  // typing the code, or (dev builds only) the reviewer email-and-password form.
+  const [step, setStep] = useState<'age' | 'email' | 'code' | 'reviewer'>('age');
+  // Sign-up (after the age step) or sign-in (returning person).
+  const [mode, setMode] = useState<EmailMode>('signUp');
+  // The date box's text on the age step, for example "04 / 18 / 1998". It
+  // lives only in this screen's memory and is never sent from here.
+  const [birthText, setBirthText] = useState('');
+  const [dateError, setDateError] = useState<string | null>(null);
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
   // True while waiting for Supabase, so buttons can't be tapped twice.
@@ -127,6 +172,49 @@ export default function SignInScreen() {
   }
 
   /**
+   * The age step's "Continue" (VC-74). Checks the date on the phone only:
+   * a typing mistake shows a message; under 18, or a refusal on this phone
+   * in the last 12 months, shows the "sorry" screen without asking for an
+   * email or calling the server; 18+ keeps the date in memory and moves on
+   * to the email step. Returns nothing.
+   */
+  async function submitBirthdate() {
+    const birth = parseDateInput(birthText);
+    const check = birth ? checkBirthdate(birth, new Date()) : 'invalid';
+    if (!birth || check === 'invalid') {
+      setDateError(BAD_DATE);
+      return;
+    }
+    setBusy(true);
+    // A refusal on this phone earlier counts whatever year is typed now, so
+    // trying again with an older year doesn't work.
+    const refusedHere = await hasRecentDeviceRefusal();
+    if (refusedHere || check === 'under18') {
+      // The root layout swaps this screen for the "sorry" screen.
+      await refuseBeforeSignIn();
+      return;
+    }
+    setBusy(false);
+    startSignUp(toIsoDate(birth));
+    setMode('signUp');
+    setEmailError(null);
+    setStep('email');
+  }
+
+  /** "Already have an account? Sign in": straight to the email, no age step. */
+  function chooseSignIn() {
+    setMode('signIn');
+    setEmailError(null);
+    setStep('email');
+  }
+
+  /** The email step's Back button: returns to the first (age) screen. */
+  function backToStart() {
+    setEmailError(null);
+    setStep('age');
+  }
+
+  /**
    * Asks Supabase to email a code. Moves to the code step when it works.
    * Returns nothing; shows an error message when it fails.
    */
@@ -140,8 +228,10 @@ export default function SignInScreen() {
     setNotice(null);
     const { error } = await supabase.auth.signInWithOtp({
       email: address,
-      // Create the login the first time this email is used.
-      options: { shouldCreateUser: true },
+      // Only the sign-up path (after the age step) may create a login. The
+      // sign-in path never does, so nobody can sign up without the age step
+      // (VC-74); an unknown email then gets the "no account" message.
+      options: { shouldCreateUser: mode === 'signUp' },
     });
     setBusy(false);
     if (error) {
@@ -207,14 +297,13 @@ export default function SignInScreen() {
   // Hero block height (spec 2.1): about 36% of the screen, at least 220 px;
   // 140 px while the keyboard is open. It may still grow to fit large text.
   const heroHeight = keyboardOpen ? 140 : Math.max(220, windowHeight * 0.36);
+  // The hero (art and headline) tops the age step and the email step.
+  const showHero = step === 'age' || step === 'email';
 
   return (
     // The top safe area (under the clock) takes the hero's colour on the
     // email step, so the hero looks like it runs to the top of the screen.
-    <SafeAreaView
-      edges={['top']}
-      style={[styles.top, step === 'email' ? styles.topHero : styles.topPlain]}
-    >
+    <SafeAreaView edges={['top']} style={[styles.top, showHero ? styles.topHero : styles.topPlain]}>
       <SafeAreaView edges={['bottom', 'left', 'right']} style={styles.safe}>
         {/* Pushes the form up so the keyboard doesn't cover it on iPhone. */}
         <KeyboardAvoidingView
@@ -223,7 +312,7 @@ export default function SignInScreen() {
           behavior={KEYBOARD_BEHAVIOR}
         >
           <ScrollView contentContainerStyle={styles.scroll} {...FORM_SCROLL_PROPS}>
-            {step === 'email' ? (
+            {showHero ? (
               <>
                 {/* Hero block: wordmark at the top, headline at the bottom. */}
                 <View style={[styles.hero, { minHeight: heroHeight }]}>
@@ -246,60 +335,109 @@ export default function SignInScreen() {
                   </View>
                 </View>
 
-                <View style={styles.form}>
-                  <TextField
-                    label="Email"
-                    value={email}
-                    onChangeText={(text) => {
-                      setEmail(text);
-                      setEmailError(null);
-                    }}
-                    error={emailError}
-                    helper={`We'll email you a ${CODE_LENGTH}-digit code. No password needed.`}
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    autoComplete="email"
-                    textContentType="emailAddress"
-                    returnKeyType="send"
-                    onSubmitEditing={sendCode}
-                    placeholder="you@example.com"
-                  />
-                  {/* Stays tappable when empty: tapping explains what's needed (spec 2.1). */}
-                  <Button label="Continue" busyLabel="Sending..." onPress={sendCode} busy={busy} />
-                  {/* Reviewer sign-in (email + password): development builds
-                      ONLY for now (`__DEV__` is false in store builds). Task
-                      B14 decides how App Store reviewers will reach it. */}
-                  {__DEV__ ? (
+                {step === 'age' ? (
+                  <View style={styles.form}>
+                    {/* Asked neutrally: no age limit is mentioned, so the
+                        question doesn't hint at which year to type. */}
+                    <TextField
+                      label="Date of birth"
+                      value={birthText}
+                      // Digits only, " / " added by itself (as on the age gate).
+                      onChangeText={(text) => {
+                        setBirthText(formatDateInput(text));
+                        setDateError(null);
+                      }}
+                      error={dateError}
+                      helper="Month, day, then year."
+                      accessibilityHint="Month, day, year, eight digits"
+                      keyboardType="number-pad"
+                      maxLength={DATE_INPUT_MAX_LENGTH}
+                      placeholder="MM / DD / YYYY"
+                      returnKeyType="done"
+                    />
                     <Button
-                      label="Reviewer sign-in"
+                      label="Continue"
+                      busyLabel="Checking..."
+                      onPress={submitBirthdate}
+                      busy={busy}
+                    />
+                    <Button
+                      label="Already have an account? Sign in"
                       variant="text"
                       size="small"
-                      onPress={() => setStep('reviewer')}
+                      onPress={chooseSignIn}
                       disabled={busy}
                     />
-                  ) : null}
-                  {/* The legal pages (VC-32b), readable before signing up. */}
-                  <View style={styles.legal}>
-                    <Button
-                      label="Terms"
-                      accessibilityLabel="Terms of Service"
-                      variant="text"
-                      size="small"
-                      onPress={() => router.push('/terms')}
-                    />
-                    <Button
-                      label="Privacy"
-                      accessibilityLabel="Privacy Policy"
-                      variant="text"
-                      size="small"
-                      onPress={() => router.push('/privacy')}
+                    {/* Reviewer sign-in (email + password): development
+                        builds ONLY for now (`__DEV__` is false in store
+                        builds). Task B14 decides how App Store reviewers
+                        will reach it. */}
+                    {__DEV__ ? (
+                      <Button
+                        label="Reviewer sign-in"
+                        variant="text"
+                        size="small"
+                        onPress={() => setStep('reviewer')}
+                        disabled={busy}
+                      />
+                    ) : null}
+                    <LegalLinks
+                      onTerms={() => router.push('/terms')}
+                      onPrivacy={() => router.push('/privacy')}
                     />
                   </View>
-                </View>
+                ) : (
+                  <View style={styles.form}>
+                    <BackButton onPress={backToStart} disabled={busy} />
+                    <TextField
+                      label="Email"
+                      value={email}
+                      onChangeText={(text) => {
+                        setEmail(text);
+                        setEmailError(null);
+                      }}
+                      error={emailError}
+                      helper={
+                        mode === 'signIn'
+                          ? `Welcome back. We'll email you a ${CODE_LENGTH}-digit code.`
+                          : `We'll email you a ${CODE_LENGTH}-digit code. No password needed.`
+                      }
+                      keyboardType="email-address"
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      autoComplete="email"
+                      textContentType="emailAddress"
+                      returnKeyType="send"
+                      onSubmitEditing={sendCode}
+                      placeholder="you@example.com"
+                    />
+                    {/* Stays tappable when empty: tapping explains what's needed (spec 2.1). */}
+                    <Button
+                      label="Continue"
+                      busyLabel="Sending..."
+                      onPress={sendCode}
+                      busy={busy}
+                    />
+                    {/* Reviewer sign-in again here, so it is one tap away on
+                      both first screens (dev builds only, as above). */}
+                    {__DEV__ ? (
+                      <Button
+                        label="Reviewer sign-in"
+                        variant="text"
+                        size="small"
+                        onPress={() => setStep('reviewer')}
+                        disabled={busy}
+                      />
+                    ) : null}
+                    <LegalLinks
+                      onTerms={() => router.push('/terms')}
+                      onPrivacy={() => router.push('/privacy')}
+                    />
+                  </View>
+                )}
               </>
             ) : step === 'reviewer' ? (
-              <ReviewerSignIn onBack={() => setStep('email')} />
+              <ReviewerSignIn onBack={() => setStep('age')} />
             ) : (
               <View style={styles.form}>
                 <BackButton onPress={useDifferentEmail} disabled={busy} />
@@ -353,6 +491,34 @@ export default function SignInScreen() {
         </KeyboardAvoidingView>
       </SafeAreaView>
     </SafeAreaView>
+  );
+}
+
+/**
+ * The Terms and Privacy links (VC-32b), readable before signing up.
+ *
+ * @param props.onTerms - opens the Terms of Service.
+ * @param props.onPrivacy - opens the Privacy Policy.
+ * @returns the two small links side by side.
+ */
+function LegalLinks({ onTerms, onPrivacy }: { onTerms: () => void; onPrivacy: () => void }) {
+  return (
+    <View style={styles.legal}>
+      <Button
+        label="Terms"
+        accessibilityLabel="Terms of Service"
+        variant="text"
+        size="small"
+        onPress={onTerms}
+      />
+      <Button
+        label="Privacy"
+        accessibilityLabel="Privacy Policy"
+        variant="text"
+        size="small"
+        onPress={onPrivacy}
+      />
+    </View>
   );
 }
 

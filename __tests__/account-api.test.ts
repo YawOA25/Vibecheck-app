@@ -2,12 +2,7 @@
  * Tests for src/lib/account-api.ts (VC-B13): the app's call to the
  * delete-account Edge Function and how its answers become words.
  */
-import {
-  DELETE_FAILED,
-  DELETE_LOCKED,
-  DELETE_SIGNED_OUT,
-  requestAccountDeletion,
-} from '@/lib/account-api';
+import { DELETE_FAILED, DELETE_SIGNED_OUT, requestAccountDeletion } from '@/lib/account-api';
 import { supabase } from '@/lib/supabase';
 
 jest.mock('@/lib/supabase', () => ({ supabase: { functions: { invoke: jest.fn() } } }));
@@ -25,7 +20,6 @@ describe('requestAccountDeletion', () => {
   });
 
   it.each([
-    [409, DELETE_LOCKED],
     [401, DELETE_SIGNED_OUT],
     [500, DELETE_FAILED],
   ])('turns a %i answer into a sentence', async (status, message) => {

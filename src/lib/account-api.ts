@@ -9,6 +9,9 @@
  * This file only makes the call and turns the answer into words. Signing
  * out and clearing the phone afterwards is done by `deleteAccount` in
  * src/lib/auth-context.tsx.
+ *
+ * Used from Settings and, since VC-75, from the "sorry" screen of a login
+ * locked by the 18+ gate (the server now deletes those too).
  */
 import { supabase } from '@/lib/supabase';
 
@@ -18,9 +21,6 @@ export type DeleteAccountResult = { ok: true } | { ok: false; message: string };
 /** Shown for a network problem or an unexpected server error. */
 export const DELETE_FAILED =
   "We couldn't delete your account. Check your connection and try again.";
-
-/** Shown when the login is locked by the 18+ gate (the function's 409). */
-export const DELETE_LOCKED = "This account can't be deleted from the app.";
 
 /** Shown when the login has expired (the function's 401). */
 export const DELETE_SIGNED_OUT =
@@ -42,7 +42,6 @@ export async function requestAccountDeletion(): Promise<DeleteAccountResult> {
     if (!error && (data as { deleted?: unknown } | null)?.deleted === true) return { ok: true };
     // supabase-js puts the HTTP answer on `error.context` for a non-2xx status.
     const status = (error as { context?: { status?: unknown } } | null)?.context?.status;
-    if (status === 409) return { ok: false, message: DELETE_LOCKED };
     if (status === 401) return { ok: false, message: DELETE_SIGNED_OUT };
     return { ok: false, message: DELETE_FAILED };
   } catch {

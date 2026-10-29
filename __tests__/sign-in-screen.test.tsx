@@ -6,11 +6,20 @@
  * network is used. We check the screen asks Supabase for the right things,
  * shows the right messages, and keeps its screen-reader labels and 44 px
  * tap sizes.
+ *
+ * VC-74: the first screen now asks for the date of birth BEFORE the email.
+ * The "Age first" block below checks the order and the refusals: under 13
+ * and 13-17 are refused without any email box or server call, a refusal on
+ * this phone also refuses a retry with an adult year, 18+ moves on with the
+ * date kept in memory, and "Already have an account? Sign in" skips the age
+ * step but can't create a login.
  */
 import { fireEvent, render, screen } from '@testing-library/react-native';
 import { StyleSheet } from 'react-native';
 
 import SignInScreen from '../app/(auth)/sign-in';
+import { useAuth } from '@/lib/auth-context';
+import { hasRecentDeviceRefusal } from '@/lib/device-age-refusal';
 import { supabase } from '@/lib/supabase';
 
 // Replace the real Supabase client with fakes we control in each test.
@@ -20,6 +29,16 @@ jest.mock('@/lib/supabase', () => ({
     auth: { signInWithOtp: jest.fn(), verifyOtp: jest.fn(), signInWithPassword: jest.fn() },
   },
 }));
+
+// The sign-in state is faked: the screen only calls startSignUp (18+) and
+// refuseBeforeSignIn (under 18) from it.
+jest.mock('@/lib/auth-context', () => ({ useAuth: jest.fn() }));
+// The phone's "refused here before" note (src/lib/device-age-refusal.ts).
+jest.mock('@/lib/device-age-refusal', () => ({ hasRecentDeviceRefusal: jest.fn() }));
+
+const startSignUp = jest.fn();
+const refuseBeforeSignIn = jest.fn(async () => {});
+const deviceRefused = hasRecentDeviceRefusal as jest.Mock;
 
 // Typed handles on the fakes, so tests can set what they return.
 const auth = supabase.auth as unknown as {
@@ -33,7 +52,22 @@ beforeEach(() => {
   auth.signInWithOtp.mockResolvedValue({ data: {}, error: null });
   auth.verifyOtp.mockResolvedValue({ data: {}, error: null });
   auth.signInWithPassword.mockResolvedValue({ data: {}, error: null });
+  (useAuth as jest.Mock).mockReturnValue({ startSignUp, refuseBeforeSignIn });
+  deviceRefused.mockResolvedValue(false);
 });
+
+/** Types a date of birth on the first screen and taps "Continue". */
+async function enterBirthdate(digits: string) {
+  await fireEvent.changeText(screen.getByLabelText('Date of birth'), digits);
+  await fireEvent.press(screen.getByRole('button', { name: 'Continue' }));
+}
+
+/** Renders the screen and passes the age step as an adult (born 1995). */
+async function renderAtEmail() {
+  await render(<SignInScreen />);
+  await enterBirthdate('05051995');
+  await screen.findByLabelText('Email');
+}
 
 /** Types an email and taps "Continue" on the email step. */
 async function sendCodeTo(email: string) {
@@ -50,8 +84,9 @@ describe('SignInScreen', () => {
     expect(
       screen.getByRole('header', { name: 'Know the vibe before you pull up.' }),
     ).toBeOnTheScreen();
+    await enterBirthdate('05051995');
     expect(
-      screen.getByText("We'll email you a 8-digit code. No password needed."),
+      await screen.findByText("We'll email you a 8-digit code. No password needed."),
     ).toBeOnTheScreen();
   });
 
@@ -64,7 +99,7 @@ describe('SignInScreen', () => {
   });
 
   it('sends a code to the cleaned email and moves to the code step', async () => {
-    await render(<SignInScreen />);
+    await renderAtEmail();
     await sendCodeTo('  Ava@Example.com ');
 
     expect(auth.signInWithOtp).toHaveBeenCalledWith({
@@ -78,7 +113,7 @@ describe('SignInScreen', () => {
   });
 
   it('refuses an address that is not an email, without calling Supabase', async () => {
-    await render(<SignInScreen />);
+    await renderAtEmail();
     await sendCodeTo('not-an-email');
 
     expect(auth.signInWithOtp).not.toHaveBeenCalled();
@@ -86,7 +121,7 @@ describe('SignInScreen', () => {
   });
 
   it('keeps Continue tappable on an empty email and explains what is needed', async () => {
-    await render(<SignInScreen />);
+    await renderAtEmail();
     await fireEvent.press(screen.getByRole('button', { name: 'Continue' }));
 
     expect(auth.signInWithOtp).not.toHaveBeenCalled();
@@ -98,7 +133,7 @@ describe('SignInScreen', () => {
       data: {},
       error: { code: 'over_email_send_rate_limit', status: 429, message: 'rate limit' },
     });
-    await render(<SignInScreen />);
+    await renderAtEmail();
     await sendCodeTo('ava@example.com');
 
     expect(await screen.findByText(/Too many codes/)).toBeOnTheScreen();
@@ -108,7 +143,7 @@ describe('SignInScreen', () => {
   // Our hosted project sends 8-digit codes (EMAIL_CODE_LENGTH). Six digits must
   // NOT be sent on their own, or every real sign-in would fail.
   it('keeps Continue off until all 8 digits are in (6 is not enough)', async () => {
-    await render(<SignInScreen />);
+    await renderAtEmail();
     await sendCodeTo('ava@example.com');
     await screen.findByRole('header', { name: CODE_HEADING });
 
@@ -118,7 +153,7 @@ describe('SignInScreen', () => {
   });
 
   it('checks the code by itself when the 8th digit goes in (paste with a space works)', async () => {
-    await render(<SignInScreen />);
+    await renderAtEmail();
     await sendCodeTo('ava@example.com');
     await screen.findByRole('header', { name: CODE_HEADING });
 
@@ -136,7 +171,7 @@ describe('SignInScreen', () => {
       data: {},
       error: { code: 'otp_expired', status: 403, message: 'Token has expired or is invalid' },
     });
-    await render(<SignInScreen />);
+    await renderAtEmail();
     await sendCodeTo('ava@example.com');
     await fireEvent.changeText(await screen.findByLabelText('8-digit code'), '00000000');
 
@@ -147,7 +182,7 @@ describe('SignInScreen', () => {
   });
 
   it('switches "Resend code" off for 30 seconds after a code is sent', async () => {
-    await render(<SignInScreen />);
+    await renderAtEmail();
     await sendCodeTo('ava@example.com');
 
     const resend = await screen.findByRole('button', { name: /^Resend code in 0:/ });
@@ -155,7 +190,7 @@ describe('SignInScreen', () => {
   });
 
   it('can go back to fix the email address, by link or by the Back button', async () => {
-    await render(<SignInScreen />);
+    await renderAtEmail();
     await sendCodeTo('ava@example.com');
     await fireEvent.press(await screen.findByRole('button', { name: 'Use a different email' }));
     expect(screen.getByLabelText('Email')).toBeOnTheScreen();
@@ -163,10 +198,13 @@ describe('SignInScreen', () => {
     await sendCodeTo('ava@example.com');
     await fireEvent.press(await screen.findByRole('button', { name: 'Back' }));
     expect(screen.getByLabelText('Email')).toBeOnTheScreen();
+    // And the email step's own Back returns to the first screen (VC-74).
+    await fireEvent.press(screen.getByRole('button', { name: 'Back' }));
+    expect(screen.getByLabelText('Date of birth')).toBeOnTheScreen();
   });
 
   it('keeps every button at least 44 px tall', async () => {
-    await render(<SignInScreen />);
+    await renderAtEmail();
     await sendCodeTo('ava@example.com');
     await screen.findByRole('header', { name: CODE_HEADING });
 
@@ -243,11 +281,122 @@ describe('Reviewer sign-in', () => {
     spies.forEach((spy) => spy.mockRestore());
   });
 
-  it('goes back to the email-code sign-in from the Back button', async () => {
+  it('goes back to the first screen from the Back button', async () => {
     globals.__DEV__ = true;
     await render(<SignInScreen />);
     await fireEvent.press(screen.getByRole('button', { name: 'Reviewer sign-in' }));
     await fireEvent.press(screen.getByRole('button', { name: 'Back' }));
+    expect(screen.getByLabelText('Date of birth')).toBeOnTheScreen();
+  });
+
+  it('is never asked for a date of birth (reviewers have an account)', async () => {
+    await reviewerSignIn('reviewer@example.com', 'test-pass-123');
+    expect(startSignUp).not.toHaveBeenCalled();
+    expect(refuseBeforeSignIn).not.toHaveBeenCalled();
+    expect(auth.signInWithPassword).toHaveBeenCalled();
+  });
+});
+
+// VC-74: the date of birth comes first, and is checked on the phone only.
+describe('Age first (VC-74)', () => {
+  /**
+   * A date of birth N years (and some days) before today, as the 8 digits
+   * typed in the box. 'minus1Day' gives the day before the Nth birthday is
+   * reached, i.e. one day short of N.
+   */
+  function digitsForAge(years: number, minus1Day = false): string {
+    const now = new Date();
+    const d = new Date(
+      now.getFullYear() - years,
+      now.getMonth(),
+      now.getDate() + (minus1Day ? 1 : 0),
+    );
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${pad(d.getMonth() + 1)}${pad(d.getDate())}${d.getFullYear()}`;
+  }
+
+  it('asks for the date of birth first, with no email box yet', async () => {
+    await render(<SignInScreen />);
+    expect(screen.getByLabelText('Date of birth')).toBeOnTheScreen();
+    expect(screen.queryByLabelText('Email')).toBeNull();
+    // Asked neutrally: no age limit is mentioned.
+    expect(screen.queryByText(/18/)).toBeNull();
+  });
+
+  it('refuses under 13 at once: no email box, nothing sent to the server', async () => {
+    await render(<SignInScreen />);
+    await enterBirthdate(digitsForAge(10));
+    expect(refuseBeforeSignIn).toHaveBeenCalledTimes(1);
+    expect(startSignUp).not.toHaveBeenCalled();
+    expect(auth.signInWithOtp).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText('Email')).toBeNull();
+  });
+
+  it('refuses 13-17 at once the same way (one day short of 18 included)', async () => {
+    await render(<SignInScreen />);
+    await enterBirthdate(digitsForAge(18, true));
+    expect(refuseBeforeSignIn).toHaveBeenCalledTimes(1);
+    expect(startSignUp).not.toHaveBeenCalled();
+    expect(auth.signInWithOtp).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText('Email')).toBeNull();
+  });
+
+  it('refuses a retry with an adult year on a phone that refused before', async () => {
+    deviceRefused.mockResolvedValue(true);
+    await render(<SignInScreen />);
+    await enterBirthdate('05051995');
+    expect(refuseBeforeSignIn).toHaveBeenCalledTimes(1);
+    expect(startSignUp).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText('Email')).toBeNull();
+  });
+
+  it('catches a typing mistake without refusing (not an age answer)', async () => {
+    await render(<SignInScreen />);
+    await enterBirthdate('13401995');
+    expect(await screen.findByText('Enter a real date, like 04 / 18 / 1998.')).toBeOnTheScreen();
+    expect(refuseBeforeSignIn).not.toHaveBeenCalled();
+    expect(startSignUp).not.toHaveBeenCalled();
+  });
+
+  it('18+: keeps the date in memory, then the email may create a login', async () => {
+    await renderAtEmail();
+    expect(startSignUp).toHaveBeenCalledWith('1995-05-05');
+    // The date was not sent anywhere: no Supabase call yet.
+    expect(auth.signInWithOtp).not.toHaveBeenCalled();
+    await sendCodeTo('ava@example.com');
+    expect(auth.signInWithOtp).toHaveBeenCalledWith({
+      email: 'ava@example.com',
+      options: { shouldCreateUser: true },
+    });
+    // The date never goes with the email request.
+    expect(JSON.stringify(auth.signInWithOtp.mock.calls)).not.toContain('1995');
+  });
+
+  it('"Already have an account? Sign in" skips the age step and never creates a login', async () => {
+    await render(<SignInScreen />);
+    await fireEvent.press(screen.getByRole('button', { name: 'Already have an account? Sign in' }));
+    expect(screen.queryByLabelText('Date of birth')).toBeNull();
+    expect(screen.getByText("Welcome back. We'll email you a 8-digit code.")).toBeOnTheScreen();
+    await sendCodeTo('ava@example.com');
+    expect(auth.signInWithOtp).toHaveBeenCalledWith({
+      email: 'ava@example.com',
+      options: { shouldCreateUser: false },
+    });
+    expect(startSignUp).not.toHaveBeenCalled();
+    expect(await screen.findByRole('header', { name: CODE_HEADING })).toBeOnTheScreen();
+  });
+
+  it('on the sign-in path, an email with no account is told to go back and create one', async () => {
+    auth.signInWithOtp.mockResolvedValue({
+      data: {},
+      error: { code: 'otp_disabled', status: 422, message: 'Signups not allowed for otp' },
+    });
+    await render(<SignInScreen />);
+    await fireEvent.press(screen.getByRole('button', { name: 'Already have an account? Sign in' }));
+    await sendCodeTo('new@example.com');
+    expect(
+      await screen.findByText("We couldn't find an account for that email. Go back to create one."),
+    ).toBeOnTheScreen();
     expect(screen.getByLabelText('Email')).toBeOnTheScreen();
   });
 });

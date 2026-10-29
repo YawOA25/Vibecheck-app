@@ -3,9 +3,12 @@
  *
  * Why this file exists: the sign-up screen uses it to catch typing mistakes
  * (a future date, a year before 1900) before anything is sent. Since VC-30 it
- * does NOT stop an under-18 date on the phone: every real date goes to the
- * server, which alone decides and records refusals (the `complete_profile`
- * function in supabase/migrations/..._age_gate_lock.sql). These rules copy
+ * does NOT stop an under-18 date on the age-gate screen: every real date
+ * typed there goes to the server, which decides and records refusals (the
+ * `complete_profile` function in supabase/migrations/..._age_gate_lock.sql).
+ * Since VC-74 the FIRST sign-up screen (app/(auth)/sign-in.tsx) asks for
+ * the date before any email and refuses under-18 dates on the phone itself,
+ * so no email is ever collected from a minor there. These rules copy
  * the server's rules exactly so the two never disagree:
  *   - "18 or older" means the 18th birthday is today or earlier.
  *   - A 29 February birthday turns 18 on 1 March in a year with no 29 February
@@ -165,9 +168,10 @@ export function isAtLeast18(birth: CalendarDate, today: CalendarDate): boolean {
 export type BirthdateCheck = 'ok' | 'under18' | 'invalid';
 
 /**
- * The full check the sign-up screen runs before calling the server. The
- * screen only acts on 'invalid'; an 'under18' date is still sent so the
- * server can lock the login (VC-30).
+ * The full check run on a date of birth. The age-gate screen only acts on
+ * 'invalid' (an 'under18' date is still sent so the server can lock the
+ * login, VC-30); the first sign-up screen refuses 'under18' itself, before
+ * any email is asked for (VC-74).
  *
  * @param birth - date of birth (already a real calendar date).
  * @param now - the current moment (passed in so tests can pick any moment).
