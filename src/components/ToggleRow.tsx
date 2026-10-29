@@ -5,10 +5,14 @@
  * Why its own component: the whole row (not just the small switch) is the
  * tap target, so it is easy to hit (at least 44 px tall), and screen readers
  * read it as one "switch" with its label and on/off state.
+ *
+ * VC-76 (design/vc76-motion-spec.md 3a): the row turns one step lighter
+ * while a finger is on it, so the tap feels answered like every other
+ * tappable row in the app.
  */
 import { Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 
-import { colors, minTapTarget, spacing, typography } from '@/theme';
+import { colors, minTapTarget, radius, spacing, typography } from '@/theme';
 
 /** What a ToggleRow needs. */
 export interface ToggleRowProps {
@@ -35,7 +39,7 @@ export function ToggleRow({ label, helper, value, onValueChange }: ToggleRowProp
       accessibilityLabel={label}
       accessibilityHint={helper}
       accessibilityState={{ checked: value }}
-      style={styles.row}
+      style={({ pressed }) => [styles.row, pressed && styles.pressed]}
     >
       <View style={styles.texts}>
         <Text style={styles.label}>{label}</Text>
@@ -63,6 +67,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.gap12,
   },
+  // VC-76: the pressed look (a lighter background, rounded like a chip).
+  pressed: { backgroundColor: colors.surfaceRaised, borderRadius: radius.chip },
   // flex 1 lets long labels wrap instead of pushing the switch off screen.
   texts: { flex: 1, gap: 2 },
   label: { ...typography.body, fontFamily: typography.button.fontFamily, color: colors.text },

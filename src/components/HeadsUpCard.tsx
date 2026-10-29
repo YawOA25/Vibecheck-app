@@ -36,14 +36,23 @@
  *     impressions, not checked or endorsed by us. A guest who +1s "Felt
  *     unsafe" is told where real help is (911 or venue staff).
  *
+ * Smoothness (VC-76, design/vc76-motion-spec.md 2c): while the counts load,
+ * the card shows one row of three chip-shaped blocks instead of a spinner,
+ * and it is never shorter than its one-row ready height, so neither the
+ * loaded chips nor "No heads-ups yet" make the page jump. The loaded part
+ * fades in once (src/components/FadeIn.tsx); later reloads swap the counts
+ * in place.
+ *
  * Why there's no free text: nothing to moderate (VC-43). Free-text comments
  * are the separate backlog item VC-44. Nobody ever sees WHO added a tag.
  */
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
 import { ChoiceChip } from '@/components/ChoiceChip';
 import { Button } from '@/components/Button';
+import { FadeIn } from '@/components/FadeIn';
+import { HEADS_UP_CARD_HEIGHT, SkeletonBlock, SkeletonGroup } from '@/components/Skeleton';
 import { FormMessage } from '@/components/FormMessage';
 import { VENUE_CONTACT_EMAIL } from '@/lib/contact';
 import { REPORT_REASONS } from '@/lib/moderation';
@@ -62,7 +71,7 @@ import type { HeadsUpTag } from '@/lib/rating';
 import { addHeadsUp, getEventHeadsUps } from '@/lib/ratings-api';
 import type { HeadsUpCount } from '@/lib/ratings-api';
 import { headsUpRefusalMessage } from '@/lib/rating-screens';
-import { colors, radius, spacing, typography } from '@/theme';
+import { colors, minTapTarget, radius, spacing, typography } from '@/theme';
 
 /**
  * The card's words (exported so tests use the same text).
@@ -227,23 +236,33 @@ export function HeadsUpCard({
   const shownTags = list.kind === 'ready' ? list.tags : [];
 
   return (
-    <View style={styles.card}>
+    <View style={styles.card} testID="heads-up-card">
       <Text style={styles.label} accessibilityRole="header">
         {HEADS_UP_TITLE}
       </Text>
 
+      {/* VC-76: one row of chip-shaped blocks while loading (no spinner).
+          Screen readers hear "Loading heads-ups" once. */}
       {list.kind === 'loading' ? (
-        <ActivityIndicator color={colors.accent} accessibilityLabel="Loading heads-ups" />
+        <View accessible accessibilityRole="progressbar" accessibilityLabel="Loading heads-ups">
+          <SkeletonGroup style={styles.chips} testID="heads-up-skeleton">
+            {SKELETON_CHIP_WIDTHS.map((width) => (
+              <SkeletonBlock key={width} height={minTapTarget} width={width} corner={radius.pill} />
+            ))}
+          </SkeletonGroup>
+        </View>
       ) : null}
 
       {list.kind === 'error' ? <Text style={styles.muted}>{HEADS_UP_LOAD_ERROR}</Text> : null}
 
       {list.kind === 'ready' && list.tags.length === 0 ? (
-        <Text style={styles.muted}>{NO_HEADS_UPS}</Text>
+        <FadeIn>
+          <Text style={styles.muted}>{NO_HEADS_UPS}</Text>
+        </FadeIn>
       ) : null}
 
       {list.kind === 'ready' && list.tags.length > 0 ? (
-        <>
+        <FadeIn style={styles.readyPart} testID="heads-up-ready">
           <View style={styles.chips}>
             {list.tags.map((item) => {
               return (
@@ -276,7 +295,7 @@ export function HeadsUpCard({
             />
           </View>
           {infoOpen ? <Text style={styles.caption}>{HEADS_UP_INFO}</Text> : null}
-        </>
+        </FadeIn>
       ) : null}
 
       {showSafetyHelp ? (
@@ -365,6 +384,9 @@ export function HeadsUpCard({
   );
 }
 
+/** Widths of the three loading chip blocks (roughly real tag lengths). */
+const SKELETON_CHIP_WIDTHS = [112, 136, 96];
+
 /** Styles built only from theme tokens (the same card look as LiveVibeCard). */
 const styles = StyleSheet.create({
   card: {
@@ -374,7 +396,12 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     padding: spacing.md,
     gap: spacing.sm,
+    // VC-76: never shorter than the one-row ready card, so loading and
+    // "No heads-ups yet" take the same space as a row of tags.
+    minHeight: HEADS_UP_CARD_HEIGHT,
   },
+  // The loaded chips, hint and info link keep the card's 8 px gap.
+  readyPart: { gap: spacing.sm },
   label: { ...typography.label, color: colors.muted },
   muted: { ...typography.bodySm, color: colors.muted },
   caption: { ...typography.caption, color: colors.muted },

@@ -21,7 +21,7 @@
  */
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AccessibilityInfo, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { AccessibilityInfo, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { HostInstance } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -29,9 +29,10 @@ import { BackButton } from '@/components/BackButton';
 import { Button } from '@/components/Button';
 import { FormMessage } from '@/components/FormMessage';
 import { Icon } from '@/components/Icon';
+import { PressableScale } from '@/components/PressableScale';
 import { SupportEmailLink } from '@/components/SupportEmailLink';
 import { useAuth } from '@/lib/auth-context';
-import { colors, iconSize, minTapTarget, radius, spacing, typography } from '@/theme';
+import { colors, iconSize, minTapTarget, motion, radius, spacing, typography } from '@/theme';
 
 /**
  * Where the delete flow is: not started, the first question, the second
@@ -184,7 +185,9 @@ export default function SettingsScreen() {
  */
 function LinkRow({ label, onPress }: { label: string; onPress: () => void }) {
   return (
-    <Pressable
+    // VC-76: shrinks to 0.97 with a lighter background while pressed.
+    <PressableScale
+      scaleTo={motion.pressScale.row}
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={label}
@@ -193,7 +196,7 @@ function LinkRow({ label, onPress }: { label: string; onPress: () => void }) {
       <Text style={styles.rowLabel}>{label}</Text>
       {/* "Opens another screen" arrow: decoration, the label says it all. */}
       <Icon name="chevron-right" size={iconSize.md} color={colors.muted} />
-    </Pressable>
+    </PressableScale>
   );
 }
 
@@ -228,5 +231,6 @@ const styles = StyleSheet.create({
   panelTitle: { ...typography.cardTitle, color: colors.text },
   body: { ...typography.bodySm, color: colors.text },
   muted: { ...typography.bodySm, color: colors.muted },
-  pressed: { opacity: 0.7 },
+  // A pressed row turns one step lighter (VC-76, the same as every row).
+  pressed: { backgroundColor: colors.surfaceRaised },
 });

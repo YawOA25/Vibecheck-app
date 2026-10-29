@@ -52,6 +52,8 @@ jest.mock('@/lib/code-check-in-api', () => ({
 // The "mock" prefix lets jest.mock (which runs first) use these fakes.
 const mockBack = jest.fn();
 const mockReplace = jest.fn();
+/** VC-76: records each swipe-to-close setting the screen asks for. */
+const mockSetOptions = jest.fn();
 jest.mock('expo-router', () => ({
   useRouter: () => ({
     push: jest.fn(),
@@ -60,6 +62,8 @@ jest.mock('expo-router', () => ({
     canGoBack: () => true,
   }),
   useLocalSearchParams: () => ({ id: 'e1' }),
+  // VC-76: the sheet's swipe-to-close switch (see mockSetOptions).
+  useNavigation: () => ({ setOptions: mockSetOptions }),
 }));
 
 const get = getEvent as jest.Mock;
@@ -183,6 +187,8 @@ describe('entering the code', () => {
     submitCode.mockReturnValue(new Promise(() => {}));
     await enterCode('K7MX2Q');
     expect(screen.getByRole('button', { name: CHECK_ME_IN })).toBeBusy();
+    // VC-76: no swipe-down close while the code is being checked.
+    expect(mockSetOptions).toHaveBeenLastCalledWith({ gestureEnabled: false });
   });
 });
 

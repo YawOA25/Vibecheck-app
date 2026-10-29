@@ -53,6 +53,8 @@ jest.mock('@/lib/haptics', () => ({
 // The "mock" prefix lets jest.mock (which runs first) use these fakes.
 const mockBack = jest.fn();
 const mockReplace = jest.fn();
+/** VC-76: records each swipe-to-close setting the screen asks for. */
+const mockSetOptions = jest.fn();
 jest.mock('expo-router', () => ({
   useRouter: () => ({
     push: jest.fn(),
@@ -61,6 +63,8 @@ jest.mock('expo-router', () => ({
     canGoBack: () => true,
   }),
   useLocalSearchParams: () => ({ id: 'e1' }),
+  // VC-76: the sheet's swipe-to-close switch (see mockSetOptions).
+  useNavigation: () => ({ setOptions: mockSetOptions }),
 }));
 
 const get = getEvent as jest.Mock;
@@ -160,6 +164,14 @@ describe('RateScreen form', () => {
     // Picked chips are marked "selected" (not by colour alone).
     expect(screen.getByRole('radio', { name: 'crowd: Packed' })).toBeChecked();
     expect(screen.getByRole('radio', { name: 'crowd: Quiet' })).not.toBeChecked();
+  });
+
+  it('VC-76: the sheet can be swiped away until the first tap, then not', async () => {
+    await render(<RateScreenRoute />);
+    expect(await screen.findByText(PROMPT)).toBeOnTheScreen();
+    expect(mockSetOptions).toHaveBeenLastCalledWith({ gestureEnabled: true });
+    await fireEvent.press(screen.getByRole('radio', { name: 'crowd: Packed' }));
+    expect(mockSetOptions).toHaveBeenLastCalledWith({ gestureEnabled: false });
   });
 
   it('sends the taps, the reaction and the tags, then shows the payoff', async () => {

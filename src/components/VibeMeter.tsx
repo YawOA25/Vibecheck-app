@@ -27,6 +27,18 @@
  * A poll that brings the same score moves nothing (the effect below only
  * runs when the score itself changes).
  *
+ * Smoothness (VC-76, design/vc76-motion-spec.md 2f): the arc can't use the
+ * phone's UI thread (it is an SVG setting), so its first sweep competes with
+ * the event page's slide-in. To keep both smooth:
+ *   - `sweepReady` holds the first sweep until the page has finished
+ *     sliding in (the event page listens for the navigator's
+ *     "transitionEnd"). Until then the arc stays empty and the number
+ *     reads 0.0, so the sweep and count-up still start from nothing;
+ *   - the counting number is updated at most every 50 ms (20 times a
+ *     second; the arc itself stays fully smooth);
+ *   - the gauge is wrapped in React.memo, so the card re-drawing around it
+ *     doesn't touch it mid-sweep.
+ *
  * Glow (VC-70, approved as proposal P3): a live Hot or Fire score gets a
  * soft gold glow behind the arc, a radial gradient that fades from 14%
  * gold in the middle to nothing at the edge (under the 15% cap). It never
@@ -40,7 +52,7 @@
  * leaves only the filled part visible. It uses React Native's own Animated
  * (no extra animation library); SVG props can't use the native driver.
  */
-import { useEffect, useId, useRef, useState } from 'react';
+import { memo, useEffect, useId, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Easing, StyleSheet, Text, View } from 'react-native';
 import Svg, { Defs, Ellipse, Path, RadialGradient, Stop } from 'react-native-svg';
 
@@ -62,6 +74,12 @@ const STROKE = 8;
 export const FIRST_SWEEP_MS = 700;
 export const MOVE_MS = 400;
 const FADE_MS = 300;
+/**
+ * The counting number changes at most this often during the first sweep
+ * (VC-76): 50 ms, i.e. 20 times a second. Each change re-draws the text on
+ * the JavaScript side, so fewer of them leave more room for the arc.
+ */
+export const COUNT_UP_STEP_MS = 50;
 
 /**
  * How strong the glow is at its centre (VC-70: must stay under 15%, so it
@@ -127,6 +145,12 @@ export interface VibeMeterProps {
   loading?: boolean;
   /** true when the first load failed: the track only (the card shows the message). */
   blank?: boolean;
+  /**
+   * false to hold the FIRST sweep (VC-76): the event page passes false
+   * until its slide-in has finished. Later moves never wait. Default true
+   * (start at once), e.g. when the page wasn't slid in at all.
+   */
+  sweepReady?: boolean;
 }
 
 /**
@@ -135,7 +159,13 @@ export interface VibeMeterProps {
  * @returns the gauge, read out as one item (a "progress bar" from 0 to 10
  *   when there is a score).
  */
-export function VibeMeter({ vibe, view = 'live', loading = false, blank = false }: VibeMeterProps) {
+function VibeMeterView({
+  vibe,
+  view = 'live',
+  loading = false,
+  blank = false,
+  sweepReady = true,
+}: VibeMeterProps) {
   const reduceMotion = useReduceMotion();
   const hasScore = !loading && !blank && vibe.score !== null && vibe.label !== null;
   // The All night view: a word and no number (it never has a score).
@@ -161,6 +191,9 @@ export function VibeMeter({ vibe, view = 'live', loading = false, blank = false 
   // The fill colour as of the last FINISHED move: during a move the old
   // colour stays, and the new one takes over at the end (spec).
   const [settledColour, setSettledColour] = useState(colour);
+  // VC-76: true once a first sweep has run (or been skipped). Until then,
+  // while the sweep is held for the page's slide-in, the number reads 0.0.
+  const [firstSweepDone, setFirstSweepDone] = useState(false);
   // The score drawn last time (null before the first score), so we can tell
   // "first reading" (sweep from 0, count up) from "new score" (short move).
   const lastScore = useRef<number | null>(null);
@@ -170,6 +203,10 @@ export function VibeMeter({ vibe, view = 'live', loading = false, blank = false 
   useEffect(() => {
     // Wait for the phone to say whether Reduce Motion is on.
     if (reduceMotion === null) return;
+    // VC-76: a first reading waits for the page's slide-in to finish. (A
+    // new score after that never waits.) Nothing is remembered yet, so the
+    // run after `sweepReady` turns true still counts as the first.
+    if (!sweepReady && lastScore.current === null && hasScore && !reduceMotion) return;
     const previous = lastScore.current;
     lastScore.current = hasScore ? target : null;
     if (reduceMotion || !hasScore) {
@@ -179,9 +216,16 @@ export function VibeMeter({ vibe, view = 'live', loading = false, blank = false 
     }
     const first = previous === null;
     if (first) progress.setValue(0);
-    // During the first sweep the number counts up with the arc.
+    // During the first sweep the number counts up with the arc, updated at
+    // most every 50 ms (VC-76); the end of the sweep shows the exact score.
+    let lastStep = -Infinity;
     const listener = first
-      ? progress.addListener(({ value }) => setCountUp(Math.round(value * 10) / 10))
+      ? progress.addListener(({ value }) => {
+          const now = Date.now();
+          if (now - lastStep < COUNT_UP_STEP_MS) return;
+          lastStep = now;
+          setCountUp(Math.round(value * 10) / 10);
+        })
       : null;
     const animation = Animated.timing(progress, {
       toValue: target,
@@ -192,13 +236,14 @@ export function VibeMeter({ vibe, view = 'live', loading = false, blank = false 
     animation.start(({ finished }) => {
       // Always stop counting (even if a newer score interrupted this move).
       setCountUp(null);
+      if (first) setFirstSweepDone(true);
       if (finished) setSettledColour(colour);
     });
     return () => {
       animation.stop();
       if (listener) progress.removeListener(listener);
     };
-  }, [target, hasScore, colour, reduceMotion, progress]);
+  }, [target, hasScore, colour, reduceMotion, progress, sweepReady]);
 
   // Fade to grey (or back) when the stale flag changes.
   useEffect(() => {
@@ -218,7 +263,11 @@ export function VibeMeter({ vibe, view = 'live', loading = false, blank = false 
   // Without movement the colour is simply the word's colour; with movement
   // it is the settled one until the move ends.
   const fillBase = reduceMotion !== false ? colour : settledColour;
-  const shownNumber = reduceMotion ? target : (countUp ?? target);
+  // VC-76: until the first sweep has run (held for the slide-in, or about
+  // to start), the number waits at 0.0 with the empty arc, so it counts up from
+  // nothing. With motion off it shows the score at once.
+  const holding = reduceMotion === false && !firstSweepDone && countUp === null;
+  const shownNumber = reduceMotion ? target : holding ? 0 : (countUp ?? target);
 
   const offset = progress.interpolate({
     inputRange: [0, 10],
@@ -338,6 +387,12 @@ export function VibeMeter({ vibe, view = 'live', loading = false, blank = false 
     </View>
   );
 }
+
+/**
+ * The gauge, re-drawn only when its own inputs change (VC-76): the card's
+ * other parts updating (lines, tiles) never interrupt a sweep.
+ */
+export const VibeMeter = memo(VibeMeterView);
 
 /** Styles built only from theme tokens. */
 const styles = StyleSheet.create({

@@ -19,6 +19,12 @@
  * supabase/migrations/20261028100000_my_recap.sql).
  *
  * States: loading, an error with "Try again", and an empty state.
+ *
+ * Motion (VC-76, design/vc76-motion-spec.md): the recap rises as a sheet
+ * from the bottom (app/_layout.tsx) and closes with a swipe down. "See your
+ * nights out" closes the sheet back to the Me tab (dismissTo), instead of
+ * stacking another Me inside the sheet. The spinner only shows if loading
+ * takes over 300 ms, and the loaded recap fades in.
  */
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
@@ -27,12 +33,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BackButton } from '@/components/BackButton';
 import { Button } from '@/components/Button';
+import { FadeIn } from '@/components/FadeIn';
 import { FormMessage } from '@/components/FormMessage';
 import { wordColour } from '@/components/VibeMeter';
 import { REACTIONS } from '@/lib/rating';
 import { recapDateLine, roomSummary, rowWord, topReaction } from '@/lib/recap';
 import type { RecapItem } from '@/lib/recap';
 import { getMyRecap } from '@/lib/recap-api';
+import { useDelayedFlag } from '@/lib/use-delayed-flag';
 import { colors, radius, spacing, typography } from '@/theme';
 
 /** What the screen is showing. */
@@ -52,6 +60,8 @@ export default function RecapScreen() {
   const [phase, setPhase] = useState<Phase>({ kind: 'loading' });
   // Bumped by "Try again" to load once more.
   const [attempt, setAttempt] = useState(0);
+  // VC-76: the spinner only after 300 ms of loading (no flash on fast loads).
+  const showSpinner = useDelayedFlag(phase.kind === 'loading');
 
   // Load the recap. One event: look it up in the full list. Otherwise: the
   // last 36 hours. State is set only in `.then`, and ignored once closed.
@@ -89,7 +99,7 @@ export default function RecapScreen() {
 
         {phase.kind === 'loading' ? (
           <View style={styles.centre} accessible accessibilityLabel="Loading">
-            <ActivityIndicator color={colors.accent} size="large" />
+            {showSpinner ? <ActivityIndicator color={colors.accent} size="large" /> : null}
           </View>
         ) : null}
 
@@ -108,25 +118,33 @@ export default function RecapScreen() {
         ) : null}
 
         {phase.kind === 'ready' && phase.items.length === 0 ? (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Nothing to recap yet</Text>
-            <Text style={styles.muted}>
-              Rate an event and your recap lands here at 11 the next morning.
-            </Text>
-            <View style={styles.inlineAction}>
-              <Button
-                label="See your nights out"
-                variant="outline"
-                size="small"
-                onPress={() => router.push('/me')}
-              />
+          <FadeIn>
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Nothing to recap yet</Text>
+              <Text style={styles.muted}>
+                Rate an event and your recap lands here at 11 the next morning.
+              </Text>
+              <View style={styles.inlineAction}>
+                <Button
+                  label="See your nights out"
+                  variant="outline"
+                  size="small"
+                  // VC-76: back down to the Me tab (closing this sheet),
+                  // not a second Me opened inside the sheet.
+                  onPress={() => router.dismissTo('/me')}
+                />
+              </View>
             </View>
-          </View>
+          </FadeIn>
         ) : null}
 
-        {phase.kind === 'ready'
-          ? phase.items.map((item) => <RecapCard key={item.eventId} item={item} />)
-          : null}
+        {phase.kind === 'ready' && phase.items.length > 0 ? (
+          <FadeIn style={styles.list}>
+            {phase.items.map((item) => (
+              <RecapCard key={item.eventId} item={item} />
+            ))}
+          </FadeIn>
+        ) : null}
       </ScrollView>
     </SafeAreaView>
   );
@@ -214,6 +232,8 @@ const styles = StyleSheet.create({
   kicker: { ...typography.label, color: colors.accent },
   title: { ...typography.title, color: colors.text },
   centre: { paddingVertical: spacing.xl, alignItems: 'center' },
+  // The recap cards keep the page's 16 px gap inside their fade wrapper.
+  list: { gap: spacing.md },
   block: { gap: spacing.md },
   card: {
     backgroundColor: colors.surface,

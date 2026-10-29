@@ -45,6 +45,14 @@
  *     above its heading. Cards shrink a touch (0.98) while pressed, and the
  *     list fades in when a new load lands. All motion is off under the
  *     phone's Reduce Motion setting (src/lib/reduce-motion.ts).
+ *   - VC-76 ("smooth transitions", design/vc76-motion-spec.md 2d and 3d):
+ *     the list fades in ONLY on the first load and after a filter change.
+ *     Pull to refresh, the minute vibe refresh, a new event saved by an
+ *     admin and "Load more" swap the data in place, so nothing blinks.
+ *     After a filter change the old list stays on screen, dimmed to 40% and
+ *     untappable, until the new one lands (the skeleton only shows when
+ *     there was no list at all). Cards only re-draw when their own data
+ *     changes (memoised rows), and the list draws 8 cards at a time.
  *
  * Not here on purpose (VC-31, not approved for the MVP): the map, genre
  * filters, the featured host card, photos and clips.
@@ -56,11 +64,13 @@
  * while already here scrolls the list back to the top (useScrollToTop).
  */
 import { useFocusEffect, useRouter, useScrollToTop } from 'expo-router';
+import type { SectionListData, SectionListRenderItem } from 'react-native';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Animated,
   AppState,
+  Platform,
   RefreshControl,
   SectionList,
   StyleSheet,
@@ -94,7 +104,7 @@ import type { PublicEvent } from '@/lib/tonight';
 import { LIST_VIBE_REFRESH_MS } from '@/lib/vibe';
 import { getEventsVibe } from '@/lib/vibe-api';
 import type { Vibe } from '@/lib/vibe';
-import { colors, iconSize, radius, spacing, typography } from '@/theme';
+import { colors, iconSize, motion, radius, spacing, typography } from '@/theme';
 
 /** "This week"'s empty-state words (exported so tests use the same words). */
 const WEEK_EMPTY = filterEmptyText(THIS_WEEK, new Date());
@@ -107,7 +117,18 @@ export const SHOW_WEEK_LABEL = 'Show this week';
 /** The button under the last card when more events follow (VC-66). */
 export const LOAD_MORE_LABEL = 'Load more events';
 /** How long the list takes to fade in when a new load lands (VC-72). */
-export const LIST_FADE_MS = 200;
+export const LIST_FADE_MS = motion.base.duration;
+/**
+ * How strong the old list stays while a new filter's list loads (VC-76): 40%,
+ * so it reads as "on its way out" without the screen going blank.
+ */
+export const DIMMED_OPACITY = 0.4;
+/**
+ * A stand-in "now" for when no list is loaded. Never shown: cards are only
+ * drawn once a list is ready. Made once here (not per draw) so the memoised
+ * cards (VC-76) don't see a new value every time.
+ */
+const NO_LIST = new Date(0);
 
 /**
  * What the list is showing right now:
@@ -131,7 +152,7 @@ type ListState =
 export default function HomeScreen() {
   const router = useRouter();
   // The list, so a tap on the already-open Tonight tab can scroll it to the top.
-  const listRef = useRef<SectionList<PublicEvent>>(null);
+  const listRef = useRef<SectionList<PublicEvent, { title: string }>>(null);
   // The cast only quiets a typing gap: React Native 0.88's SectionList type
   // doesn't match the hook's older "scrollable" type, but at run time the
   // hook finds the list's scroll view (getScrollResponder) and scrolls it.
@@ -172,10 +193,15 @@ export default function HomeScreen() {
   // card, so 100 cards don't each ask the phone.
   const reduceMotion = useReduceMotion();
   const [listOpacity] = useState(() => new Animated.Value(1));
-  // The moment of the list on screen: it changes on every first load, filter
-  // change, "Try again" and pull to refresh, but NOT when "Load more" adds a
-  // page (that keeps the first page's moment), so only real refreshes fade.
-  const loadedAtMs = state.kind === 'ready' ? state.loadedAt.getTime() : null;
+  // VC-76: counts the lists that should fade in. It goes up only when the
+  // first load, a filter change or "Try again" lands (the effect further
+  // down), never on pull to refresh, the minute vibe refresh or "Load
+  // more". Before VC-76 the fade followed the list's load moment, which
+  // pull to refresh also changes, so the list blinked on every refresh.
+  const [fadeKey, setFadeKey] = useState(0);
+  // VC-76: true while a new filter's list loads and the old list is still
+  // on screen (dimmed, untappable).
+  const [dimmed, setDimmed] = useState(false);
 
   // VC-72 cross-fade: when a new list lands, start it see-through and fade
   // it in over 200 ms, so the swap from skeleton or old list feels soft.
@@ -183,7 +209,7 @@ export default function HomeScreen() {
   // A layout effect runs before the new list is drawn, so it never flashes
   // at full strength for one frame before the fade starts.
   useLayoutEffect(() => {
-    if (loadedAtMs === null) return undefined;
+    if (fadeKey === 0) return undefined;
     if (!motionAllowed(reduceMotion)) {
       listOpacity.setValue(1);
       return undefined;
@@ -203,7 +229,7 @@ export default function HomeScreen() {
     };
     // Only a new list should fade, not a Reduce Motion change mid-way.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadedAtMs]);
+  }, [fadeKey]);
 
   // The events on screen as "id|start time" pairs, joined into one string so
   // the effect below only restarts when the list of events really changes.
@@ -269,6 +295,10 @@ export default function HomeScreen() {
     const seq = ++loadSeq.current;
     listHomeEvents(now, filter).then((outcome) => {
       if (!active || seq !== loadSeq.current) return;
+      // VC-76: the old list (if one was kept, dimmed) gives way now, and a
+      // newly landed list fades in.
+      setDimmed(false);
+      if (outcome.ok) setFadeKey((n) => n + 1);
       setState(
         outcome.ok
           ? {
@@ -287,18 +317,23 @@ export default function HomeScreen() {
   }, [attempt, filter]);
 
   /**
-   * A new filter was picked: show the spinner and load its events (the
-   * effect above does the loading).
+   * A new filter was picked: load its events (the effect above does the
+   * loading). VC-76: if a list is on screen, keep it there, dimmed and
+   * untappable, until the new list lands; otherwise show the skeleton.
    *
    * @param next - the filter picked.
    */
-  const chooseFilter = useCallback((next: DateFilter) => {
-    setFilter(next);
-    setState({ kind: 'loading' });
-    setRefreshError(null);
-    // The "where to find your new event" note was about the old filter.
-    setCreatedNote(null);
-  }, []);
+  const chooseFilter = useCallback(
+    (next: DateFilter) => {
+      setFilter(next);
+      if (state.kind === 'ready') setDimmed(true);
+      else setState({ kind: 'loading' });
+      setRefreshError(null);
+      // The "where to find your new event" note was about the old filter.
+      setCreatedNote(null);
+    },
+    [state.kind],
+  );
 
   /** "Try again" after a failed first load: back to the spinner, then reload. */
   const retry = useCallback(() => {
@@ -352,6 +387,8 @@ export default function HomeScreen() {
    */
   const loadMore = useCallback(async () => {
     if (state.kind !== 'ready' || !state.hasMore || state.events.length === 0) return;
+    // VC-76: the dimmed list belongs to the old filter; never add to it.
+    if (dimmed) return;
     if (loadingMoreRef.current) return;
     loadingMoreRef.current = true;
     setLoadingMore(true);
@@ -384,7 +421,7 @@ export default function HomeScreen() {
         hasMore: outcome.hasMore === true,
       };
     });
-  }, [state, filter]);
+  }, [state, filter, dimmed]);
 
   // VC-63b: back from New event with a new event saved? Reload the list (the
   // screen stayed open underneath, so it wouldn't reload by itself), and if
@@ -400,10 +437,50 @@ export default function HomeScreen() {
     }, [filter, refresh]),
   );
 
-  /** Opens an event's page, e.g. /event/1234. */
+  /** Opens an event's page, e.g. /event/1234. One function shared by every card. */
   const openEvent = useCallback(
     (id: string) => router.push({ pathname: '/event/[id]', params: { id } }),
     [router],
+  );
+
+  // --- VC-76 list speed (spec 3d) -----------------------------------------
+  // The night sections, rebuilt only when the list itself changes (before
+  // VC-76 they were rebuilt on every draw, which re-drew every card).
+  const sections = useMemo(
+    () => (state.kind === 'ready' ? groupByDay(state.events, state.loadedAt) : []),
+    [state],
+  );
+  // "Now" for every card, worked out once per draw: the later of the
+  // list's load time and the last vibe refresh, so "has it started?" moves
+  // on with the minute refresh.
+  const loadedAt = state.kind === 'ready' ? state.loadedAt : null;
+  const listNow = loadedAt && clock && clock > loadedAt ? clock : (loadedAt ?? NO_LIST);
+  // VC-72: the 0.98 press scale, only when motion is allowed.
+  const animatePress = motionAllowed(reduceMotion);
+
+  /** Draws one card. Kept steady so unchanged cards aren't re-drawn. */
+  const renderItem = useCallback<SectionListRenderItem<PublicEvent, { title: string }>>(
+    ({ item }) => (
+      <EventCard
+        event={item}
+        now={listNow}
+        // Only this card's vibe, so a card re-draws only when it changes.
+        vibe={vibes[item.id]}
+        onPress={openEvent}
+        animatePress={animatePress}
+      />
+    ),
+    [listNow, vibes, openEvent, animatePress],
+  );
+
+  /** Draws one night's heading ("TONIGHT", "TOMORROW", ...). */
+  const renderSectionHeader = useCallback(
+    ({ section }: { section: SectionListData<PublicEvent, { title: string }> }) => (
+      <Text style={styles.sectionTitle} accessibilityRole="header">
+        {section.title.toUpperCase()}
+      </Text>
+    ),
+    [],
   );
 
   return (
@@ -443,74 +520,74 @@ export default function HomeScreen() {
       {state.kind === 'ready' ? (
         // The list's fade-in wrapper (VC-72); testID lets tests read its opacity.
         <Animated.View style={[styles.fill, { opacity: listOpacity }]} testID="tonight-list-fade">
-          <SectionList
-            ref={listRef}
-            testID="tonight-list"
-            sections={groupByDay(state.events, state.loadedAt)}
-            keyExtractor={(event) => event.id}
-            renderItem={({ item }) => (
-              <EventCard
-                event={item}
-                // The later of the list's load time and the last vibe refresh,
-                // so "has it started?" moves on with the minute refresh.
-                now={clock && clock > state.loadedAt ? clock : state.loadedAt}
-                vibe={vibes[item.id]}
-                onPress={() => openEvent(item.id)}
-                // VC-72: the 0.98 press scale, only when motion is allowed.
-                animatePress={motionAllowed(reduceMotion)}
-              />
-            )}
-            renderSectionHeader={({ section }) => (
-              <Text style={styles.sectionTitle} accessibilityRole="header">
-                {section.title.toUpperCase()}
-              </Text>
-            )}
-            // Section headings scroll away with their cards instead of sticking.
-            stickySectionHeadersEnabled={false}
-            ItemSeparatorComponent={Gap}
-            ListHeaderComponent={
-              refreshError ? (
-                <View style={styles.refreshError}>
-                  <FormMessage message={refreshError} />
-                </View>
-              ) : undefined
-            }
-            // VC-66: near the end of the list, load the next page (if any).
-            onEndReached={state.hasMore ? () => void loadMore() : undefined}
-            onEndReachedThreshold={0.5}
-            ListFooterComponent={
-              state.hasMore ? (
-                <View style={styles.loadMore}>
-                  {loadMoreError ? <FormMessage message={loadMoreError} /> : null}
-                  <Button
-                    label={LOAD_MORE_LABEL}
-                    variant="outline"
-                    size="small"
-                    busy={loadingMore}
-                    busyLabel="Loading..."
-                    onPress={() => void loadMore()}
-                  />
-                </View>
-              ) : undefined
-            }
-            ListEmptyComponent={
-              <EmptyState
-                filter={filter}
-                onShowWeek={filter.kind === 'week' ? null : () => chooseFilter(THIS_WEEK)}
-              />
-            }
-            contentContainerStyle={styles.listContent}
-            // Pull down to refresh. The spinner is gold to match the theme.
-            refreshControl={
-              <RefreshControl
-                refreshing={refreshing}
-                onRefresh={refresh}
-                tintColor={colors.accent}
-                colors={[colors.accent]}
-                progressBackgroundColor={colors.surface}
-              />
-            }
-          />
+          {/* VC-76: while a new filter loads, the old list stays at 40% and
+              ignores touches ("none"), so nothing old can be opened. */}
+          <View
+            style={[styles.fill, dimmed && styles.dimmed]}
+            pointerEvents={dimmed ? 'none' : 'auto'}
+            testID="tonight-list-dim"
+          >
+            <SectionList
+              ref={listRef}
+              testID="tonight-list"
+              sections={sections}
+              keyExtractor={(event) => event.id}
+              renderItem={renderItem}
+              renderSectionHeader={renderSectionHeader}
+              // VC-76: draw 8 cards first and per batch, keep about 7 screens'
+              // worth around the visible part, and (Android only, where it
+              // helps most) drop cards far off screen from the drawing.
+              initialNumToRender={8}
+              maxToRenderPerBatch={8}
+              windowSize={7}
+              removeClippedSubviews={Platform.OS === 'android'}
+              // Section headings scroll away with their cards instead of sticking.
+              stickySectionHeadersEnabled={false}
+              ItemSeparatorComponent={Gap}
+              ListHeaderComponent={
+                refreshError ? (
+                  <View style={styles.refreshError}>
+                    <FormMessage message={refreshError} />
+                  </View>
+                ) : undefined
+              }
+              // VC-66: near the end of the list, load the next page (if any).
+              onEndReached={state.hasMore ? () => void loadMore() : undefined}
+              onEndReachedThreshold={0.5}
+              ListFooterComponent={
+                state.hasMore ? (
+                  <View style={styles.loadMore}>
+                    {loadMoreError ? <FormMessage message={loadMoreError} /> : null}
+                    <Button
+                      label={LOAD_MORE_LABEL}
+                      variant="outline"
+                      size="small"
+                      busy={loadingMore}
+                      busyLabel="Loading..."
+                      onPress={() => void loadMore()}
+                    />
+                  </View>
+                ) : undefined
+              }
+              ListEmptyComponent={
+                <EmptyState
+                  filter={filter}
+                  onShowWeek={filter.kind === 'week' ? null : () => chooseFilter(THIS_WEEK)}
+                />
+              }
+              contentContainerStyle={styles.listContent}
+              // Pull down to refresh. The spinner is gold to match the theme.
+              refreshControl={
+                <RefreshControl
+                  refreshing={refreshing}
+                  onRefresh={refresh}
+                  tintColor={colors.accent}
+                  colors={[colors.accent]}
+                  progressBackgroundColor={colors.surface}
+                />
+              }
+            />
+          </View>
         </Animated.View>
       ) : null}
     </SafeAreaView>
@@ -613,6 +690,8 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
   // The fade wrapper fills the space under the header, like the list did.
   fill: { flex: 1 },
+  // VC-76: the old list while a new filter loads.
+  dimmed: { opacity: DIMMED_OPACITY },
   // Q4 spec 2.5: 20 below the safe area (SafeAreaView adds the inset), 16
   // at the sides, 12 below, and a 16 gap between the title and the chips.
   header: {

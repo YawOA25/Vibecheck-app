@@ -22,7 +22,7 @@ import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { FormMessage } from '@/components/FormMessage';
 import { isAllowedEntryUrl } from '@/lib/event-form';
-import { colors, minTapTarget, spacing, typography } from '@/theme';
+import { colors, minTapTarget, motion, spacing, typography } from '@/theme';
 
 /** The words used on screen (exported so tests use the same text). */
 export const ENTRY_LINK_LABEL = 'How to get in';
@@ -88,6 +88,7 @@ const styles = StyleSheet.create({
     color: colors.accent,
     textDecorationLine: 'underline',
   },
-  linkPressed: { color: colors.accentPressed },
+  // VC-76: every text link fades to 60% while pressed (one rule app-wide).
+  linkPressed: { opacity: motion.linkPressedOpacity },
   disclaimer: { ...typography.caption, color: colors.muted, textAlign: 'center' },
 });

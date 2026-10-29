@@ -14,8 +14,8 @@
 import { Text } from 'react-native';
 import { renderRouter, screen } from 'expo-router/testing-library';
 
-import TabsLayout from '../app/(tabs)/_layout';
-import RootLayout from '../app/_layout';
+import TabsLayout, { TAB_CROSSFADE, tabTransition } from '../app/(tabs)/_layout';
+import RootLayout, { ROUTE_OPTIONS } from '../app/_layout';
 import { useAuth } from '@/lib/auth-context';
 
 jest.mock('@/lib/supabase', () => ({ isSupabaseConfigured: true, supabase: {} }));
@@ -254,5 +254,47 @@ describe('Settings and the legal screens (VC-B13, VC-32b)', () => {
     await openWithLegal('signedOut', '/settings');
     expect(await screen.findByText('Sign-in screen')).toBeOnTheScreen();
     expect(screen.queryByText('Settings screen')).toBeNull();
+  });
+});
+
+/**
+ * VC-76: how each kind of screen arrives and leaves (design/vc76-motion-
+ * spec.md section 1). A snapshot of the settings, so a change is deliberate.
+ */
+describe('screen transitions (VC-76)', () => {
+  it('gives every kind of route its presentation and gesture settings', () => {
+    expect(ROUTE_OPTIONS).toEqual({
+      // Event, settings, terms, privacy, reports, moderate.
+      push: { animation: 'default', fullScreenGestureEnabled: true },
+      // New and Edit event: only an edge swipe goes back.
+      form: { animation: 'default', fullScreenGestureEnabled: false },
+      // Rate, party code, recap: sheets from the bottom.
+      modal: { presentation: 'modal' },
+      // Check-in keeps the Q7 see-through sheet.
+      checkIn: {
+        presentation: 'transparentModal',
+        animation: 'fade',
+        contentStyle: { backgroundColor: 'transparent' },
+      },
+      // Sign-in, age gate, sorry and the tabs: a 200 ms fade, no swipe back.
+      swap: { animation: 'fade', animationDuration: 200, gestureEnabled: false },
+    });
+  });
+
+  it('tabs: a 150 ms cross-fade behind one switch, 100 ms under Reduce Motion, or instant', () => {
+    // The founder's switch is on (the designer's recommendation) for now.
+    expect(TAB_CROSSFADE).toBe(true);
+    expect(tabTransition(true, false)).toMatchObject({
+      animation: 'fade',
+      transitionSpec: { animation: 'timing', config: { duration: 150 } },
+    });
+    expect(tabTransition(true, true)).toMatchObject({
+      transitionSpec: { config: { duration: 100 } },
+    });
+    // Not answered yet counts as Reduce Motion on.
+    expect(tabTransition(true, null)).toMatchObject({
+      transitionSpec: { config: { duration: 100 } },
+    });
+    expect(tabTransition(false, false)).toEqual({ animation: 'none' });
   });
 });

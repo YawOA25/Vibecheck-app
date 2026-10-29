@@ -19,7 +19,6 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
-  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -29,13 +28,16 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BackButton } from '@/components/BackButton';
+import { FadeIn } from '@/components/FadeIn';
+import { PressableScale } from '@/components/PressableScale';
 import { FormMessage } from '@/components/FormMessage';
 import { Tag } from '@/components/Tag';
 import { reasonCountsText, waitingText } from '@/lib/moderation';
 import { getTagReports } from '@/lib/moderation-api';
 import type { TagReportGroup } from '@/lib/moderation-api';
 import { headsUpLabel } from '@/lib/rating';
-import { colors, radius, spacing, typography } from '@/theme';
+import { useDelayedFlag } from '@/lib/use-delayed-flag';
+import { colors, motion, radius, spacing, typography } from '@/theme';
 
 /** The screen's words (exported so tests use the same text). */
 export const QUEUE_TITLE = 'Reports';
@@ -94,6 +96,9 @@ export default function ReportsScreen() {
     else router.replace('/');
   }, [router]);
 
+  // VC-76: the spinner only after 300 ms of loading (no flash on fast loads).
+  const showSpinner = useDelayedFlag(state.kind === 'loading');
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.topBar}>
@@ -117,15 +122,19 @@ export default function ReportsScreen() {
         <Text style={styles.muted}>{QUEUE_HINT}</Text>
 
         {state.kind === 'loading' ? (
-          <ActivityIndicator color={colors.accent} accessibilityLabel="Loading reports" />
+          <View accessible accessibilityLabel="Loading reports" style={styles.spinnerSpace}>
+            {showSpinner ? <ActivityIndicator color={colors.accent} /> : null}
+          </View>
         ) : null}
         {state.kind === 'error' ? <FormMessage message={state.message} /> : null}
         {state.kind === 'ready' && state.groups.length === 0 ? (
           <Text style={styles.muted}>{QUEUE_EMPTY}</Text>
         ) : null}
 
-        {state.kind === 'ready'
-          ? state.groups.map((group) => {
+        {/* VC-76: the loaded queue fades in once; pull to refresh swaps it in place. */}
+        {state.kind === 'ready' && state.groups.length > 0 ? (
+          <FadeIn style={styles.list}>
+            {state.groups.map((group) => {
               const tag = headsUpLabel(group.tag) ?? group.tag;
               const counts = `${group.reports} ${group.reports === 1 ? 'report' : 'reports'} · ${
                 group.votes
@@ -134,7 +143,9 @@ export default function ReportsScreen() {
               // VC-65: counts per reason, e.g. "Not true 2 · Spam or fake 1".
               const reasons = reasonCountsText(group.reasons);
               return (
-                <Pressable
+                // VC-76: a card shrinks to 0.97 while pressed.
+                <PressableScale
+                  scaleTo={motion.pressScale.row}
                   key={`${group.eventId}-${group.tag}`}
                   accessibilityRole="button"
                   accessibilityLabel={`${tag} at ${group.eventTitle}, ${counts}${
@@ -156,10 +167,11 @@ export default function ReportsScreen() {
                   <Text style={styles.muted}>{counts}</Text>
                   {reasons ? <Text style={styles.body}>{reasons}</Text> : null}
                   <Text style={group.overdue ? styles.overdue : styles.muted}>{waiting}</Text>
-                </Pressable>
+                </PressableScale>
               );
-            })
-          : null}
+            })}
+          </FadeIn>
+        ) : null}
       </ScrollView>
     </SafeAreaView>
   );
@@ -184,5 +196,9 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
   },
   pressed: { backgroundColor: colors.surfaceRaised },
+  // The cards keep the page's 12 px gap inside their fade wrapper (VC-76).
+  list: { gap: spacing.gap12 },
+  // Room for the (delayed) spinner, so the hint above doesn't jump (VC-76).
+  spinnerSpace: { minHeight: 20, alignItems: 'center' },
   cardHead: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
 });

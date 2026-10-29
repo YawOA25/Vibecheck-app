@@ -27,8 +27,17 @@ const mockPush = jest.fn();
 let mockParams: Record<string, string> = {};
 /** Re-runs the focus effect: the Me tab losing and regaining focus. */
 let mockRefocus: () => void = () => {};
+/** VC-76: "See your nights out" closes the recap back to Me. */
+const mockDismissTo = jest.fn();
 jest.mock('expo-router', () => ({
-  useRouter: () => ({ push: mockPush, back: jest.fn(), replace: jest.fn(), canGoBack: () => true }),
+  useRouter: () => ({
+    push: mockPush,
+    back: jest.fn(),
+    replace: jest.fn(),
+    // VC-76: the recap sheet closes back down to Me.
+    dismissTo: mockDismissTo,
+    canGoBack: () => true,
+  }),
   // Me is a tab (Q4): its list scrolls to the top on a tab tap; a no-op here.
   useScrollToTop: () => undefined,
   // Outside a real navigator the screen comes "into view" once, like a
@@ -146,7 +155,10 @@ describe('Your night (recap)', () => {
     await render(<RecapScreen />);
     expect(await screen.findByText('Nothing to recap yet')).toBeOnTheScreen();
     await fireEvent.press(screen.getByRole('button', { name: 'See your nights out' }));
-    expect(mockPush).toHaveBeenCalledWith('/me');
+    // VC-76: it closes the recap sheet back to the Me tab, never stacking
+    // a second Me inside the sheet.
+    expect(mockDismissTo).toHaveBeenCalledWith('/me');
+    expect(mockPush).not.toHaveBeenCalledWith('/me');
   });
 
   it('error: shows the message and "Try again" loads again', async () => {

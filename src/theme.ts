@@ -13,6 +13,7 @@
  * `as const` tells TypeScript these values never change, so it can catch
  * typos like `colors.backgorund` at compile time.
  */
+import { Easing } from 'react-native';
 
 /**
  * Colour tokens. The numbers in the notes are contrast ratios (how readable
@@ -184,3 +185,41 @@ export const typography = {
  * so the hero headline still fits on screen. Other text grows without a cap.
  */
 export const headlineMaxScale = 1.3;
+
+/**
+ * Motion tokens (VC-76, design/vc76-motion-spec.md "Shared tokens").
+ *
+ * Why they live here: every fade, press and slide in the app uses the same
+ * few speeds and curves, so the app feels like one thing. Change a number
+ * here and every screen follows.
+ *
+ * Easing curves say how a movement speeds up or slows down. "out" curves
+ * start fast and settle gently (good for things arriving); "in" curves start
+ * slow and leave fast (good for things going away).
+ */
+export const motion = {
+  /** Press in and out, chip state changes: 120 ms. */
+  fast: { duration: 120, easing: Easing.out(Easing.quad) },
+  /** Content fading in, the switch thumb: 200 ms. */
+  base: { duration: 200, easing: Easing.out(Easing.cubic) },
+  /** The check-in sheet: 280 ms up, 220 ms down. */
+  sheetIn: { duration: 280, easing: Easing.out(Easing.cubic) },
+  sheetOut: { duration: 220, easing: Easing.in(Easing.cubic) },
+  /** The tab cross-fade (founder's choice, see app/(tabs)/_layout.tsx): 150 ms. */
+  tabFade: 150,
+  /** The sign-in screens' fade (sign-in, age gate, sorry, and the tabs group): 200 ms. */
+  authFade: 200,
+  /**
+   * Under Reduce Motion, fades are still allowed (nothing moves) but get
+   * shorter: 100 ms (spec section 4).
+   */
+  reducedFade: 100,
+  /** Show a loading spinner only if loading takes longer than this (300 ms). */
+  spinnerDelay: 300,
+  /** How small things get while pressed (1 = normal size). */
+  pressScale: { row: 0.97, card: 0.98, button: 0.98, circle: 0.96 },
+  /** The release "spring" back to full size: quick, with no wobble. */
+  releaseSpring: { speed: 40, bounciness: 0 },
+  /** How see-through a text link gets while pressed. */
+  linkPressedOpacity: 0.6,
+} as const;

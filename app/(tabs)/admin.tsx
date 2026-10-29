@@ -19,12 +19,13 @@
  */
 import { useRouter } from 'expo-router';
 import type { Href } from 'expo-router';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon } from '@/components/Icon';
+import { PressableScale } from '@/components/PressableScale';
 import type { IconName } from '@/components/Icon';
-import { colors, iconSize, radius, spacing, typography } from '@/theme';
+import { colors, iconSize, motion, radius, spacing, typography } from '@/theme';
 
 /** The hub's title (exported so tests use the same words). */
 export const ADMIN_TITLE = 'Run the night';
@@ -88,7 +89,9 @@ export default function AdminHubScreen() {
  */
 function HubRow({ row, onPress }: { row: HubRowInfo; onPress: () => void }) {
   return (
-    <Pressable
+    // VC-76: shrinks to 0.97 while pressed (not under Reduce Motion).
+    <PressableScale
+      scaleTo={motion.pressScale.row}
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={`${row.label}. ${row.sub}.`}
@@ -100,7 +103,7 @@ function HubRow({ row, onPress }: { row: HubRowInfo; onPress: () => void }) {
         <Text style={styles.rowSub}>{row.sub}</Text>
       </View>
       <Icon name="chevron-right" size={iconSize.md} color={colors.muted} />
-    </Pressable>
+    </PressableScale>
   );
 }
 

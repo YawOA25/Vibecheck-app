@@ -27,7 +27,6 @@ import { useEffect, useState } from 'react';
 import {
   Keyboard,
   KeyboardAvoidingView,
-  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -48,6 +47,7 @@ import { describeSignInError } from '@/lib/auth-errors';
 import { SIGN_IN_ART_SEED } from '@/lib/generated-art';
 import { cleanCode, cleanEmail, EMAIL_CODE_LENGTH, looksLikeEmail } from '@/lib/sign-in-input';
 import { supabase } from '@/lib/supabase';
+import { FORM_SCROLL_PROPS, KEYBOARD_BEHAVIOR } from '@/lib/keyboard';
 import { colors, fonts, spacing, typography } from '@/theme';
 
 /**
@@ -219,9 +219,10 @@ export default function SignInScreen() {
         {/* Pushes the form up so the keyboard doesn't cover it on iPhone. */}
         <KeyboardAvoidingView
           style={styles.flex}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          // VC-76: room for the keyboard on both platforms (src/lib/keyboard.ts).
+          behavior={KEYBOARD_BEHAVIOR}
         >
-          <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+          <ScrollView contentContainerStyle={styles.scroll} {...FORM_SCROLL_PROPS}>
             {step === 'email' ? (
               <>
                 {/* Hero block: wordmark at the top, headline at the bottom. */}

@@ -24,12 +24,24 @@
  *     Crowd choices. Screen readers then say "radio button, 2 of 3" and
  *     "checked". Put radio chips inside a View with
  *     accessibilityRole="radiogroup" so they are read as one group.
+ *
+ * Selection motion (VC-76, design/vc76-motion-spec.md 3b): the picked
+ * colour is a separate layer inside the chip (`chip-selected-layer`) whose
+ * opacity fades in or out over 120 ms, on the phone's UI thread (a
+ * background colour itself can't be animated there). Becoming picked also
+ * gives a small one-time "pop" (96% back to full size). Under Reduce
+ * Motion the fade stays but takes 100 ms, and there is no pop. Nothing
+ * animates when the chip first appears, only when its pick changes.
  */
-import { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Icon } from '@/components/Icon';
-import { colors, iconSize, minTapTarget, radius, spacing, typography } from '@/theme';
+import { motionAllowed, reduceMotionNow } from '@/lib/reduce-motion';
+import { colors, iconSize, minTapTarget, motion, radius, spacing, typography } from '@/theme';
+
+/** The size a chip "pops" from when it becomes picked (VC-76). */
+export const CHIP_POP_SCALE = 0.96;
 
 /** What a ChoiceChip needs. */
 export interface ChoiceChipProps {
@@ -86,48 +98,97 @@ export function ChoiceChip({
   // A picked chip with a solid gold fill: every picked block, and pills
   // that ask for the single-select look. Their check and words go dark.
   const solid = shape === 'block' || pickedFill === 'solid';
+
+  // VC-76: the picked layer's opacity (1 = picked colour fully shown) and
+  // the chip's size for the pop. Kept in state so they are made once.
+  const [layer] = useState(() => new Animated.Value(selected ? 1 : 0));
+  const [pop] = useState(() => new Animated.Value(1));
+  // The pick as of the last run, so the first appearance doesn't animate.
+  const lastSelected = useRef(selected);
+  useEffect(() => {
+    if (lastSelected.current === selected) return undefined;
+    lastSelected.current = selected;
+    const moving = motionAllowed(reduceMotionNow());
+    const fade = Animated.timing(layer, {
+      toValue: selected ? 1 : 0,
+      // Fades are fine under Reduce Motion, just shorter (100 ms).
+      duration: moving ? motion.fast.duration : motion.reducedFade,
+      easing: motion.fast.easing,
+      useNativeDriver: true,
+    });
+    fade.start();
+    if (selected && moving) {
+      // The one-time pop: start a touch small, settle at full size.
+      pop.setValue(CHIP_POP_SCALE);
+      Animated.timing(pop, {
+        toValue: 1,
+        duration: motion.fast.duration,
+        easing: motion.fast.easing,
+        useNativeDriver: true,
+      }).start();
+    }
+    return () => fade.stop();
+  }, [selected, layer, pop]);
+
   return (
-    <Pressable
-      onPress={onPress}
-      disabled={disabled}
-      onFocus={() => setFocused(true)}
-      onBlur={() => setFocused(false)}
-      accessibilityRole={role}
-      accessibilityLabel={accessibilityLabel ?? label}
-      accessibilityHint={accessibilityHint}
-      // A radio says "checked" / "not checked"; a button says "selected".
-      accessibilityState={
-        role === 'radio'
-          ? { checked: selected, disabled: Boolean(disabled) }
-          : { selected, disabled: Boolean(disabled) }
-      }
-      style={({ pressed }) => [
-        styles.base,
-        shape === 'block' ? styles.block : styles.pill,
-        selected && (solid ? styles.blockSelected : styles.pillSelected),
-        pressed && !selected && styles.pressed,
-        focused && styles.focused,
-      ]}
+    // The popping wrapper. Blocks share a row's width, so it takes their flex.
+    <Animated.View
+      style={[shape === 'block' && styles.blockOuter, { transform: [{ scale: pop }] }]}
+      testID="chip-pop"
     >
-      <View style={styles.content}>
-        {/* The check mark (a line icon since Q4) makes "picked" visible
+      <Pressable
+        onPress={onPress}
+        disabled={disabled}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        accessibilityRole={role}
+        accessibilityLabel={accessibilityLabel ?? label}
+        accessibilityHint={accessibilityHint}
+        // A radio says "checked" / "not checked"; a button says "selected".
+        accessibilityState={
+          role === 'radio'
+            ? { checked: selected, disabled: Boolean(disabled) }
+            : { selected, disabled: Boolean(disabled) }
+        }
+        style={({ pressed }) => [
+          styles.base,
+          shape === 'block' ? styles.block : styles.pill,
+          // The picked EDGE changes at once; the picked FILL is the layer below.
+          selected && (solid ? styles.blockSelectedEdge : styles.pillSelectedEdge),
+          pressed && !selected && styles.pressed,
+          focused && styles.focused,
+        ]}
+      >
+        {/* VC-76: the picked fill, fading in and out. Decoration only. */}
+        <Animated.View
+          testID="chip-selected-layer"
+          pointerEvents="none"
+          style={[
+            styles.layer,
+            solid ? styles.blockSelected : styles.pillSelected,
+            { opacity: layer },
+          ]}
+        />
+        <View style={styles.content}>
+          {/* The check mark (a line icon since Q4) makes "picked" visible
             without relying on colour. It matches the label's colour: dark
             on a gold block, gold on a pill. Screen readers skip it and
             hear "selected" instead. */}
-        {selected ? (
-          <Icon name="check" size={iconSize.sm} color={solid ? colors.onAccent : colors.accent} />
-        ) : null}
-        <Text
-          style={[
-            styles.label,
-            shape === 'block' ? styles.blockText : styles.pillText,
-            selected && (solid ? styles.blockTextSelected : styles.pillTextSelected),
-          ]}
-        >
-          {label}
-        </Text>
-      </View>
-    </Pressable>
+          {selected ? (
+            <Icon name="check" size={iconSize.sm} color={solid ? colors.onAccent : colors.accent} />
+          ) : null}
+          <Text
+            style={[
+              styles.label,
+              shape === 'block' ? styles.blockText : styles.pillText,
+              selected && (solid ? styles.blockTextSelected : styles.pillTextSelected),
+            ]}
+          >
+            {label}
+          </Text>
+        </View>
+      </Pressable>
+    </Animated.View>
   );
 }
 
@@ -139,7 +200,15 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.fieldBorder,
     backgroundColor: colors.surface,
+    // Keeps the picked layer inside the rounded corners.
+    overflow: 'hidden',
   },
+  // A block's wrapper takes the block's share of the row (VC-76).
+  blockOuter: { flex: 1 },
+  // The picked fill layer covers the whole chip, behind the words.
+  layer: { ...StyleSheet.absoluteFill },
+  blockSelectedEdge: { borderColor: colors.accent },
+  pillSelectedEdge: { borderColor: colors.accent },
   // v3: 48 px tall, radius 14, three to a row.
   block: { flex: 1, minHeight: 48, borderRadius: radius.field, paddingHorizontal: spacing.xs },
   // Solid gold: picked blocks, and picked pills with pickedFill 'solid'.

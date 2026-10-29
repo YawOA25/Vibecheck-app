@@ -30,12 +30,21 @@
  * (the plan's polling). It stops when the guest leaves the page or the app
  * goes to the background, so it doesn't use data for nothing. If a refresh
  * fails, the last good reading stays on screen.
+ *
+ * Smoothness (VC-76, design/vc76-motion-spec.md 2c and 2f): while the
+ * first answer loads, the card already holds the space of the lines and
+ * tiles under the gauge (two text-line blocks and a row of three tile
+ * blocks), so it doesn't grow when the answer lands; the lines then fade in
+ * (src/components/FadeIn.tsx). `sweepReady` is passed on to the gauge,
+ * which holds its first sweep until the event page has finished sliding in.
  */
 import { useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { AccessibilityInfo, AppState, StyleSheet, Text, View } from 'react-native';
 
-import { BreakdownTiles } from '@/components/BreakdownTiles';
+import { BreakdownTiles, TILE_HEIGHT, TILES_TOP_GAP } from '@/components/BreakdownTiles';
+import { FadeIn } from '@/components/FadeIn';
+import { SkeletonBlock, SkeletonGroup } from '@/components/Skeleton';
 import { TwoWaySwitch } from '@/components/TwoWaySwitch';
 import { VibeMeter } from '@/components/VibeMeter';
 import {
@@ -60,6 +69,11 @@ export interface LiveVibeCardProps {
   ended: boolean;
   /** Changing this number loads the vibe again straight away. */
   refreshKey: number;
+  /**
+   * false holds the gauge's first sweep (VC-76): the event page passes
+   * false until its slide-in has finished. Default true (start at once).
+   */
+  sweepReady?: boolean;
 }
 
 /** What the card is showing: loading, an error (nothing loaded yet), or a vibe. */
@@ -155,7 +169,7 @@ export function shownFor(vibe: Vibe, picked: VibeView): Shown {
  *
  * @returns the card view.
  */
-export function LiveVibeCard({ eventId, ended, refreshKey }: LiveVibeCardProps) {
+export function LiveVibeCard({ eventId, ended, refreshKey, sweepReady = true }: LiveVibeCardProps) {
   const [state, setState] = useState<CardState>({ kind: 'loading' });
   // The switch's choice. Starts on Live each time the card (page) opens.
   const [picked, setPicked] = useState<VibeView>('live');
@@ -193,7 +207,12 @@ export function LiveVibeCard({ eventId, ended, refreshKey }: LiveVibeCardProps) 
     }, [eventId, refreshKey]),
   );
 
-  const shown = state.kind === 'ready' ? shownFor(state.vibe, picked) : SHOWN_BEFORE_LOAD;
+  // Worked out only when the answer or the switch changes (VC-76), so the
+  // gauge (memoised) gets the same vibe object and isn't re-drawn mid-sweep.
+  const shown = useMemo(
+    () => (state.kind === 'ready' ? shownFor(state.vibe, picked) : SHOWN_BEFORE_LOAD),
+    [state, picked],
+  );
 
   /**
    * Switches the view and tells screen-reader users what the gauge says now.
@@ -231,11 +250,21 @@ export function LiveVibeCard({ eventId, ended, refreshKey }: LiveVibeCardProps) 
         view={shown.view}
         loading={state.kind === 'loading'}
         blank={state.kind === 'error'}
+        sweepReady={sweepReady}
       />
+
+      {/* VC-76: hold the space of the lines and tiles while loading. */}
+      {state.kind === 'loading' ? <LinesSkeleton /> : null}
 
       {state.kind === 'error' ? <Text style={styles.body}>{VIBE_LOAD_ERROR}</Text> : null}
 
-      {state.kind === 'ready' ? <VibeLines vibe={state.vibe} shown={shown} ended={ended} /> : null}
+      {state.kind === 'ready' ? (
+        // Fades in once, when the first answer lands; later polls swap the
+        // words in place (no fade, no blink).
+        <FadeIn style={styles.lines} testID="live-vibe-lines">
+          <VibeLines vibe={state.vibe} shown={shown} ended={ended} />
+        </FadeIn>
+      ) : null}
     </View>
   );
 }
@@ -270,8 +299,45 @@ function VibeLines({ vibe, shown, ended }: { vibe: Vibe; shown: Shown; ended: bo
   );
 }
 
+/**
+ * The space holder under the gauge while the first answer loads (VC-76):
+ * two text lines (14 px tall, 70% and 50% wide) and a row of three blocks
+ * at the real tile height.
+ *
+ * @returns the pulsing blocks (screen readers skip them; the gauge already
+ *   says "Loading the vibe").
+ */
+function LinesSkeleton() {
+  return (
+    <SkeletonGroup style={styles.lines} testID="live-vibe-skeleton">
+      <View style={styles.skeletonLines}>
+        <SkeletonBlock height={14} width="70%" />
+        <SkeletonBlock height={14} width="50%" />
+      </View>
+      <View style={styles.skeletonTiles}>
+        {[0, 1, 2].map((i) => (
+          <View key={i} style={styles.skeletonTile}>
+            <SkeletonBlock height={TILE_HEIGHT} corner={12} />
+          </View>
+        ))}
+      </View>
+    </SkeletonGroup>
+  );
+}
+
 /** Styles built only from theme tokens. */
 const styles = StyleSheet.create({
+  // The lines under the gauge: full card width, centred, 4 px apart (the
+  // card's own gap, so the FadeIn wrapper doesn't change the layout).
+  lines: { alignSelf: 'stretch', alignItems: 'center', gap: spacing.xs },
+  skeletonLines: { alignSelf: 'stretch', alignItems: 'center', gap: spacing.xs },
+  skeletonTiles: {
+    alignSelf: 'stretch',
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: TILES_TOP_GAP,
+  },
+  skeletonTile: { flex: 1 },
   card: {
     backgroundColor: colors.surface,
     borderRadius: radius.card,

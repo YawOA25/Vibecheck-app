@@ -11,9 +11,10 @@
  *   - the LIVE dot doesn't change what screen readers hear (the "On now"
  *     line already says it).
  */
-import { render, screen } from '@testing-library/react-native';
+import { fireEvent, render, screen } from '@testing-library/react-native';
+import { StyleSheet } from 'react-native';
 
-import { LIVE_LABEL, EventCard } from '@/components/EventCard';
+import { LIVE_LABEL, EventCard, showsGoldEdge } from '@/components/EventCard';
 import { wordColour } from '@/components/VibeMeter';
 import type { VibeLabel } from '@/lib/rating';
 import type { PublicEvent } from '@/lib/tonight';
@@ -154,5 +155,72 @@ describe('EventCard LIVE dot (Q5 fix #6)', () => {
     const card = screen.getByRole('button');
     expect(card.props.accessibilityLabel).not.toMatch(/live/i);
     expect(card.props.accessibilityLabel).toMatch(/On now/);
+  });
+});
+
+/**
+ * VC-77: a live (started, not ended) card whose word is Hot or Fire gets the
+ * gold goldBorder edge; every other card keeps the plain grey edge.
+ */
+describe('EventCard gold edge (VC-77)', () => {
+  /** The card's current edge colour. */
+  function edge(): string {
+    return StyleSheet.flatten(screen.getByTestId('event-card').props.style).borderColor;
+  }
+
+  it.each(['Hot', 'Fire'] as VibeLabel[])('live %s: gold edge', async (label) => {
+    await render(
+      <EventCard
+        event={makeEvent(-HOUR)}
+        now={NOW}
+        onPress={jest.fn()}
+        vibe={makeVibe({ label, score: SCORES[label] })}
+      />,
+    );
+    expect(edge()).toBe(colors.goldBorder);
+  });
+
+  it.each(['Quiet', 'Good'] as VibeLabel[])('live %s: plain edge', async (label) => {
+    await render(
+      <EventCard
+        event={makeEvent(-HOUR)}
+        now={NOW}
+        onPress={jest.fn()}
+        vibe={makeVibe({ label, score: SCORES[label] })}
+      />,
+    );
+    expect(edge()).toBe(colors.border);
+  });
+
+  it('no gold edge for a stale Hot, early, none, not started, ended, or no vibe', async () => {
+    const cases = [
+      { event: makeEvent(-HOUR), vibe: makeVibe({ state: 'stale' }) },
+      { event: makeEvent(-HOUR), vibe: makeVibe({ state: 'early', score: null, label: null }) },
+      { event: makeEvent(-HOUR), vibe: makeVibe({ state: 'none', score: null, label: null }) },
+      // Not started yet: a Hot vibe passed in is ignored (VC-61).
+      { event: makeEvent(HOUR), vibe: makeVibe() },
+      // Ended an hour ago.
+      { event: makeEvent(-5 * HOUR), vibe: makeVibe() },
+      { event: makeEvent(-HOUR), vibe: undefined },
+    ];
+    for (const { event, vibe } of cases) {
+      await render(<EventCard event={event} now={NOW} onPress={jest.fn()} vibe={vibe} />);
+      expect(edge()).toBe(colors.border);
+      await screen.unmount();
+    }
+  });
+
+  it('the rule itself: only live AND a live Hot or Fire score', () => {
+    expect(showsGoldEdge(true, makeVibe())).toBe(true);
+    expect(showsGoldEdge(false, makeVibe())).toBe(false);
+    expect(showsGoldEdge(true, undefined)).toBe(false);
+    expect(showsGoldEdge(true, makeVibe({ state: 'stale' }))).toBe(false);
+  });
+
+  it('passes the event id to onPress (VC-76: one shared handler for every card)', async () => {
+    const onPress = jest.fn();
+    await render(<EventCard event={makeEvent(-HOUR)} now={NOW} onPress={onPress} />);
+    await fireEvent.press(screen.getByRole('button'));
+    expect(onPress).toHaveBeenCalledWith('e1');
   });
 });

@@ -299,6 +299,29 @@ NODE_PATH="$TEMP/resvg/node_modules" node scripts/export-brand-pngs.js
 
 New icons and the splash only show in a new development or EAS build; Expo Go shows its own icon.
 
+## Smooth transitions and the gold card edge (VC-76, VC-77)
+
+What changed: screens fade in instead of popping, spinners only appear when loading takes over 300 ms, cards and buttons shrink a touch when pressed, rate / party code / recap rise as sheets, the check-in sheet slides down (and can be dragged down) to close, and live Hot or Fire cards on Tonight get a gold edge. The plan is `team/projects/vibecheck/design/vc76-motion-spec.md`.
+
+**Tab switch (your call).** Switching tabs cross-fades in 150 ms. To make it instant instead, open `app/(tabs)/_layout.tsx` and change `TAB_CROSSFADE = true` to `false`.
+
+**No new packages or settings files**, so a normal `npx expo start --tunnel` is enough. If an old screen still shows after updating, press `Ctrl+C` and run `npx expo start --tunnel --clear` once (PowerShell, in `C:\dev\wt\vibecheck\apps\vibecheck`).
+
+### iPhone checklist
+
+Some of this only feels right on a real phone. Use a development build if you can (Expo Go works for most of it). For each check, note pass or fail and the phone model.
+
+- **D1.** Open an event from the list. The slide should be smooth, and the gauge should sweep only after the slide has ended. If the sweep still stutters on an iPhone 12 or older, tell the team: that is the trigger for a Reanimated proposal.
+- **D2.** On Tonight, pull down to refresh. Nothing should blink.
+- **D3.** Check in, then tap Rate the night. The sheet should slide away and the rating page rise, like one motion, with no flash of the event page.
+- **D4.** Drag the check-in sheet down by its handle, slowly and then quickly. It should follow your finger and close once you're past about a third of the way (or on a quick flick); a short drag springs back.
+- **D5.** On Rate, tap one choice, then swipe the page down. It must **not** close. (Before any tap, a swipe down does close it.)
+- **D6.** Turn on Settings > Accessibility > Motion > Reduce Motion and repeat D1 to D4. Nothing should slide or shrink; fades are fine.
+- **D7.** Sign out, then sign back in. The screens should fade, with no sideways slide.
+- **D8.** Fling the Tonight list with 50 or more events (test data). There should be no blank cards or dropped frames (shake the phone > Perf Monitor, aim for 60 fps).
+- **D9 (skeleton sizes).** Open an event on an iPhone 15 and watch it load. The grey loading blocks should line up with the real page (heading, gauge card, heads-up card). If something jumps, note roughly how far.
+- **D10 (VC-77).** On Tonight, a live event rated Hot or Fire should have a thin gold edge. Quiet, Good, "quiet for a while", Early, No vibe yet and not-started events keep the grey edge.
+
 ## Where things live
 
 | Path              | What's there                                                                                                 |

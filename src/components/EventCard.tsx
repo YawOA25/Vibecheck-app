@@ -30,29 +30,47 @@
  *
  * The whole card is one button: tapping anywhere opens the event page.
  *
- * Press feel (VC-72, Q6): while a finger is down the card shrinks to 98%
- * over 120 ms and springs back on release, so taps feel answered. The
- * screen turns this off (`animatePress` false) under Reduce Motion; the
- * darker pressed background still shows either way.
+ * Press feel (VC-72, Q6; shared since VC-76): while a finger is down the
+ * card shrinks to 98% over 120 ms and springs back on release, so taps feel
+ * answered (src/components/PressableScale.tsx). The screen turns this off
+ * (`animatePress` false) under Reduce Motion; the darker pressed background
+ * still shows either way.
+ *
+ * Gold edge (VC-77, polish audit fix #6): a card that is live right now
+ * (started, not ended) AND whose live word is Hot or Fire gets the gold
+ * `goldBorder` edge instead of the plain grey one, so the hottest parties
+ * stand out in the list. It is the same rule as the gauge's glow (VC-70):
+ * never for Quiet or Good, a stale (quiet) score, Early, No vibe yet, or an
+ * event that hasn't started or has ended. The edge is decoration only: the
+ * word itself is already in the card's spoken summary.
+ *
+ * Speed (VC-76, spec 3d): the card is wrapped in React.memo, so when the
+ * home list re-draws (e.g. the minute vibe refresh), only cards whose own
+ * inputs changed are re-drawn. For that, `onPress` receives the event's id,
+ * so the list can pass one shared function to every card.
  */
-import { useState } from 'react';
-import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
+import { memo } from 'react';
+import { StyleSheet, Text, View } from 'react-native';
 
+import { PressableScale } from '@/components/PressableScale';
 import { Tag } from '@/components/Tag';
-import { wordColour } from '@/components/VibeMeter';
+import { showsGlow, wordColour } from '@/components/VibeMeter';
 import { hasStarted, isStaffPick, whenLine } from '@/lib/tonight';
 import type { PublicEvent } from '@/lib/tonight';
 import { cardVibeSpoken, formatScore, hereText } from '@/lib/vibe';
 import type { Vibe } from '@/lib/vibe';
-import { colors, fonts, minTapTarget, radius, spacing, typography } from '@/theme';
+import { colors, fonts, minTapTarget, motion, radius, spacing, typography } from '@/theme';
 
 /** What an EventCard needs. */
 export interface EventCardProps {
   event: PublicEvent;
   /** The current moment, for the "Today · 10 PM" line and the has-it-started check. */
   now: Date;
-  /** What happens on tap (open the event page). */
-  onPress: () => void;
+  /**
+   * What happens on tap (open the event page). It gets the event's id, so
+   * the list can hand every card the same function (VC-76 speed fix).
+   */
+  onPress: (id: string) => void;
   /** The event's vibe, or undefined while it hasn't loaded. Ignored before the start. */
   vibe?: Vibe;
   /**
@@ -63,8 +81,8 @@ export interface EventCardProps {
 }
 
 /** How small a pressed card gets (98%), and how long the change takes (VC-72). */
-export const PRESS_SCALE = 0.98;
-export const PRESS_MS = 120;
+export const PRESS_SCALE = motion.pressScale.card;
+export const PRESS_MS = motion.fast.duration;
 
 /** The chip words for the vibe states without a number (exported for tests). */
 export const EARLY_LABEL = 'Early';
@@ -75,41 +93,27 @@ export const TEST_LABEL = 'TEST';
 export const LIVE_LABEL = 'LIVE';
 
 /**
+ * Whether a card gets the gold edge (VC-77).
+ *
+ * @param live - true when the event has started and hasn't ended.
+ * @param vibe - the card's vibe (undefined when none is shown).
+ * @returns true only for a live event whose live score's word is Hot or
+ *   Fire (the gauge glow's rule, showsGlow): never for stale, early, none,
+ *   not started or ended.
+ */
+export function showsGoldEdge(live: boolean, vibe: Vibe | undefined): boolean {
+  if (!live || !vibe) return false;
+  return showsGlow(vibe, vibe.score !== null && vibe.label !== null);
+}
+
+/**
  * Renders the card.
  *
  * @returns a pressable card. Screen readers hear one summary, e.g.
  *   "Saturday rooftop, Shaw, DC, Today · 10 PM, Staff pick, 74 here, vibe
  *   8.0 out of 10, Hot".
  */
-export function EventCard({
-  event,
-  now,
-  onPress,
-  vibe: given,
-  animatePress = false,
-}: EventCardProps) {
-  // The card's size while pressed (1 = normal). Kept in state so it is made once.
-  const [scale] = useState(() => new Animated.Value(1));
-
-  /**
-   * Moves the card's size toward `value` (VC-72).
-   *
-   * @param value - PRESS_SCALE on finger down, 1 on release.
-   */
-  function pressTo(value: number) {
-    if (!animatePress) {
-      // Motion off: never shrink (and undo any shrink left from before).
-      scale.setValue(1);
-      return;
-    }
-    Animated.timing(scale, {
-      toValue: value,
-      duration: PRESS_MS,
-      easing: Easing.out(Easing.quad),
-      useNativeDriver: true,
-    }).start();
-  }
-
+function EventCardView({ event, now, onPress, vibe: given, animatePress = false }: EventCardProps) {
   const when = whenLine(event, now);
   // VC-61: before the start, act as if there were no vibe at all, so no
   // score, chip or "here" count can leak onto a not-started card.
@@ -119,6 +123,8 @@ export function EventCard({
   // this keeps the card honest if one is ever shown.)
   const live = started && now.getTime() < Date.parse(event.ends_at);
   const staffPick = isStaffPick(event);
+  // VC-77: the gold edge for a live Hot or Fire party.
+  const goldEdge = showsGoldEdge(live, vibe);
   // "74 here" (VC-42). The list only shows events that haven't ended.
   const here = vibe ? hereText(vibe.here, false) : null;
   // One spoken summary, so screen-reader users don't have to swipe through
@@ -137,47 +143,54 @@ export function EventCard({
     .join(', ');
 
   return (
-    // The scaling wrapper: not a button itself, so screen readers still
-    // meet exactly one button (the Pressable) per card.
-    <Animated.View style={{ transform: [{ scale }] }} testID="event-card-scale">
-      <Pressable
-        onPress={onPress}
-        onPressIn={() => pressTo(PRESS_SCALE)}
-        onPressOut={() => pressTo(1)}
-        accessibilityRole="button"
-        accessibilityLabel={spoken}
-        accessibilityHint="Opens the event"
-        style={({ pressed }) => [styles.card, pressed && styles.pressed]}
-      >
-        <View style={styles.left}>
-          <Text style={styles.title}>{event.title}</Text>
-          <Text style={styles.meta}>
-            {event.area_label} · {when}
-            {here ? ` · ${here}` : ''}
-          </Text>
-          {staffPick || event.is_21_plus || event.is_test ? (
-            <View style={styles.tags}>
-              {event.is_test ? <Tag label={TEST_LABEL} tone="gold" /> : null}
-              {staffPick ? <Tag label="Staff pick" tone="gold" /> : null}
-              {event.is_21_plus ? <Tag label="21+" /> : null}
-            </View>
-          ) : null}
-        </View>
-        {live || vibe ? (
-          <View style={styles.right}>
-            {live ? (
-              <View style={styles.liveRow} testID="event-card-live">
-                <View style={styles.liveDot} testID="event-card-live-dot" />
-                <Text style={styles.liveText}>{LIVE_LABEL}</Text>
-              </View>
-            ) : null}
-            {vibe ? <VibeBadge vibe={vibe} /> : null}
+    // The shared shrink-on-press wrapper (VC-76). It is not a button
+    // itself, so screen readers still meet exactly one button per card.
+    <PressableScale
+      outerTestID="event-card-scale"
+      scaleTo={PRESS_SCALE}
+      animate={animatePress}
+      onPress={() => onPress(event.id)}
+      accessibilityRole="button"
+      accessibilityLabel={spoken}
+      accessibilityHint="Opens the event"
+      testID="event-card"
+      style={({ pressed }) => [styles.card, goldEdge && styles.goldEdge, pressed && styles.pressed]}
+    >
+      <View style={styles.left}>
+        <Text style={styles.title}>{event.title}</Text>
+        <Text style={styles.meta}>
+          {event.area_label} · {when}
+          {here ? ` · ${here}` : ''}
+        </Text>
+        {staffPick || event.is_21_plus || event.is_test ? (
+          <View style={styles.tags}>
+            {event.is_test ? <Tag label={TEST_LABEL} tone="gold" /> : null}
+            {staffPick ? <Tag label="Staff pick" tone="gold" /> : null}
+            {event.is_21_plus ? <Tag label="21+" /> : null}
           </View>
         ) : null}
-      </Pressable>
-    </Animated.View>
+      </View>
+      {live || vibe ? (
+        <View style={styles.right}>
+          {live ? (
+            <View style={styles.liveRow} testID="event-card-live">
+              <View style={styles.liveDot} testID="event-card-live-dot" />
+              <Text style={styles.liveText}>{LIVE_LABEL}</Text>
+            </View>
+          ) : null}
+          {vibe ? <VibeBadge vibe={vibe} /> : null}
+        </View>
+      ) : null}
+    </PressableScale>
   );
 }
+
+/**
+ * The card, re-drawn only when its own inputs change (VC-76 speed fix).
+ * React.memo compares the props one by one; the home list keeps them
+ * steady (one shared onPress, the same vibe object until it changes).
+ */
+export const EventCard = memo(EventCardView);
 
 /**
  * The vibe on the right of a card (v3: "8.8", or "Early" over "3 so far").
@@ -233,6 +246,8 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     paddingHorizontal: 18,
   },
+  // VC-77: the v3 gold edge (#5A4C30) on a live Hot or Fire card. Decoration only.
+  goldEdge: { borderColor: colors.goldBorder },
   pressed: { backgroundColor: colors.surfaceRaised },
   // flexShrink lets long names wrap instead of pushing the chip off screen.
   left: { flex: 1, flexShrink: 1, gap: 5 },

@@ -27,7 +27,23 @@
  *      with the phone's own font;
  *   4. starts crash reports (Sentry, VC-26) if EXPO_PUBLIC_SENTRY_DSN is set;
  *   5. opens the "Your night" recap when the guest taps the 11 AM recap
- *      notification (VC-B12), once they're signed in and past the gate.
+ *      notification (VC-B12), once they're signed in and past the gate;
+ *   6. sets how each kind of screen arrives and leaves (VC-76, design/
+ *      vc76-motion-spec.md section 1; the settings are in ROUTE_OPTIONS
+ *      below):
+ *        pages (event, settings, terms, privacy, reports, moderate): the
+ *          phone's own slide; on iPhone a swipe from anywhere goes back;
+ *        the admin forms: the same slide, but only an edge swipe goes back,
+ *          so a sideways drag in a text box can't throw away typing;
+ *        rate, party code and recap: a sheet from the bottom ("modal"),
+ *          closed by swiping down (rate and party code switch that swipe
+ *          off while work is half done, see their screens);
+ *        check-in: the see-through sheet from Q7, as before;
+ *        sign-in, age gate, sorry and the tabs themselves: a 200 ms fade,
+ *          no sideways slide and no swipe back, because the app swaps
+ *          these by itself (sign in, sign out), not the guest.
+ *      Under the phone's Reduce Motion, iPhone turns slides into fades by
+ *      itself, so nothing here needs changing for it.
  */
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
@@ -42,7 +58,34 @@ import { useAppFonts } from '@/lib/fonts';
 import { initSentry } from '@/lib/sentry';
 import { showRecapWhileOpen, useRecapNotificationTaps } from '@/lib/recap-notifications';
 import { isSupabaseConfigured } from '@/lib/supabase';
-import { colors, spacing, typography } from '@/theme';
+import { colors, motion, spacing, typography } from '@/theme';
+
+/**
+ * How each screen arrives and leaves (VC-76, spec section 1), by route
+ * name. Exported so a test can check every route keeps its setting.
+ *   'default' animation = the phone's own push (about 350 ms on iPhone).
+ *   fullScreenGestureEnabled = on iPhone, swipe back from anywhere (true)
+ *     or only from the left edge (false).
+ *   presentation 'modal' = a sheet rising from the bottom (iPhone: a page
+ *     sheet you can swipe down; Android: slides up).
+ *   gestureEnabled false = no swipe back at all.
+ */
+export const ROUTE_OPTIONS = {
+  /** Plain pages: the platform push, swipe back from anywhere on iPhone. */
+  push: { animation: 'default', fullScreenGestureEnabled: true },
+  /** Admin forms: the platform push, swipe back from the edge only. */
+  form: { animation: 'default', fullScreenGestureEnabled: false },
+  /** Rate, party code, recap: a sheet from the bottom. */
+  modal: { presentation: 'modal' },
+  /** Check-in (Q7): see-through; the screen draws its own sheet slide. */
+  checkIn: {
+    presentation: 'transparentModal',
+    animation: 'fade',
+    contentStyle: { backgroundColor: 'transparent' },
+  },
+  /** Sign-in, age gate, sorry and the tabs: a 200 ms fade, no swipe back. */
+  swap: { animation: 'fade', animationDuration: motion.authFade, gestureEnabled: false },
+} as const;
 
 // Keep the splash screen showing until we know who is signed in and the
 // fonts are ready.
@@ -132,10 +175,10 @@ function RootNavigator({ fontsReady }: { fontsReady: boolean }) {
         {/* The bottom tabs (Q4): Tonight ("/"), Me ("/me") and, for admins,
             the Admin hub ("/admin"). See app/(tabs)/_layout.tsx. Every other
             screen below opens OVER the tabs, so the tab bar hides there. */}
-        <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="(tabs)" options={ROUTE_OPTIONS.swap} />
         {/* The event page (VC-B05), GPS check-in (VC-B06) and the
             party-code placeholder (VC-B07 will fill it in). */}
-        <Stack.Screen name="event/[id]" options={{ title: 'Event' }} />
+        <Stack.Screen name="event/[id]" options={{ title: 'Event', ...ROUTE_OPTIONS.push }} />
         {/* Check-in is a bottom sheet over the dimmed event page (Q7, fix
             #7): 'transparentModal' keeps the event page drawn underneath,
             and the see-through background lets it show. The screen itself
@@ -144,48 +187,55 @@ function RootNavigator({ fontsReady }: { fontsReady: boolean }) {
             Reduce Motion is on. */}
         <Stack.Screen
           name="check-in/[id]"
-          options={{
-            title: 'Check in',
-            presentation: 'transparentModal',
-            animation: 'fade',
-            contentStyle: { backgroundColor: 'transparent' },
-          }}
+          options={{ title: 'Check in', ...ROUTE_OPTIONS.checkIn }}
         />
-        <Stack.Screen name="join/[id]" options={{ title: 'Party code' }} />
+        <Stack.Screen name="join/[id]" options={{ title: 'Party code', ...ROUTE_OPTIONS.modal }} />
         {/* The 3-tap rating (VC-B08). */}
-        <Stack.Screen name="rate/[id]" options={{ title: 'Rate' }} />
+        <Stack.Screen name="rate/[id]" options={{ title: 'Rate', ...ROUTE_OPTIONS.modal }} />
         {/* The "Your night" recap (VC-B12); Me itself is a tab now. */}
-        <Stack.Screen name="recap" options={{ title: 'Your night' }} />
+        <Stack.Screen name="recap" options={{ title: 'Your night', ...ROUTE_OPTIONS.modal }} />
         {/* Settings: sign out, delete account, legal links (VC-B13). */}
-        <Stack.Screen name="settings" options={{ title: 'Settings' }} />
+        <Stack.Screen name="settings" options={{ title: 'Settings', ...ROUTE_OPTIONS.push }} />
       </Stack.Protected>
 
       {/* Admins only (VC-B04, VC-34): the New and Edit event screens. This only keeps the
           screen out of reach for others; the server's create_event refuses
           non-admins by itself. */}
       <Stack.Protected guard={status === 'ready' && profile?.role === 'admin'}>
-        <Stack.Screen name="admin/new-event" options={{ title: 'New event' }} />
+        <Stack.Screen
+          name="admin/new-event"
+          options={{ title: 'New event', ...ROUTE_OPTIONS.form }}
+        />
         {/* Edit event (VC-34): same rule; update_event refuses non-admins. */}
-        <Stack.Screen name="admin/edit-event/[id]" options={{ title: 'Edit event' }} />
+        <Stack.Screen
+          name="admin/edit-event/[id]"
+          options={{ title: 'Edit event', ...ROUTE_OPTIONS.form }}
+        />
         {/* Moderation (VC-47, VC-58): the report queue and one event's
             Moderate screen. Every admin_ server function refuses non-admins. */}
-        <Stack.Screen name="admin/reports" options={{ title: 'Reports' }} />
-        <Stack.Screen name="admin/moderate/[id]" options={{ title: 'Moderate' }} />
+        <Stack.Screen name="admin/reports" options={{ title: 'Reports', ...ROUTE_OPTIONS.push }} />
+        <Stack.Screen
+          name="admin/moderate/[id]"
+          options={{ title: 'Moderate', ...ROUTE_OPTIONS.push }}
+        />
       </Stack.Protected>
 
       {/* Not signed in: only the sign-in screen exists. */}
       <Stack.Protected guard={status === 'signedOut'}>
-        <Stack.Screen name="(auth)/sign-in" options={{ title: 'Sign in' }} />
+        <Stack.Screen name="(auth)/sign-in" options={{ title: 'Sign in', ...ROUTE_OPTIONS.swap }} />
       </Stack.Protected>
 
       {/* Signed in, but no profile yet: only the age gate exists. */}
       <Stack.Protected guard={status === 'needsProfile'}>
-        <Stack.Screen name="(auth)/age-gate" options={{ title: 'Almost there' }} />
+        <Stack.Screen
+          name="(auth)/age-gate"
+          options={{ title: 'Almost there', ...ROUTE_OPTIONS.swap }}
+        />
       </Stack.Protected>
 
       {/* Refused by the 18+ gate (VC-30): only the "sorry" screen exists. */}
       <Stack.Protected guard={status === 'blocked'}>
-        <Stack.Screen name="(auth)/blocked" options={{ title: 'Sorry' }} />
+        <Stack.Screen name="(auth)/blocked" options={{ title: 'Sorry', ...ROUTE_OPTIONS.swap }} />
       </Stack.Protected>
 
       {/* Open to everyone (VC-32b): the Terms and the Privacy Policy, linked
@@ -194,8 +244,8 @@ function RootNavigator({ fontsReady }: { fontsReady: boolean }) {
           becomes hidden (for example on sign-out), expo-router moves the
           person to the first allowed screen in this list, which must be the
           one for their state (sign-in, age gate, ...), never these. */}
-      <Stack.Screen name="terms" options={{ title: 'Terms of Service' }} />
-      <Stack.Screen name="privacy" options={{ title: 'Privacy Policy' }} />
+      <Stack.Screen name="terms" options={{ title: 'Terms of Service', ...ROUTE_OPTIONS.push }} />
+      <Stack.Screen name="privacy" options={{ title: 'Privacy Policy', ...ROUTE_OPTIONS.push }} />
     </Stack>
   );
 }

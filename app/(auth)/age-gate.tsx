@@ -27,8 +27,9 @@
  * rather than a calendar picker: it needs no extra package, works the same on
  * iPhone and Android, and is quick for a date decades in the past.
  */
-import { useState } from 'react';
-import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text } from 'react-native';
+import { useRef, useState } from 'react';
+import { KeyboardAvoidingView, ScrollView, StyleSheet, Text } from 'react-native';
+import type { TextInputInstance } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Button } from '@/components/Button';
@@ -46,6 +47,7 @@ import {
 import { useAuth } from '@/lib/auth-context';
 import { describeProfileError, isUnder18Error, ProfileErrorCode } from '@/lib/auth-errors';
 import { supabase } from '@/lib/supabase';
+import { FORM_SCROLL_PROPS, KEYBOARD_BEHAVIOR } from '@/lib/keyboard';
 import { colors, spacing, typography } from '@/theme';
 
 /** The longest display name allowed (same as the database rule). */
@@ -64,6 +66,8 @@ export default function AgeGateScreen() {
   const [name, setName] = useState('');
   // The date box's text, for example "04 / 18 / 1998".
   const [birthText, setBirthText] = useState('');
+  // The date box, so "Next" in the name box can move the cursor there (VC-76).
+  const birthRef = useRef<TextInputInstance>(null);
   const [busy, setBusy] = useState(false);
   // Errors under the name box, under the date box, and under the button.
   const [nameError, setNameError] = useState<string | null>(null);
@@ -126,9 +130,10 @@ export default function AgeGateScreen() {
     <SafeAreaView style={styles.safe}>
       <KeyboardAvoidingView
         style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        // VC-76: room for the keyboard on both platforms (src/lib/keyboard.ts).
+        behavior={KEYBOARD_BEHAVIOR}
       >
-        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <ScrollView contentContainerStyle={styles.content} {...FORM_SCROLL_PROPS}>
           <Headline lead="A little" highlight="about you" />
           <Text style={styles.body}>We use this to set up your account.</Text>
 
@@ -144,6 +149,10 @@ export default function AgeGateScreen() {
             autoCapitalize="words"
             autoComplete="name"
             textContentType="name"
+            // VC-76: "Next" on the keyboard moves on to the date of birth.
+            returnKeyType="next"
+            submitBehavior="submit"
+            onSubmitEditing={() => birthRef.current?.focus()}
           />
 
           <TextField
@@ -160,6 +169,8 @@ export default function AgeGateScreen() {
             keyboardType="number-pad"
             maxLength={DATE_INPUT_MAX_LENGTH}
             placeholder="MM / DD / YYYY"
+            inputRef={birthRef}
+            returnKeyType="done"
           />
 
           <Button

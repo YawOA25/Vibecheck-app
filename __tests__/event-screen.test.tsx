@@ -28,8 +28,8 @@
  *     can rate, as the check-in and party-code screens already offer.
  * Most tests use an event that started an hour ago, so the live parts show.
  */
-import { fireEvent, render, screen, within } from '@testing-library/react-native';
-import { Linking, Share, StyleSheet } from 'react-native';
+import { act, fireEvent, render, screen, within } from '@testing-library/react-native';
+import { AccessibilityInfo, Animated, Linking, Share, StyleSheet } from 'react-native';
 
 import EventScreen, {
   ART_BAND_HEIGHT,
@@ -44,6 +44,7 @@ import EventScreen, {
 } from '../app/event/[id]';
 import { ENTRY_DISCLAIMER, ENTRY_LINK_LABEL } from '@/components/EntryLink';
 import { NO_HEADS_UPS } from '@/components/HeadsUpCard';
+import { FIRST_SWEEP_MS } from '@/components/VibeMeter';
 import { addHeadsUp, getEventHeadsUps, getMyRatingStatus } from '@/lib/ratings-api';
 import { EARLY_TITLE } from '@/lib/vibe';
 import { getEventVibe } from '@/lib/vibe-api';
@@ -67,6 +68,11 @@ jest.mock('@/lib/ratings-api', () => ({
 // The "mock" prefix lets jest.mock (which runs first) use these fakes.
 const mockPush = jest.fn();
 const mockBack = jest.fn();
+/**
+ * VC-76: records the page's "transitionEnd" listener, so a test can say
+ * "the slide-in has finished". The event never comes by itself here.
+ */
+const mockAddListener = jest.fn((_event: string, _cb: unknown) => () => {});
 jest.mock('expo-router', () => ({
   useRouter: () => ({
     push: mockPush,
@@ -75,6 +81,9 @@ jest.mock('expo-router', () => ({
     canGoBack: () => true,
   }),
   useLocalSearchParams: () => ({ id: 'e1' }),
+  // VC-76: the page listens for its slide-in to finish; outside a real
+  // navigator that event never comes (the 1 s safety timer starts the gauge).
+  useNavigation: () => ({ addListener: mockAddListener }),
   // Outside a real navigator the page is "in view" once: run the effect like
   // a normal useEffect. (require inside: jest.mock can't use outer imports.)
   useFocusEffect: (effect: () => void | (() => void)) => {
@@ -651,5 +660,48 @@ describe('EventScreen before the event starts (VC-61)', () => {
     expect(screen.getByText('4 here')).toBeOnTheScreen();
     expect(await screen.findByText(NO_HEADS_UPS)).toBeOnTheScreen();
     expect(screen.getByRole('button', { name: RATE_LABEL })).toBeOnTheScreen();
+  });
+});
+
+/**
+ * VC-76 (spec 2f): the gauge's first sweep waits until the page has finished
+ * sliding in, so the two movements don't compete for the phone.
+ */
+describe('EventScreen gauge waits for the slide-in (VC-76)', () => {
+  it('starts the first sweep only after "transitionEnd" (not on the slide-out)', async () => {
+    jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(false);
+    const timingSpy = jest.spyOn(Animated, 'timing');
+    (getEventVibe as jest.Mock).mockResolvedValue({
+      ok: true,
+      vibe: {
+        state: 'live',
+        raters: 6,
+        here: 4,
+        score: 8,
+        label: 'Hot',
+        nightAverage: null,
+        minutesSinceLast: 4,
+        reactions: [],
+        breakdown: null,
+        night: null,
+      },
+    });
+    get.mockResolvedValue({ ok: true, event: makeEvent() });
+    await render(<EventScreen />);
+    await screen.findByLabelText('Vibe 8.0 out of 10, Hot');
+    /** The 700 ms first-sweep calls so far. */
+    const sweeps = () => timingSpy.mock.calls.filter((call) => call[1].duration === FIRST_SWEEP_MS);
+    expect(sweeps()).toHaveLength(0);
+    // The number waits at 0.0 meanwhile.
+    expect(screen.getByText('0.0')).toBeOnTheScreen();
+    const listener = mockAddListener.mock.calls.find(
+      (call) => call[0] === 'transitionEnd',
+    )?.[1] as (e: { data?: { closing?: boolean } }) => void;
+    // The slide-OUT finishing doesn't count.
+    await act(async () => listener({ data: { closing: true } }));
+    expect(sweeps()).toHaveLength(0);
+    await act(async () => listener({ data: { closing: false } }));
+    expect(sweeps()).toHaveLength(1);
+    timingSpy.mockRestore();
   });
 });

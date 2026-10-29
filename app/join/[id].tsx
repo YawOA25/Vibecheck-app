@@ -22,15 +22,29 @@
  *
  * Privacy: the typed code is kept only in the box while typing, sent once,
  * and cleared after a wrong try. It is never logged or shown elsewhere.
+ *
+ * Motion and keyboard (VC-76, design/vc76-motion-spec.md): the screen rises
+ * as a sheet from the bottom (app/_layout.tsx); on iPhone a swipe down
+ * closes it, except while a code is being checked. The spinner only shows
+ * if loading takes over 300 ms; the form and the result fade in. The
+ * keyboard pushes the form up on both platforms (src/lib/keyboard.ts).
  */
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BackButton } from '@/components/BackButton';
 import { Button } from '@/components/Button';
 import { CodeInput } from '@/components/CodeInput';
+import { FadeIn } from '@/components/FadeIn';
 import { FormMessage } from '@/components/FormMessage';
 import { Headline } from '@/components/Headline';
 import { useAuth } from '@/lib/auth-context';
@@ -45,7 +59,10 @@ import type { CodeCheckInOutcome } from '@/lib/code-check-in-api';
 import { getEvent } from '@/lib/events-read';
 import { tapSuccess, tapWarning } from '@/lib/haptics';
 import { INCOMPLETE_CODE_MESSAGE, joinResultScreen, wrongCodeMessage } from '@/lib/join-screens';
+import { FORM_SCROLL_PROPS, KEYBOARD_BEHAVIOR } from '@/lib/keyboard';
+import { useSwipeToClose } from '@/lib/swipe-close';
 import type { PublicEvent } from '@/lib/tonight';
+import { useDelayedFlag } from '@/lib/use-delayed-flag';
 import { colors, spacing, typography } from '@/theme';
 
 /** The words on this screen (exported so tests use the same text). */
@@ -177,6 +194,10 @@ export default function JoinScreen() {
   );
 
   const busy = phase.kind === 'form' && phase.busy;
+  // VC-76: no swipe-down close while a code is being checked.
+  useSwipeToClose(!busy);
+  // VC-76: the spinner only after 300 ms of loading (no flash on fast loads).
+  const showSpinner = useDelayedFlag(phase.kind === 'loading');
 
   return (
     <SafeAreaView style={styles.container}>
@@ -186,7 +207,7 @@ export default function JoinScreen() {
 
       {phase.kind === 'loading' ? (
         <View style={styles.centre} accessible accessibilityLabel="Loading the event">
-          <ActivityIndicator color={colors.accent} size="large" />
+          {showSpinner ? <ActivityIndicator color={colors.accent} size="large" /> : null}
         </View>
       ) : null}
 
@@ -214,72 +235,82 @@ export default function JoinScreen() {
       ) : null}
 
       {phase.kind === 'form' ? (
-        <ScrollView contentContainerStyle={styles.form} keyboardShouldPersistTaps="handled">
-          <Text style={styles.label}>{PARTY_CODE_LABEL}</Text>
-          <Headline lead="Enter the" highlight="party code." />
-          <Text style={styles.body}>
-            Look for the card at {phase.event.title}, or ask the host. It&apos;s {PARTY_CODE_LENGTH}{' '}
-            letters and numbers.
-          </Text>
-          <CodeInput
-            value={code}
-            onChangeText={(text) => {
-              // Capitals, letters and digits only; typing clears an old error.
-              setCode(cleanPartyCode(text));
-              setCodeError(null);
-            }}
-            length={PARTY_CODE_LENGTH}
-            characters="letters"
-            label={CODE_FIELD_LABEL}
-            error={codeError}
-            locked={phase.busy}
-          />
-          <Button
-            label={CHECK_ME_IN}
-            busyLabel={CHECKING}
-            busy={phase.busy}
-            onPress={() => void submitCode(phase.event)}
-          />
-          {/* Testers only, on test events only (the server refuses the rest). */}
-          {profile?.is_tester && phase.event.is_test ? (
-            <Button
-              label={TESTER_CHECK_IN}
-              variant="outline"
-              disabled={phase.busy}
-              onPress={() => void submitTester(phase.event)}
-            />
-          ) : null}
-          {notice ? <FormMessage message={notice} /> : null}
-        </ScrollView>
+        // VC-76: the keyboard pushes the form up (both platforms), and the
+        // form fades in once loaded.
+        <KeyboardAvoidingView style={styles.fill} behavior={KEYBOARD_BEHAVIOR}>
+          <FadeIn style={styles.fill}>
+            <ScrollView contentContainerStyle={styles.form} {...FORM_SCROLL_PROPS}>
+              <Text style={styles.label}>{PARTY_CODE_LABEL}</Text>
+              <Headline lead="Enter the" highlight="party code." />
+              <Text style={styles.body}>
+                Look for the card at {phase.event.title}, or ask the host. It&apos;s{' '}
+                {PARTY_CODE_LENGTH} letters and numbers.
+              </Text>
+              <CodeInput
+                value={code}
+                onChangeText={(text) => {
+                  // Capitals, letters and digits only; typing clears an old error.
+                  setCode(cleanPartyCode(text));
+                  setCodeError(null);
+                }}
+                length={PARTY_CODE_LENGTH}
+                characters="letters"
+                label={CODE_FIELD_LABEL}
+                error={codeError}
+                locked={phase.busy}
+              />
+              <Button
+                label={CHECK_ME_IN}
+                busyLabel={CHECKING}
+                busy={phase.busy}
+                onPress={() => void submitCode(phase.event)}
+              />
+              {/* Testers only, on test events only (the server refuses the rest). */}
+              {profile?.is_tester && phase.event.is_test ? (
+                <Button
+                  label={TESTER_CHECK_IN}
+                  variant="outline"
+                  disabled={phase.busy}
+                  onPress={() => void submitTester(phase.event)}
+                />
+              ) : null}
+              {notice ? <FormMessage message={notice} /> : null}
+            </ScrollView>
+          </FadeIn>
+        </KeyboardAvoidingView>
       ) : null}
 
       {phase.kind === 'result' ? (
-        <ScrollView contentContainerStyle={styles.form}>
-          <Text style={[styles.label, phase.screen.success && styles.successLabel]}>
-            {phase.screen.success ? 'CHECKED IN' : PARTY_CODE_LABEL}
-          </Text>
-          <Headline lead={phase.screen.lead} highlight={phase.screen.highlight} />
-          {/* Read aloud when it appears, so screen-reader users hear the result. */}
-          <Text style={styles.body} accessibilityLiveRegion="polite">
-            {phase.screen.body}
-          </Text>
-          {/* "Rate the night" (after a successful check-in, VC-B08) replaces
+        <FadeIn style={styles.fill}>
+          {/* "handled": a tap on a button works first time even if the
+            keyboard was still up (VC-76). */}
+          <ScrollView contentContainerStyle={styles.form} keyboardShouldPersistTaps="handled">
+            <Text style={[styles.label, phase.screen.success && styles.successLabel]}>
+              {phase.screen.success ? 'CHECKED IN' : PARTY_CODE_LABEL}
+            </Text>
+            <Headline lead={phase.screen.lead} highlight={phase.screen.highlight} />
+            {/* Read aloud when it appears, so screen-reader users hear the result. */}
+            <Text style={styles.body} accessibilityLiveRegion="polite">
+              {phase.screen.body}
+            </Text>
+            {/* "Rate the night" (after a successful check-in, VC-B08) replaces
               this screen with the rating screen; every other button goes
               back. The first button is the main (gold) one, the rest are
               quiet text links. */}
-          {phase.screen.actions.map((button, index) => (
-            <Button
-              key={button.action}
-              label={button.label}
-              variant={index === 0 ? 'primary' : 'text'}
-              onPress={() =>
-                button.action === 'rate'
-                  ? router.replace({ pathname: '/rate/[id]', params: { id: phase.event.id } })
-                  : goBack()
-              }
-            />
-          ))}
-        </ScrollView>
+            {phase.screen.actions.map((button, index) => (
+              <Button
+                key={button.action}
+                label={button.label}
+                variant={index === 0 ? 'primary' : 'text'}
+                onPress={() =>
+                  button.action === 'rate'
+                    ? router.replace({ pathname: '/rate/[id]', params: { id: phase.event.id } })
+                    : goBack()
+                }
+              />
+            ))}
+          </ScrollView>
+        </FadeIn>
       ) : null}
     </SafeAreaView>
   );
@@ -288,6 +319,8 @@ export default function JoinScreen() {
 /** Styles built only from theme tokens (same gutters as the sign-in code step). */
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
+  // The keyboard and fade-in wrappers fill the screen under Back (VC-76).
+  fill: { flex: 1 },
   topBar: { paddingHorizontal: spacing.gutter, paddingTop: spacing.sm },
   centre: {
     flex: 1,

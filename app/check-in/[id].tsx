@@ -41,16 +41,30 @@
  * After a successful check-in, "Rate the night" opens the rating screen
  * (app/rate/[id].tsx, task VC-B08) in place of this one, so Back from the
  * rating returns to the event page.
+ *
+ * Closing (VC-76, design/vc76-motion-spec.md 1 and 3c): the sheet now
+ * slides back DOWN over 220 ms while the dimmed layer fades, and only then
+ * does the screen close (before, it only faded out). The same slide runs
+ * before the party code or the rating replaces the sheet, and for
+ * Android's back button. The sheet can also be dragged down by its grab
+ * handle or header: it follows the finger, the dimmed layer fades with it,
+ * and letting go past about a third of the sheet (or with a quick flick)
+ * closes it; otherwise it springs back. While a check-in is being sent,
+ * closing is blocked, as the Close button already was.
+ * Reduce Motion: no slide in or out (the screen just fades, as built). The
+ * drag still works, because the finger moves it, but letting go closes or
+ * snaps back at once with no spring.
  */
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import {
   AccessibilityInfo,
   ActivityIndicator,
   Animated,
-  Easing,
+  BackHandler,
   Linking,
+  PanResponder,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -58,11 +72,12 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
-import type { HostInstance } from 'react-native';
+import type { HostInstance, LayoutChangeEvent } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Button } from '@/components/Button';
 import { CircleIconButton } from '@/components/CircleIconButton';
+import { FadeIn } from '@/components/FadeIn';
 import { FormMessage } from '@/components/FormMessage';
 import { Headline } from '@/components/Headline';
 import { Icon } from '@/components/Icon';
@@ -73,8 +88,9 @@ import type { CheckInAction, CheckInView } from '@/lib/check-in-screens';
 import { getEvent } from '@/lib/events-read';
 import { tapSuccess } from '@/lib/haptics';
 import { motionAllowed, useReduceMotion } from '@/lib/reduce-motion';
+import { useDelayedFlag } from '@/lib/use-delayed-flag';
 import type { PublicEvent } from '@/lib/tonight';
-import { colors, iconSize, radius, spacing, typography } from '@/theme';
+import { colors, iconSize, motion, radius, spacing, typography } from '@/theme';
 
 /** The words on this screen (exported so tests use the same text). */
 export const CHECK_IN_LABEL = 'CHECK IN';
@@ -92,7 +108,25 @@ export const SHEET_LABEL = 'Check in';
 export const CLOSE_LABEL = 'Close';
 
 /** How long the sheet takes to slide up, in milliseconds (skipped under Reduce Motion). */
-export const SHEET_SLIDE_MS = 280;
+export const SHEET_SLIDE_MS = motion.sheetIn.duration;
+/** How long the sheet takes to slide down when closing (VC-76). */
+export const SHEET_CLOSE_MS = motion.sheetOut.duration;
+/** Dragging the sheet down further than this share of its height closes it (VC-76). */
+export const DRAG_CLOSE_SHARE = 0.3;
+/** A flick faster than this (points per millisecond) closes it too, however short. */
+export const DRAG_CLOSE_SPEED = 1;
+
+/**
+ * Whether letting go of a drag should close the sheet (VC-76, spec 3c).
+ *
+ * @param dy - how far the finger moved down, in points (up is negative).
+ * @param vy - the finger's downward speed when let go (points per ms).
+ * @param sheetHeight - the sheet's height in points.
+ * @returns true past 30% of the sheet's height or on a fast downward flick.
+ */
+export function shouldCloseOnRelease(dy: number, vy: number, sheetHeight: number): boolean {
+  return dy > sheetHeight * DRAG_CLOSE_SHARE || vy > DRAG_CLOSE_SPEED;
+}
 /** Height of the pin panel (v3: 150 px). */
 export const PIN_PANEL_HEIGHT = 150;
 /** Size of the gold pin in the pin panel (v3: 34 px). */
@@ -147,11 +181,62 @@ export default function CheckInScreen() {
     };
   }, [id, loadAttempt]);
 
-  /** Back to the event page, or home if there's no history. */
-  const goBack = useCallback(() => {
+  /** Back to the event page, or home if there's no history (no animation here). */
+  const goBackNow = useCallback(() => {
     if (router.canGoBack()) router.back();
     else router.replace('/');
   }, [router]);
+
+  // --- The slide up and down (Q7, VC-76) ------------------------------------
+  const reduceMotion = useReduceMotion();
+  const { height: windowHeight } = useWindowDimensions();
+  // How far below its resting place the sheet is (0 = in place). It starts
+  // a full screen down, i.e. out of sight. Kept in state so it's made once.
+  const [slide] = useState(() => new Animated.Value(windowHeight));
+  // The sheet's measured height (until measured: the screen's height).
+  const [sheetHeight, setSheetHeight] = useState(windowHeight);
+  // True once closing has started, so a second tap can't close twice, and
+  // nothing new (a check-in, the party code) can start while the sheet
+  // slides away (cto review of VC-76). The ref answers at once inside
+  // callbacks; the state makes the sheet ignore touches on screen.
+  const closing = useRef(false);
+  const [isClosing, setIsClosing] = useState(false);
+
+  /**
+   * Closes the sheet: slides it down while the dimmed layer fades (VC-76),
+   * then runs `then` (go back, or open the party code or the rating).
+   * Under Reduce Motion (or before the phone answers) `then` runs at once.
+   *
+   * @param then - what to do once the sheet is out of sight.
+   */
+  const closeSheet = useCallback(
+    (then: () => void) => {
+      if (closing.current) return;
+      closing.current = true;
+      setIsClosing(true);
+      // Once `then` has run the screen is normally gone; the flags are
+      // cleared anyway in case it stays (e.g. going back was refused).
+      const finish = () => {
+        then();
+        closing.current = false;
+        setIsClosing(false);
+      };
+      if (!motionAllowed(reduceMotion)) {
+        finish();
+        return;
+      }
+      Animated.timing(slide, {
+        toValue: sheetHeight,
+        duration: SHEET_CLOSE_MS,
+        easing: motion.sheetOut.easing,
+        useNativeDriver: true,
+      }).start(() => finish());
+    },
+    [reduceMotion, slide, sheetHeight],
+  );
+
+  /** Close, Not this one, a tap on the dimmed area: slide down, then back. */
+  const goBack = useCallback(() => closeSheet(goBackNow), [closeSheet, goBackNow]);
 
   /**
    * "Yep, I'm here" (and "Try again"): read the location once, send it,
@@ -160,6 +245,9 @@ export default function CheckInScreen() {
    * @param event - the event being checked in to.
    */
   const runCheckIn = useCallback(async (event: PublicEvent) => {
+    // The sheet is sliding away: never start a check-in whose answer would
+    // land on a closed screen (cto review of VC-76).
+    if (closing.current) return;
     setPhase({ kind: 'confirm', event, checking: true });
     const reading = await readLocationForCheckIn();
     if (reading.kind !== 'reading') {
@@ -189,6 +277,8 @@ export default function CheckInScreen() {
    */
   const onAction = useCallback(
     (action: CheckInAction, event: PublicEvent) => {
+      // Ignore buttons tapped while the sheet slides away (VC-76).
+      if (closing.current) return;
       switch (action) {
         case 'retry':
           void runCheckIn(event);
@@ -202,27 +292,24 @@ export default function CheckInScreen() {
           // and on iPhone a normal screen pushed from a modal slides in
           // UNDER it, so the guest would see nothing. Replacing the sheet
           // also means Back from the party code returns to the event page.
-          router.replace({ pathname: '/join/[id]', params: { id: event.id } });
+          // VC-76: the sheet slides away first, then the new screen rises.
+          closeSheet(() => router.replace({ pathname: '/join/[id]', params: { id: event.id } }));
           break;
         case 'rate':
-          router.replace({ pathname: '/rate/[id]', params: { id: event.id } });
+          closeSheet(() => router.replace({ pathname: '/rate/[id]', params: { id: event.id } }));
           break;
         case 'back':
           goBack();
           break;
       }
     },
-    [goBack, router, runCheckIn],
+    [goBack, closeSheet, router, runCheckIn],
   );
 
   const checking = phase.kind === 'confirm' && phase.checking;
+  // VC-76: the spinner only after 300 ms of loading (no flash on fast loads).
+  const showSpinner = useDelayedFlag(phase.kind === 'loading');
 
-  // --- The slide up (Q7) ---------------------------------------------------
-  const reduceMotion = useReduceMotion();
-  const { height: windowHeight } = useWindowDimensions();
-  // How far below its resting place the sheet is (0 = in place). It starts
-  // a full screen down, i.e. out of sight. Kept in state so it's made once.
-  const [slide] = useState(() => new Animated.Value(windowHeight));
   useEffect(() => {
     // Wait until the phone says whether Reduce Motion is on (null = not yet).
     if (reduceMotion === null) return;
@@ -231,7 +318,7 @@ export default function CheckInScreen() {
       Animated.timing(slide, {
         toValue: 0,
         duration: SHEET_SLIDE_MS,
-        easing: Easing.out(Easing.cubic),
+        easing: motion.sheetIn.easing,
         useNativeDriver: true,
       }).start();
     } else {
@@ -239,6 +326,81 @@ export default function CheckInScreen() {
       slide.setValue(0);
     }
   }, [reduceMotion, slide]);
+
+  // VC-76: Android's back button runs the same slide-down (and is ignored
+  // while a check-in is being sent, like Close). Returning true tells
+  // Android we handled it, so it doesn't close the screen by itself.
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (!checking) goBack();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [checking, goBack]);
+
+  // --- Drag to close (VC-76, spec 3c option A) ------------------------------
+  // A drag let go far enough asks for a close by bumping this counter; the
+  // effect below then runs the normal slide-down close. (The drag handler is
+  // built while drawing, where the lint rules don't allow it to hold the
+  // close function directly.)
+  const [dragCloses, setDragCloses] = useState(0);
+  const handledDragCloses = useRef(0);
+  useEffect(() => {
+    if (dragCloses <= handledDragCloses.current) return;
+    handledDragCloses.current = dragCloses;
+    // Never close while a check-in is being sent (as Close is disabled
+    // then); the request is simply dropped, not saved for later.
+    if (checking) return;
+    goBack();
+  }, [dragCloses, goBack, checking]);
+  // The drag handler is rebuilt only when one of the values it uses changes
+  // (they don't change during a drag).
+  const drag = useMemo(
+    () =>
+      PanResponder.create({
+        // Take over only for a clearly downward drag (not a tap, not
+        // sideways), and never while a check-in is being sent.
+        onMoveShouldSetPanResponder: (_e, g) => !checking && g.dy > 5 && g.dy > Math.abs(g.dx),
+        // Follow the finger downwards only (dragging up does nothing).
+        onPanResponderMove: (_e, g) => slide.setValue(Math.max(0, g.dy)),
+        onPanResponderRelease: (_e, g) => {
+          if (shouldCloseOnRelease(g.dy, g.vy, sheetHeight)) {
+            setDragCloses((n) => n + 1);
+          } else if (motionAllowed(reduceMotion)) {
+            // Not far enough: spring back into place.
+            Animated.spring(slide, {
+              toValue: 0,
+              speed: motion.releaseSpring.speed,
+              bounciness: motion.releaseSpring.bounciness,
+              useNativeDriver: true,
+            }).start();
+          } else {
+            // Reduce Motion: snap back with no spring.
+            slide.setValue(0);
+          }
+        },
+        // Another touch took over: put the sheet back.
+        onPanResponderTerminate: () => slide.setValue(0),
+      }),
+    [checking, sheetHeight, reduceMotion, slide],
+  );
+
+  // The dimmed layer fades as the sheet goes down (fully dim when in place,
+  // clear when out of sight), for the slide-in, the drag and the slide-out.
+  const scrimOpacity = slide.interpolate({
+    inputRange: [0, Math.max(1, sheetHeight)],
+    outputRange: [1, 0],
+    extrapolate: 'clamp',
+  });
+
+  /**
+   * Remembers the sheet's height, for the drag and the slide-down.
+   *
+   * @param event - the sheet's layout event.
+   */
+  function measureSheet(event: LayoutChangeEvent) {
+    setSheetHeight(event.nativeEvent.layout.height);
+  }
 
   // --- Screen-reader focus (Q7) --------------------------------------------
   // The sheet's current title (the "You at ...?" question, a result's
@@ -268,14 +430,19 @@ export default function CheckInScreen() {
       {/* The dimmed event page: a tap here closes the sheet, like Close.
           Screen readers skip it (they use the Close button instead), and it
           ignores taps while a check-in is being sent, as Close does. */}
-      <Pressable
-        testID="check-in-scrim"
-        style={styles.scrim}
-        onPress={checking ? undefined : goBack}
-        accessible={false}
-        accessibilityElementsHidden
-        importantForAccessibility="no-hide-descendants"
-      />
+      <Animated.View
+        style={[styles.scrimLayer, { opacity: scrimOpacity }]}
+        testID="check-in-scrim-fade"
+      >
+        <Pressable
+          testID="check-in-scrim"
+          style={styles.scrim}
+          onPress={checking ? undefined : goBack}
+          accessible={false}
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+        />
+      </Animated.View>
 
       {/* The sheet itself. role "dialog" + aria-modal tell screen readers
           it's a dialog; accessibilityViewIsModal keeps iPhone's VoiceOver
@@ -287,113 +454,122 @@ export default function CheckInScreen() {
         accessibilityViewIsModal
         accessibilityLabel={SHEET_LABEL}
         style={[styles.sheetFrame, { transform: [{ translateY: slide }] }]}
+        onLayout={measureSheet}
+        // VC-76 (cto): while sliding away, the sheet ignores every touch.
+        pointerEvents={isClosing ? 'none' : 'auto'}
       >
         {/* Scrolls if the phone's text is very large. */}
         <ScrollView bounces={false} style={styles.sheetScroll}>
           {/* Adds the phone's home-bar space at the bottom, but at least 32 px. */}
           <SafeAreaView edges={{ bottom: 'maximum' }} style={styles.sheet}>
-            <View style={styles.handle} testID="check-in-handle" />
-            <View style={styles.headerRow}>
-              <Text
-                ref={labelIsTitle ? titleRef : undefined}
-                accessibilityRole={labelIsTitle ? 'header' : undefined}
-                style={[styles.label, success && styles.successLabel]}
-              >
-                {success ? CHECKED_IN_LABEL : CHECK_IN_LABEL}
-              </Text>
-              <CircleIconButton
-                icon="close"
-                label={CLOSE_LABEL}
-                onPress={goBack}
-                disabled={checking}
-                iconPx={iconSize.sm}
-              />
+            {/* VC-76: the grab handle and header are where a drag starts. */}
+            <View {...drag.panHandlers} testID="check-in-drag-area" style={styles.dragArea}>
+              <View style={styles.handle} testID="check-in-handle" />
+              <View style={styles.headerRow}>
+                <Text
+                  ref={labelIsTitle ? titleRef : undefined}
+                  accessibilityRole={labelIsTitle ? 'header' : undefined}
+                  style={[styles.label, success && styles.successLabel]}
+                >
+                  {success ? CHECKED_IN_LABEL : CHECK_IN_LABEL}
+                </Text>
+                <CircleIconButton
+                  icon="close"
+                  label={CLOSE_LABEL}
+                  onPress={goBack}
+                  disabled={checking}
+                  iconPx={iconSize.sm}
+                />
+              </View>
             </View>
 
-            {phase.kind === 'loading' ? (
-              <View style={styles.centre} accessible accessibilityLabel="Loading the event">
-                <ActivityIndicator color={colors.accent} size="large" />
-              </View>
-            ) : null}
-
-            {phase.kind === 'loadError' ? (
-              <View style={styles.centre}>
-                <FormMessage message={phase.message} />
-                <Button
-                  label="Try again"
-                  variant="outline"
-                  onPress={() => {
-                    setPhase({ kind: 'loading' });
-                    setLoadAttempt((n) => n + 1);
-                  }}
-                />
-              </View>
-            ) : null}
-
-            {phase.kind === 'notFound' ? (
-              <View style={styles.centre}>
-                <Text ref={titleRef} style={styles.notFoundTitle} accessibilityRole="header">
-                  {NOT_FOUND_TITLE}
-                </Text>
-                <Text style={styles.muted}>It may have been removed, or the link is wrong.</Text>
-              </View>
-            ) : null}
-
-            {phase.kind === 'confirm' ? (
-              <>
-                <Headline ref={titleRef} lead="You at" highlight={`${phase.event.title}?`} />
-                <PinPanel />
-                {/* The AREA label only (VC-20): never an address or a map. */}
-                <Text style={styles.muted} testID="check-in-area">
-                  {phase.event.area_label}
-                </Text>
-                <View style={styles.note}>
-                  {/* A small gold shield (v3): "your privacy is protected".
-                      Decoration only: screen readers read the note. */}
-                  <View style={styles.noteIcon}>
-                    <Icon name="shield" size={iconSize.sm} color={colors.accent} />
-                  </View>
-                  <Text style={styles.noteText}>{PRIVACY_NOTE}</Text>
+            {/* VC-76: each new step (question, result, error) fades in. */}
+            <FadeIn fadeKey={phase.kind} style={styles.phase}>
+              {phase.kind === 'loading' ? (
+                <View style={styles.centre} accessible accessibilityLabel="Loading the event">
+                  {showSpinner ? <ActivityIndicator color={colors.accent} size="large" /> : null}
                 </View>
-                <Button
-                  label={IM_HERE}
-                  busy={phase.checking}
-                  busyLabel={CHECKING}
-                  onPress={() => void runCheckIn(phase.event)}
-                />
-                {/* The indoor fallback, offered up front as well as after a weak signal. */}
-                <Button
-                  label={GPS_NOT_WORKING}
-                  variant="text"
-                  size="small"
-                  onPress={() => onAction('code', phase.event)}
-                  disabled={phase.checking}
-                />
-                <Button
-                  label={NOT_THIS_ONE}
-                  variant="text"
-                  onPress={goBack}
-                  disabled={phase.checking}
-                />
-              </>
-            ) : null}
+              ) : null}
 
-            {phase.kind === 'result' ? (
-              <ResultContent
-                view={phase.view}
-                event={phase.event}
-                titleRef={titleRef}
-                onAction={(action) => onAction(action, phase.event)}
-              />
-            ) : null}
+              {phase.kind === 'loadError' ? (
+                <View style={styles.centre}>
+                  <FormMessage message={phase.message} />
+                  <Button
+                    label="Try again"
+                    variant="outline"
+                    onPress={() => {
+                      setPhase({ kind: 'loading' });
+                      setLoadAttempt((n) => n + 1);
+                    }}
+                  />
+                </View>
+              ) : null}
 
-            {phase.kind === 'error' ? (
-              <>
-                <FormMessage message={phase.message} />
-                <Button label="Try again" onPress={() => void runCheckIn(phase.event)} />
-                <Button label="Back to the event" variant="text" onPress={goBack} />
-              </>
-            ) : null}
+              {phase.kind === 'notFound' ? (
+                <View style={styles.centre}>
+                  <Text ref={titleRef} style={styles.notFoundTitle} accessibilityRole="header">
+                    {NOT_FOUND_TITLE}
+                  </Text>
+                  <Text style={styles.muted}>It may have been removed, or the link is wrong.</Text>
+                </View>
+              ) : null}
+
+              {phase.kind === 'confirm' ? (
+                <>
+                  <Headline ref={titleRef} lead="You at" highlight={`${phase.event.title}?`} />
+                  <PinPanel />
+                  {/* The AREA label only (VC-20): never an address or a map. */}
+                  <Text style={styles.muted} testID="check-in-area">
+                    {phase.event.area_label}
+                  </Text>
+                  <View style={styles.note}>
+                    {/* A small gold shield (v3): "your privacy is protected".
+                      Decoration only: screen readers read the note. */}
+                    <View style={styles.noteIcon}>
+                      <Icon name="shield" size={iconSize.sm} color={colors.accent} />
+                    </View>
+                    <Text style={styles.noteText}>{PRIVACY_NOTE}</Text>
+                  </View>
+                  <Button
+                    label={IM_HERE}
+                    busy={phase.checking}
+                    busyLabel={CHECKING}
+                    onPress={() => void runCheckIn(phase.event)}
+                  />
+                  {/* The indoor fallback, offered up front as well as after a weak signal. */}
+                  <Button
+                    label={GPS_NOT_WORKING}
+                    variant="text"
+                    size="small"
+                    onPress={() => onAction('code', phase.event)}
+                    disabled={phase.checking}
+                  />
+                  <Button
+                    label={NOT_THIS_ONE}
+                    variant="text"
+                    onPress={goBack}
+                    disabled={phase.checking}
+                  />
+                </>
+              ) : null}
+
+              {phase.kind === 'result' ? (
+                <ResultContent
+                  view={phase.view}
+                  event={phase.event}
+                  titleRef={titleRef}
+                  onAction={(action) => onAction(action, phase.event)}
+                />
+              ) : null}
+
+              {phase.kind === 'error' ? (
+                <>
+                  <FormMessage message={phase.message} />
+                  <Button label="Try again" onPress={() => void runCheckIn(phase.event)} />
+                  <Button label="Back to the event" variant="text" onPress={goBack} />
+                </>
+              ) : null}
+            </FadeIn>
           </SafeAreaView>
         </ScrollView>
       </Animated.View>
@@ -472,6 +648,12 @@ const styles = StyleSheet.create({
   root: { flex: 1, justifyContent: 'flex-end' },
   // The dimmed layer over the event page (the theme's 60% black scrim).
   scrim: { ...StyleSheet.absoluteFill, backgroundColor: colors.scrim },
+  // The fading wrapper around the dimmed layer (VC-76).
+  scrimLayer: { ...StyleSheet.absoluteFill },
+  // The handle and header together, keeping the sheet's 16 px gap (VC-76).
+  dragArea: { gap: spacing.md },
+  // A step's parts keep the sheet's 16 px gap inside the fade wrapper.
+  phase: { gap: spacing.md },
   sheetFrame: {
     // Leaves a strip of the dimmed page visible even with very large text.
     maxHeight: '92%',

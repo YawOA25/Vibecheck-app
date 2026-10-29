@@ -26,7 +26,7 @@
  */
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text } from 'react-native';
+import { KeyboardAvoidingView, ScrollView, StyleSheet, Text } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BackButton } from '@/components/BackButton';
@@ -40,6 +40,7 @@ import type { EventFormValues } from '@/lib/event-form';
 import { noteCreatedEvent } from '@/lib/created-event';
 import { createEvent, rotateEventCode } from '@/lib/events-api';
 import type { EventSaveResult } from '@/lib/events-api';
+import { FORM_SCROLL_PROPS, KEYBOARD_BEHAVIOR } from '@/lib/keyboard';
 import { colors, spacing, typography } from '@/theme';
 
 /**
@@ -131,7 +132,7 @@ export default function NewEventScreen() {
   if (saved) {
     return (
       <SafeAreaView style={styles.safe}>
-        <ScrollView contentContainerStyle={styles.content}>
+        <ScrollView contentContainerStyle={styles.content} {...FORM_SCROLL_PROPS}>
           <Headline lead="Event" highlight="created" />
           <Text style={styles.body}>
             {values.codeEnabled
@@ -158,9 +159,10 @@ export default function NewEventScreen() {
     <SafeAreaView style={styles.safe}>
       <KeyboardAvoidingView
         style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        // VC-76: room for the keyboard on both platforms (src/lib/keyboard.ts).
+        behavior={KEYBOARD_BEHAVIOR}
       >
-        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <ScrollView contentContainerStyle={styles.content} {...FORM_SCROLL_PROPS}>
           <BackButton onPress={close} disabled={saving} />
           <Headline lead="New" highlight="event" />
           <Text style={styles.body}>Only admins can see this screen.</Text>

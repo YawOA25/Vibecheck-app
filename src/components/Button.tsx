@@ -11,11 +11,18 @@
  * Why one shared component: every screen gets the same height (never under
  * 44 px, easy to hit with a thumb), the same colours for pressed, busy and
  * disabled, and the same screen-reader behaviour, without repeating styles.
+ *
+ * Press feel (VC-76, design/vc76-motion-spec.md 3a): the gold 'primary'
+ * button also shrinks to 98% while pressed and springs back (not under
+ * Reduce Motion, see src/components/PressableScale.tsx); outline and danger
+ * buttons keep their colour change only; a 'text' link fades to 60% while
+ * pressed, the same as every other text link in the app.
  */
 import { useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 
-import { buttonHeight, colors, minTapTarget, radius, spacing, typography } from '@/theme';
+import { PressableScale } from '@/components/PressableScale';
+import { buttonHeight, colors, minTapTarget, motion, radius, spacing, typography } from '@/theme';
 
 /** What a Button needs. */
 export interface ButtonProps {
@@ -65,7 +72,9 @@ export function Button({
   const greyedOut = Boolean(disabled) && !busy;
 
   return (
-    <Pressable
+    <PressableScale
+      // Only the gold main button shrinks (1 = no shrink for the others).
+      scaleTo={variant === 'primary' ? motion.pressScale.button : 1}
       onPress={onPress}
       disabled={inactive}
       onFocus={() => setFocused(true)}
@@ -98,7 +107,7 @@ export function Button({
           <Text style={labelStyle(variant, size, greyedOut, pressed)}>{label}</Text>
         )
       }
-    </Pressable>
+    </PressableScale>
   );
 }
 
@@ -166,6 +175,7 @@ const styles = StyleSheet.create({
     color: colors.accent,
     textDecorationLine: 'underline',
   },
-  linkPressed: { color: colors.accentPressed },
+  // VC-76: every text link fades to 60% while pressed (one rule app-wide).
+  linkPressed: { opacity: motion.linkPressedOpacity },
   labelDisabled: { color: colors.disabledText, textDecorationLine: 'none' },
 });

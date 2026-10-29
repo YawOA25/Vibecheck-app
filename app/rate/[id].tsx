@@ -49,6 +49,13 @@
  * pinned to the bottom of the screen, so the button is always in reach.
  * The other states (loading, errors, results) keep the Back button.
  *
+ * Motion (VC-76, design/vc76-motion-spec.md): the screen rises as a sheet
+ * from the bottom (set in app/_layout.tsx). On iPhone a swipe down closes
+ * it, EXCEPT once the guest has tapped any chip or while the rating is
+ * being sent, so half-done work can't be thrown away by accident (Close
+ * still works). The spinner only shows if loading takes over 300 ms, and
+ * the form and the result fade in.
+ *
  * Not here on purpose: "What's playing?" genre chips from the v3 mockup
  * (VC-31, not approved yet); "Add a 15s clip" (clips are out of the MVP);
  * the animated meter on the payoff (the live score is task VC-B09).
@@ -63,6 +70,7 @@ import { BackButton } from '@/components/BackButton';
 import { Button } from '@/components/Button';
 import { ChoiceChip } from '@/components/ChoiceChip';
 import { CircleIconButton } from '@/components/CircleIconButton';
+import { FadeIn } from '@/components/FadeIn';
 import { FormMessage } from '@/components/FormMessage';
 import { Headline } from '@/components/Headline';
 import { useAuth } from '@/lib/auth-context';
@@ -89,7 +97,9 @@ import { rateResultScreen, tooSoonScreen } from '@/lib/rating-screens';
 import type { RateAction, RateScreen } from '@/lib/rating-screens';
 import { offerRecapReminder } from '@/lib/recap-notifications';
 import type { RecapReminderResult } from '@/lib/recap-notifications';
+import { useSwipeToClose } from '@/lib/swipe-close';
 import type { PublicEvent } from '@/lib/tonight';
+import { useDelayedFlag } from '@/lib/use-delayed-flag';
 import { colors, iconSize, spacing, typography } from '@/theme';
 
 /** The words on this screen (exported so tests use the same text). */
@@ -101,6 +111,26 @@ export const ONE_PER_EVENT_NOTE =
 export const NOT_FOUND_TITLE = 'Event not found';
 /** The round X on the form's top line (Q5): what screen readers say. */
 export const CLOSE_LABEL = 'Close';
+
+/**
+ * Whether a swipe down may close the rating sheet (VC-76).
+ *
+ * @param saving - true while the rating is being sent.
+ * @param draft - the taps so far.
+ * @returns false while saving, and from the first tap on (any row, the
+ *   reaction or a tag), so a half-done rating isn't lost by a stray swipe;
+ *   true otherwise (nothing to lose yet).
+ */
+export function rateSwipeAllowed(saving: boolean, draft: RatingDraft): boolean {
+  if (saving) return false;
+  const tapped =
+    draft.crowd !== null ||
+    draft.music !== null ||
+    draft.energy !== null ||
+    draft.reaction !== null ||
+    draft.tags.length > 0;
+  return !tapped;
+}
 
 /** What the screen is showing. */
 type Phase =
@@ -153,6 +183,10 @@ export default function RateScreenRoute() {
   const [draft, setDraft] = useState<RatingDraft>(EMPTY_DRAFT);
   // Bumped by "Try again" after a load error, to load once more.
   const [loadAttempt, setLoadAttempt] = useState(0);
+  // VC-76: the spinner only after 300 ms of loading (no flash on fast loads).
+  const showSpinner = useDelayedFlag(phase.kind === 'loading');
+  // VC-76: no swipe-down close while saving or once the form has taps.
+  useSwipeToClose(phase.kind === 'form' ? rateSwipeAllowed(phase.saving, draft) : true);
 
   // Load the event and the guest's own check-in and rating. State is set
   // only when both answers arrive, and ignored if the screen has closed.
@@ -317,7 +351,7 @@ export default function RateScreenRoute() {
 
       {phase.kind === 'loading' ? (
         <View style={styles.centre} accessible accessibilityLabel="Loading">
-          <ActivityIndicator color={colors.accent} size="large" />
+          {showSpinner ? <ActivityIndicator color={colors.accent} size="large" /> : null}
         </View>
       ) : null}
 
@@ -345,39 +379,43 @@ export default function RateScreenRoute() {
       ) : null}
 
       {phase.kind === 'form' ? (
-        <RatingForm
-          phase={phase}
-          draft={draft}
-          onChange={setDraft}
-          onSubmit={() => void submit(phase)}
-          onClose={goBack}
-        />
+        <FadeIn style={styles.fill}>
+          <RatingForm
+            phase={phase}
+            draft={draft}
+            onChange={setDraft}
+            onSubmit={() => void submit(phase)}
+            onClose={goBack}
+          />
+        </FadeIn>
       ) : null}
 
       {phase.kind === 'result' ? (
-        <ScrollView contentContainerStyle={styles.content}>
-          <Text style={[styles.label, phase.screen.success && styles.successLabel]}>
-            {phase.screen.success ? 'RATED' : phase.event.title.toUpperCase()}
-          </Text>
-          <Headline lead={phase.screen.lead} highlight={phase.screen.highlight} />
-          {/* Read aloud when it appears, so screen-reader users hear the result. */}
-          <Text style={styles.body} accessibilityLiveRegion="polite">
-            {phase.screen.body}
-          </Text>
-          {phase.reminder ? (
-            <Text style={styles.reminder} accessibilityLiveRegion="polite">
-              {RECAP_REMINDER_TEXT[phase.reminder]}
+        <FadeIn style={styles.fill}>
+          <ScrollView contentContainerStyle={styles.content}>
+            <Text style={[styles.label, phase.screen.success && styles.successLabel]}>
+              {phase.screen.success ? 'RATED' : phase.event.title.toUpperCase()}
             </Text>
-          ) : null}
-          {phase.screen.actions.map((button, index) => (
-            <Button
-              key={button.action}
-              label={button.label}
-              variant={index === 0 ? 'primary' : 'text'}
-              onPress={() => onAction(button.action, phase.event)}
-            />
-          ))}
-        </ScrollView>
+            <Headline lead={phase.screen.lead} highlight={phase.screen.highlight} />
+            {/* Read aloud when it appears, so screen-reader users hear the result. */}
+            <Text style={styles.body} accessibilityLiveRegion="polite">
+              {phase.screen.body}
+            </Text>
+            {phase.reminder ? (
+              <Text style={styles.reminder} accessibilityLiveRegion="polite">
+                {RECAP_REMINDER_TEXT[phase.reminder]}
+              </Text>
+            ) : null}
+            {phase.screen.actions.map((button, index) => (
+              <Button
+                key={button.action}
+                label={button.label}
+                variant={index === 0 ? 'primary' : 'text'}
+                onPress={() => onAction(button.action, phase.event)}
+              />
+            ))}
+          </ScrollView>
+        </FadeIn>
       ) : null}
     </SafeAreaView>
   );
@@ -556,6 +594,8 @@ function Group({ label, hint, children }: { label: string; hint?: string; childr
 
 /** Styles built from theme tokens (plus the v3 Rate screen's 20 px sides). */
 const styles = StyleSheet.create({
+  // The fade-in wrapper fills the screen under the top row (VC-76).
+  fill: { flex: 1 },
   container: { flex: 1, backgroundColor: colors.bg },
   topBar: { paddingHorizontal: spacing.gutter, paddingTop: spacing.sm },
   content: { paddingHorizontal: 20, paddingVertical: spacing.md, gap: 18 },

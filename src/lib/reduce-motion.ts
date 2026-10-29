@@ -12,6 +12,68 @@ import { useEffect, useState } from 'react';
 import { AccessibilityInfo } from 'react-native';
 
 /**
+ * The phone's last known Reduce Motion answer, shared by the whole app
+ * (VC-76). null until the phone has answered.
+ *
+ * Why a shared copy: small parts such as buttons and chips need the answer
+ * at the moment they are pressed, and asking the phone from every button
+ * would mean hundreds of questions. Instead the answer is asked once,
+ * remembered here, and kept up to date by one listener. Screens that use the
+ * useReduceMotion hook also refresh it.
+ */
+let latest: boolean | null = null;
+/** Whether the one-time question and the listener have been set up. */
+let watching = false;
+
+/**
+ * Starts the one shared question and listener, the first time it is needed.
+ *
+ * @returns nothing; fills `latest` when the phone answers.
+ */
+function startWatching(): void {
+  if (watching) return;
+  watching = true;
+  AccessibilityInfo.isReduceMotionEnabled()
+    .then((on) => {
+      latest = on;
+    })
+    // If the phone can't say, assume motion is fine (the default setting).
+    .catch(() => {
+      if (latest === null) latest = false;
+    });
+  AccessibilityInfo.addEventListener('reduceMotionChanged', (on) => {
+    latest = on;
+  });
+}
+
+/**
+ * The Reduce Motion answer right now, without waiting (VC-76).
+ *
+ * Used by parts that animate on a tap or on new content (PressableScale,
+ * FadeIn, ChoiceChip), where a React hook in every copy would be wasteful.
+ *
+ * @returns true (on), false (off) or null (the phone hasn't answered yet;
+ *   callers treat null like "on", so nothing moves that shouldn't).
+ */
+export function reduceMotionNow(): boolean | null {
+  startWatching();
+  return latest;
+}
+
+/**
+ * Tests only: forgets the shared answer so the next test starts fresh.
+ *
+ * @param value - the answer to start from (default null, "not known").
+ * @returns nothing.
+ */
+export function resetReduceMotionForTests(value: boolean | null = null): void {
+  latest = value;
+  // Set up as "already watching" when a value is given, so a test's chosen
+  // answer isn't overwritten by a new question to the (fake) phone.
+  watching = value !== null;
+}
+
+/**
  * Tracks the phone's "Reduce Motion" setting.
  *
  * @returns true while Reduce Motion is on, false while off, and null until
@@ -26,13 +88,18 @@ export function useReduceMotion(): boolean | null {
     let active = true;
     AccessibilityInfo.isReduceMotionEnabled()
       .then((on) => {
+        // Keep the shared copy in step too (see reduceMotionNow).
+        latest = on;
         if (active) setReduce(on);
       })
       // If the phone can't say, assume motion is fine (the default setting).
       .catch(() => {
         if (active) setReduce(false);
       });
-    const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduce);
+    const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', (on) => {
+      latest = on;
+      setReduce(on);
+    });
     return () => {
       active = false;
       subscription?.remove();

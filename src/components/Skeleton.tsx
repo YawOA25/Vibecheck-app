@@ -16,13 +16,21 @@
  * Accessibility: the whole skeleton is ONE item for screen readers, named
  * by `label` (e.g. "Loading events"), so they hear what's happening instead
  * of a list of empty shapes.
+ *
+ * VC-76 (design/vc76-motion-spec.md 2c "Reserve heights"): the event page's
+ * skeleton is sized like the real page (heading lines at the real text
+ * heights, the gauge card and the heads-up card at their usual ready
+ * heights), and SkeletonBlock and SkeletonGroup are shared so cards can
+ * hold the space of parts that are still loading (the vibe lines and
+ * tiles, the heads-up chips). Then nothing jumps when the data lands.
  */
 import { useEffect, useState } from 'react';
-import type { DimensionValue } from 'react-native';
+import type { ReactNode } from 'react';
+import type { DimensionValue, StyleProp, ViewStyle } from 'react-native';
 import { Animated, Easing, StyleSheet, View } from 'react-native';
 
 import { motionAllowed, useReduceMotion } from '@/lib/reduce-motion';
-import { colors, radius, spacing } from '@/theme';
+import { colors, radius, spacing, typography } from '@/theme';
 
 /** One full breath (dim then back), in milliseconds. */
 export const PULSE_MS = 1200;
@@ -30,6 +38,20 @@ export const PULSE_MS = 1200;
 export const PULSE_MIN_OPACITY = 0.5;
 /** Corner rounding for text-line blocks (v3: 6). Cards use radius.card (20). */
 export const LINE_RADIUS = 6;
+
+/**
+ * The event page's ready card heights, for its skeleton (VC-76, spec 2c).
+ * Worked out from the cards' own styles (padding, text line heights, the
+ * 200 x 104 gauge, the 60 px tiles, the 44 px chips), so the skeleton and
+ * the page line up. The spec asks for a check on an iPhone 15: see the
+ * README's device checklist.
+ *   gauge card: 14 top + 42 header + 140 gauge and word + 18 line + 70
+ *     tiles + 21 headcount + 16 bottom, plus the gaps = about 330;
+ *   heads-up card: 16 + 16 label + 44 chip row + 18 hint + 44 info link +
+ *     16, plus the gaps = about 180.
+ */
+export const GAUGE_CARD_HEIGHT = 330;
+export const HEADS_UP_CARD_HEIGHT = 180;
 
 /**
  * Makes the shared opacity value that all blocks of one skeleton follow,
@@ -86,9 +108,40 @@ interface BlockProps {
  *
  * @returns a plain view in surfaceRaised.
  */
-function SkeletonBlock({ height, width = '100%', corner = LINE_RADIUS }: BlockProps) {
+export function SkeletonBlock({ height, width = '100%', corner = LINE_RADIUS }: BlockProps) {
   return (
     <View testID="skeleton-block" style={[styles.block, { height, width, borderRadius: corner }]} />
+  );
+}
+
+/** What a SkeletonGroup needs. */
+interface GroupProps {
+  /** The blocks inside. */
+  children: ReactNode;
+  /** Layout for the group (e.g. a row of chips). */
+  style?: StyleProp<ViewStyle>;
+  /** Optional id for tests. */
+  testID?: string;
+}
+
+/**
+ * A few blocks that pulse together, used INSIDE a card that is still
+ * loading (VC-76): it only holds the space, so screen readers skip it (the
+ * card says "Loading" in its own words).
+ *
+ * @returns the pulsing (or still, under Reduce Motion) group.
+ */
+export function SkeletonGroup({ children, style, testID }: GroupProps) {
+  const opacity = usePulse();
+  return (
+    <Animated.View
+      testID={testID}
+      style={[style, { opacity }]}
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+    >
+      {children}
+    </Animated.View>
   );
 }
 
@@ -124,7 +177,8 @@ export function ListSkeleton({ label }: SkeletonProps) {
 
 /**
  * The event page's skeleton: a heading (kicker line, title line, area
- * line) and two card blocks below it, like the gauge card and details.
+ * line, at the real text heights) and two card blocks below it, sized like
+ * the gauge card and the heads-up card (VC-76).
  *
  * @param props.label - what screen readers hear.
  * @returns the pulsing (or still) skeleton.
@@ -140,12 +194,13 @@ export function EventSkeleton({ label }: SkeletonProps) {
       accessibilityRole="progressbar"
     >
       <View style={styles.heading}>
-        <SkeletonBlock height={12} width="35%" />
-        <SkeletonBlock height={32} width="80%" />
-        <SkeletonBlock height={14} width="50%" />
+        {/* Same heights as the kicker, title and area lines. */}
+        <SkeletonBlock height={typography.label.lineHeight} width="35%" />
+        <SkeletonBlock height={typography.title.lineHeight} width="80%" />
+        <SkeletonBlock height={typography.bodySm.lineHeight} width="50%" />
       </View>
-      <SkeletonBlock height={220} corner={radius.card} />
-      <SkeletonBlock height={120} corner={radius.card} />
+      <SkeletonBlock height={GAUGE_CARD_HEIGHT} corner={radius.card} />
+      <SkeletonBlock height={HEADS_UP_CARD_HEIGHT} corner={radius.card} />
     </Animated.View>
   );
 }
@@ -157,5 +212,6 @@ const styles = StyleSheet.create({
   list: { paddingHorizontal: spacing.gutter, paddingTop: spacing.md, gap: 14 },
   // Same padding and 24 px section gap as the event page's content.
   page: { padding: spacing.gutter, gap: spacing.lg },
-  heading: { gap: spacing.sm },
+  // The real heading's 4 px gap between its lines.
+  heading: { gap: spacing.xs },
 });

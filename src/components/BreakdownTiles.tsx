@@ -52,9 +52,18 @@ export function BreakdownTiles({ breakdown, stale = false }: BreakdownTilesProps
   );
 }
 
+/**
+ * One tile's height: 1 px edge + 10 padding + the 16 px label + 2 gap + the
+ * 20 px word + 10 padding + 1 px edge = 60. The vibe card's loading
+ * skeleton holds exactly this much space (VC-76), so nothing jumps.
+ */
+export const TILE_HEIGHT = 60;
+/** The space above the tiles row (styles.row's marginTop), for the same reason. */
+export const TILES_TOP_GAP = 10;
+
 /** Styles built only from theme tokens (spec: gap 8, radius 12, padding 10). */
 const styles = StyleSheet.create({
-  row: { alignSelf: 'stretch', flexDirection: 'row', gap: 8, marginTop: 10 },
+  row: { alignSelf: 'stretch', flexDirection: 'row', gap: 8, marginTop: TILES_TOP_GAP },
   tile: {
     flex: 1,
     borderRadius: 12,

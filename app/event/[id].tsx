@@ -66,10 +66,22 @@
  * The art is worked out from the event id alone (src/components/
  * GeneratedArt.tsx), so it says nothing about the place or the vibe.
  *
+ * Smoothness (VC-76, design/vc76-motion-spec.md 2a, 2c, 2f):
+ *   - while loading, the art band's space is already there (a plain block
+ *     the same 170 px tall, with Back on it), and the skeleton below is
+ *     sized like the real page, so nothing jumps when the event lands;
+ *   - the loaded page fades in (src/components/FadeIn.tsx) once; reloads
+ *     when the page comes back into view swap the details in place;
+ *   - the gauge's first sweep waits until this page has finished sliding
+ *     in (the navigator's "transitionEnd" event), so the two movements
+ *     don't compete. If the page wasn't slid in (opened from a link, no
+ *     history) the sweep starts at once, and a 1 second safety timer
+ *     starts it anyway if the event never comes.
+ *
  * Not here on purpose (VC-31): photos, "Now playing", clips, the Live /
  * Last 24h switch.
  */
-import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { ScrollView, Share, StyleSheet, Text, View } from 'react-native';
@@ -79,6 +91,7 @@ import { BackButton } from '@/components/BackButton';
 import { Button } from '@/components/Button';
 import { CircleIconButton } from '@/components/CircleIconButton';
 import { EntryLink } from '@/components/EntryLink';
+import { FadeIn } from '@/components/FadeIn';
 import { EventSkeleton } from '@/components/Skeleton';
 import { StatusPanel } from '@/components/StatusPanel';
 import { TEST_LABEL } from '@/components/EventCard';
@@ -117,6 +130,26 @@ export const NOT_STARTED_NOTE = 'The live vibe and heads-ups show here once it s
  */
 const MAX_TIMER_MS = 2 ** 31 - 1;
 
+/**
+ * The longest the gauge waits for the slide-in to finish (VC-76). A push
+ * takes about 350 ms; if the "transitionEnd" event never comes (it always
+ * should), the sweep starts after this anyway.
+ */
+export const SLIDE_IN_FALLBACK_MS = 1000;
+
+/**
+ * The one part of the navigator this page listens to: the "transitionEnd"
+ * event, fired when its slide-in (or slide-out) animation has finished.
+ * `data.closing` is true for the slide-out. (A small hand-written type, so
+ * this file needn't import the navigator library's own types.)
+ */
+interface TransitionEvents {
+  addListener(
+    event: 'transitionEnd',
+    callback: (e: { data?: { closing?: boolean } }) => void,
+  ): () => void;
+}
+
 /** What the page is showing: loading, a load error, not found, or the event. */
 type PageState =
   | { kind: 'loading' }
@@ -141,6 +174,23 @@ export default function EventScreen() {
   const id = Array.isArray(params.id) ? params.id[0] : params.id;
 
   const [state, setState] = useState<PageState>({ kind: 'loading' });
+
+  // VC-76: has the page finished sliding in? Starts true when there is no
+  // history (the page wasn't pushed, so there is no slide to wait for).
+  const navigation = useNavigation() as unknown as TransitionEvents;
+  const [slidIn, setSlidIn] = useState(() => !router.canGoBack());
+  useEffect(() => {
+    if (slidIn) return undefined;
+    // State is only set inside these callbacks, never straight in the effect.
+    const unsubscribe = navigation.addListener('transitionEnd', (e) => {
+      if (!e.data?.closing) setSlidIn(true);
+    });
+    const fallback = setTimeout(() => setSlidIn(true), SLIDE_IN_FALLBACK_MS);
+    return () => {
+      unsubscribe();
+      clearTimeout(fallback);
+    };
+  }, [navigation, slidIn]);
   // Whether the guest has a check-in here (VC-B08), which shows "Rate the
   // night". Re-read each time the page comes into view (e.g. after
   // checking in). If the read fails, the button just stays hidden; the
@@ -246,6 +296,15 @@ export default function EventScreen() {
             <CircleIconButton icon="share" label={SHARE_LABEL} onPress={() => share(state.event)} />
           </View>
         </View>
+      ) : state.kind === 'loading' ? (
+        // VC-76: while loading, hold the art band's 170 px with a plain
+        // block (the art itself needs the event), Back floating on it.
+        <View style={styles.band} testID="event-art-band-skeleton">
+          <View style={styles.bandSkeleton} />
+          <View style={[styles.topBar, styles.topBarOnBand]} testID="event-top-row">
+            <BackButton onPress={goBack} />
+          </View>
+        </View>
       ) : (
         <View style={styles.topBar} testID="event-top-row">
           <BackButton onPress={goBack} />
@@ -273,6 +332,7 @@ export default function EventScreen() {
           event={state.event}
           now={state.loadedAt}
           started={started}
+          sweepReady={slidIn}
           onImHere={() =>
             router.push({ pathname: '/check-in/[id]', params: { id: state.event.id } })
           }
@@ -327,6 +387,8 @@ export default function EventScreen() {
  * @param props.started - whether the event has started (VC-61). Before
  *   that, the Live vibe and Heads-up cards are left out. The Rate button
  *   doesn't depend on it: it follows check-in (see onRate).
+ * @param props.sweepReady - false until the page has slid in (VC-76): the
+ *   gauge holds its first sweep until then.
  * @param props.onImHere - what "I'm here" does (opens check-in).
  * @param props.onRate - what "Rate the night" does, or null to hide it
  *   (not checked in here, or an admin).
@@ -338,6 +400,7 @@ function EventDetails({
   event,
   now,
   started,
+  sweepReady,
   onImHere,
   onRate,
   headsUp,
@@ -346,6 +409,7 @@ function EventDetails({
   event: PublicEvent;
   now: Date;
   started: boolean;
+  sweepReady: boolean;
   onImHere: () => void;
   onRate: (() => void) | null;
   headsUp: ReactNode;
@@ -360,7 +424,8 @@ function EventDetails({
   const entryUrl = staffPick ? null : (event.entry_url ?? null);
 
   return (
-    <>
+    // VC-76: the page fades in once when it first loads (not on reloads).
+    <FadeIn style={styles.fill} testID="event-details-fade">
       {/* ScrollView: everything still fits when the phone's text is large. */}
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.heading}>
@@ -391,6 +456,8 @@ function EventDetails({
               ended={now.getTime() > Date.parse(event.ends_at)}
               // A new load time (each time the page comes into view) reloads it at once.
               refreshKey={now.getTime()}
+              // VC-76: the gauge's first sweep waits for the slide-in.
+              sweepReady={sweepReady}
             />
             {headsUp}
           </>
@@ -423,7 +490,7 @@ function EventDetails({
         {ticketUrl ? <TicketLink url={ticketUrl} /> : null}
         {entryUrl ? <EntryLink url={entryUrl} /> : null}
       </View>
-    </>
+    </FadeIn>
   );
 }
 
@@ -505,6 +572,10 @@ export const ART_BAND_HEIGHT = 170;
 /** Styles built only from theme tokens. */
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
+  // The fade-in wrapper fills the page under the band (VC-76).
+  fill: { flex: 1 },
+  // VC-76: the band's stand-in while loading, in the skeleton colour.
+  bandSkeleton: { flex: 1, backgroundColor: colors.surfaceRaised },
   // Back on the left, Share pushed to the far right (Q5 fix #4).
   topBar: {
     flexDirection: 'row',

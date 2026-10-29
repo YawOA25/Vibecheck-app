@@ -32,7 +32,6 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
-  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -43,11 +42,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { BackButton } from '@/components/BackButton';
 import { Button } from '@/components/Button';
 import { EventFormFields, useEventForm } from '@/components/EventForm';
+import { FadeIn } from '@/components/FadeIn';
 import { FormMessage } from '@/components/FormMessage';
 import { Headline } from '@/components/Headline';
 import { validateEventEdit, valuesFromEvent } from '@/lib/event-form';
 import type { EditableEvent } from '@/lib/event-form';
 import { getEventForEdit, updateEvent } from '@/lib/events-api';
+import { FORM_SCROLL_PROPS, KEYBOARD_BEHAVIOR } from '@/lib/keyboard';
+import { useDelayedFlag } from '@/lib/use-delayed-flag';
 import { colors, spacing, typography } from '@/theme';
 
 /** The words on this screen (exported so tests use the same text). */
@@ -98,6 +100,8 @@ export default function EditEventScreen() {
     if (router.canGoBack()) router.back();
     else router.replace('/');
   }, [router]);
+  // VC-76: the spinner only after 300 ms of loading (no flash on fast loads).
+  const showSpinner = useDelayedFlag(state.kind === 'loading');
 
   if (state.kind === 'ready') {
     // `key`: a different event gets a fresh form, never the old one's values.
@@ -111,7 +115,7 @@ export default function EditEventScreen() {
       </View>
       {state.kind === 'loading' ? (
         <View style={styles.centre} accessible accessibilityLabel="Loading the event">
-          <ActivityIndicator color={colors.accent} size="large" />
+          {showSpinner ? <ActivityIndicator color={colors.accent} size="large" /> : null}
         </View>
       ) : null}
       {state.kind === 'error' ? (
@@ -180,18 +184,22 @@ function EditForm({ event, onDone }: { event: EditableEvent; onDone: () => void 
     <SafeAreaView style={styles.safe}>
       <KeyboardAvoidingView
         style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        // VC-76: room for the keyboard on both platforms (src/lib/keyboard.ts).
+        behavior={KEYBOARD_BEHAVIOR}
       >
-        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-          <BackButton onPress={onDone} disabled={saving} />
-          <Headline lead="Edit" highlight="event" />
-          <Text style={styles.body}>Only admins can see this screen.</Text>
+        {/* VC-76: the loaded form fades in. */}
+        <FadeIn style={styles.flex}>
+          <ScrollView contentContainerStyle={styles.content} {...FORM_SCROLL_PROPS}>
+            <BackButton onPress={onDone} disabled={saving} />
+            <Headline lead="Edit" highlight="event" />
+            <Text style={styles.body}>Only admins can see this screen.</Text>
 
-          <EventFormFields form={form} mode="edit" saving={saving} />
+            <EventFormFields form={form} mode="edit" saving={saving} />
 
-          <Button label={SAVE_LABEL} busyLabel="Saving..." busy={saving} onPress={save} />
-          {message ? <FormMessage message={message} /> : null}
-        </ScrollView>
+            <Button label={SAVE_LABEL} busyLabel="Saving..." busy={saving} onPress={save} />
+            {message ? <FormMessage message={message} /> : null}
+          </ScrollView>
+        </FadeIn>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );

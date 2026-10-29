@@ -24,18 +24,21 @@
  *     moves to its title, and Close (and the dimmed area) go back, but not
  *     while a check-in is being sent.
  */
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react-native';
-import { AccessibilityInfo, Animated, Linking, StyleSheet } from 'react-native';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react-native';
+import { AccessibilityInfo, Animated, BackHandler, Linking, StyleSheet } from 'react-native';
 
 import CheckInScreen, {
   CHECKED_IN_LABEL,
   CLOSE_LABEL,
+  GPS_NOT_WORKING,
   IM_HERE,
   NOT_FOUND_TITLE,
   NOT_THIS_ONE,
   PRIVACY_NOTE,
+  SHEET_CLOSE_MS,
   SHEET_LABEL,
   SHEET_SLIDE_MS,
+  shouldCloseOnRelease,
 } from '../app/check-in/[id]';
 import { submitCheckIn } from '@/lib/check-in-api';
 import type { CheckInOutcome } from '@/lib/check-in-api';
@@ -100,6 +103,10 @@ beforeEach(() => {
   get.mockResolvedValue({ ok: true, event: EVENT });
   read.mockResolvedValue(READING);
   openSettings = jest.spyOn(Linking, 'openSettings').mockResolvedValue(undefined);
+  // VC-76: most tests here are about what happens, not how it moves, so
+  // Reduce Motion is on by default: closing then happens at once, with no
+  // 220 ms slide-down first. The sheet tests below set their own answer.
+  jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(true);
   consoleSpies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((name) =>
     jest.spyOn(console, name).mockImplementation(() => {}),
   );
@@ -509,6 +516,241 @@ describe('the bottom sheet (Q7, fix #7)', () => {
     expect(screen.getByRole('button', { name: CLOSE_LABEL })).toBeDisabled();
     await fireEvent.press(screen.getByRole('button', { name: CLOSE_LABEL }));
     await fireEvent.press(screen.getByTestId('check-in-scrim', HIDDEN));
+    expect(mockBack).not.toHaveBeenCalled();
+  });
+
+  it('VC-76: with motion on, Close slides the sheet down (220 ms) and THEN goes back', async () => {
+    // Let the fake animation report "finished" when started.
+    timingSpy.mockImplementation(() => ({
+      start: (done?: (r: { finished: boolean }) => void) => done?.({ finished: true }),
+      stop: jest.fn(),
+      reset: jest.fn(),
+    }));
+    await openSheet(false);
+    await fireEvent.press(screen.getByRole('button', { name: CLOSE_LABEL }));
+    const closeCall = timingSpy.mock.calls
+      .map((call) => call[1] as { toValue: number; duration: number; useNativeDriver: boolean })
+      .find((config) => config.duration === SHEET_CLOSE_MS);
+    expect(closeCall).toEqual(expect.objectContaining({ useNativeDriver: true }));
+    expect(closeCall?.toValue).toBeGreaterThan(0);
+    expect(mockBack).toHaveBeenCalledTimes(1);
+  });
+
+  it('VC-76: with motion on, nothing goes back until the slide-down has finished', async () => {
+    // The slide never finishes here (start does nothing).
+    await openSheet(false);
+    await fireEvent.press(screen.getByRole('button', { name: CLOSE_LABEL }));
+    expect(timingSpy.mock.calls.some((call) => call[1].duration === SHEET_CLOSE_MS)).toBe(true);
+    expect(mockBack).not.toHaveBeenCalled();
+  });
+
+  it('VC-76 Reduce Motion: Close goes back at once, with no slide-down', async () => {
+    await openSheet(true);
+    await fireEvent.press(screen.getByRole('button', { name: CLOSE_LABEL }));
+    expect(mockBack).toHaveBeenCalledTimes(1);
+    expect(timingSpy.mock.calls.some((call) => call[1].duration === SHEET_CLOSE_MS)).toBe(false);
+  });
+
+  it("VC-76: Android's back button closes the sheet the same way (handled, not ignored)", async () => {
+    const addSpy = jest.spyOn(BackHandler, 'addEventListener');
+    await openSheet(true);
+    const handler = addSpy.mock.calls.at(-1)?.[1] as () => boolean;
+    expect(handler()).toBe(true);
+    expect(mockBack).toHaveBeenCalledTimes(1);
+    addSpy.mockRestore();
+  });
+
+  it('VC-76: the drag closes past 30% of the sheet or on a quick flick, else springs back', () => {
+    expect(shouldCloseOnRelease(100, 0.2, 400)).toBe(false);
+    expect(shouldCloseOnRelease(121, 0.2, 400)).toBe(true);
+    expect(shouldCloseOnRelease(40, 1.5, 400)).toBe(true);
+    // Dragging up never closes.
+    expect(shouldCloseOnRelease(-200, -2, 400)).toBe(false);
+  });
+
+  // --- cto review of VC-76: nothing new may start while the sheet slides away.
+
+  /** Makes the fake slide animations report "finished" as soon as they start. */
+  function finishAnimationsAtOnce() {
+    timingSpy.mockImplementation(() => ({
+      start: (done?: (r: { finished: boolean }) => void) => done?.({ finished: true }),
+      stop: jest.fn(),
+      reset: jest.fn(),
+    }));
+  }
+
+  /** The slide-down (close) calls made so far. */
+  function closeCalls() {
+    return timingSpy.mock.calls.filter((call) => call[1].duration === SHEET_CLOSE_MS);
+  }
+
+  it('mid-slide-out: the sheet ignores touches and the check-in button sends nothing', async () => {
+    // The slide never finishes here, so the sheet stays "closing".
+    await openSheet(false);
+    await fireEvent.press(screen.getByRole('button', { name: CLOSE_LABEL }));
+    expect(screen.getByTestId('check-in-sheet').props.pointerEvents).toBe('none');
+    await fireEvent.press(screen.getByRole('button', { name: IM_HERE }));
+    expect(read).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
+    expect(mockBack).not.toHaveBeenCalled();
+  });
+
+  it('mid-slide-out: the party-code link does nothing (no second close, no replace)', async () => {
+    await openSheet(false);
+    await fireEvent.press(screen.getByRole('button', { name: CLOSE_LABEL }));
+    await fireEvent.press(screen.getByRole('button', { name: GPS_NOT_WORKING }));
+    expect(closeCalls()).toHaveLength(1);
+    expect(mockReplace).not.toHaveBeenCalled();
+  });
+
+  it('motion on: the party code replaces the sheet only after the slide-down', async () => {
+    finishAnimationsAtOnce();
+    await openSheet(false);
+    await fireEvent.press(screen.getByRole('button', { name: GPS_NOT_WORKING }));
+    expect(closeCalls()).toHaveLength(1);
+    expect(mockReplace).toHaveBeenCalledWith({ pathname: '/join/[id]', params: { id: 'e1' } });
+    expect(mockBack).not.toHaveBeenCalled();
+  });
+
+  it('motion on: "Rate the night" replaces the sheet only after the slide-down', async () => {
+    // Keep each animation's "finished" callback, to run it by hand.
+    const pending: ((r: { finished: boolean }) => void)[] = [];
+    timingSpy.mockImplementation(() => ({
+      start: (done?: (r: { finished: boolean }) => void) => {
+        if (done) pending.push(done);
+      },
+      stop: jest.fn(),
+      reset: jest.fn(),
+    }));
+    submit.mockResolvedValue({
+      ok: true,
+      result: { status: 'passed', firstAt: '2026-10-31T02:00:00Z', alreadyCheckedIn: false },
+    });
+    await openSheet(false);
+    await fireEvent.press(screen.getByRole('button', { name: IM_HERE }));
+    await fireEvent.press(await screen.findByRole('button', { name: RATE_THE_NIGHT }));
+    // Sliding down: nothing replaced yet.
+    expect(closeCalls()).toHaveLength(1);
+    expect(mockReplace).not.toHaveBeenCalled();
+    // The slide-down finishes: now the rating replaces the sheet.
+    await act(async () => pending.at(-1)?.({ finished: true }));
+    expect(mockReplace).toHaveBeenCalledWith({ pathname: '/rate/[id]', params: { id: 'e1' } });
+  });
+
+  /**
+   * One touch moment for a drag, in the shape PanResponder reads
+   * (React Native's touch history).
+   *
+   * @param y - the finger's current height on screen.
+   * @param t - the time in ms.
+   * @param prevY - where it was at the previous moment.
+   * @param prevT - when that was.
+   * @returns a fake responder event.
+   */
+  function touch(y: number, t: number, prevY = 100, prevT = 0) {
+    return {
+      nativeEvent: { pageX: 50, pageY: y, timestamp: t, touches: [], changedTouches: [] },
+      touchHistory: {
+        numberActiveTouches: 1,
+        indexOfSingleActiveTouch: 0,
+        mostRecentTimeStamp: t,
+        touchBank: [
+          {
+            touchActive: true,
+            startPageX: 50,
+            startPageY: 100,
+            startTimeStamp: 0,
+            currentPageX: 50,
+            currentPageY: y,
+            currentTimeStamp: t,
+            previousPageX: 50,
+            previousPageY: prevY,
+            previousTimeStamp: prevT,
+          },
+        ],
+      },
+    };
+  }
+
+  /**
+   * Drags the sheet's handle area down by `dy` points, slowly, and lets go,
+   * through PanResponder's own touch handlers.
+   *
+   * @param dy - how far down to drag.
+   */
+  async function drag(dy: number) {
+    const area = () => screen.getByTestId('check-in-drag-area');
+    await act(async () => {
+      area().props.onResponderGrant(touch(100, 0, 100, 0));
+    });
+    await act(async () => {
+      // PanResponder adds up (current - previous) per move, so one move
+      // from the start point covers the whole drag.
+      area().props.onResponderMove(touch(100 + dy, 1000, 100, 0));
+    });
+    await act(async () => {
+      area().props.onResponderRelease(touch(100 + dy, 1010, 100 + dy, 1000));
+    });
+  }
+
+  /** Gives the sheet a 400 point height, as a phone would lay it out. */
+  async function layOutSheet() {
+    await fireEvent(screen.getByTestId('check-in-sheet'), 'layout', {
+      nativeEvent: { layout: { x: 0, y: 0, width: 390, height: 400 } },
+    });
+  }
+
+  it('a real drag: a downward drag is claimed, a sideways one is not', async () => {
+    await openSheet(false);
+    /**
+     * Asks the drag area whether it wants this move. React Native first runs
+     * the "capture" step (which records the movement), then this question.
+     */
+    const claims = (event: ReturnType<typeof touch>) => {
+      const area = screen.getByTestId('check-in-drag-area');
+      area.props.onMoveShouldSetResponderCapture(event);
+      return area.props.onMoveShouldSetResponder(event);
+    };
+    expect(claims(touch(140, 100))).toBe(true);
+    await screen.unmount();
+    await openSheet(false);
+    // Sideways (x moves more than y): left to the scroll view and buttons.
+    const sideways = touch(104, 100);
+    sideways.touchHistory.touchBank[0].currentPageX = 150;
+    expect(claims(sideways)).toBe(false);
+  });
+
+  it('a real drag past a third of the sheet slides it down and goes back', async () => {
+    finishAnimationsAtOnce();
+    await openSheet(false);
+    await layOutSheet();
+    await drag(200);
+    expect(closeCalls()).toHaveLength(1);
+    expect(mockBack).toHaveBeenCalledTimes(1);
+  });
+
+  it('a short real drag springs back and stays open', async () => {
+    const springSpy = jest.spyOn(Animated, 'spring');
+    await openSheet(false);
+    await layOutSheet();
+    await drag(60);
+    expect(springSpy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ toValue: 0 }),
+    );
+    expect(closeCalls()).toHaveLength(0);
+    expect(mockBack).not.toHaveBeenCalled();
+    springSpy.mockRestore();
+  });
+
+  it('a drag let go while a check-in is being sent does not close the sheet', async () => {
+    finishAnimationsAtOnce();
+    read.mockReturnValue(new Promise(() => {}));
+    await openSheet(false);
+    await layOutSheet();
+    await fireEvent.press(screen.getByRole('button', { name: IM_HERE }));
+    await drag(300);
+    expect(closeCalls()).toHaveLength(0);
     expect(mockBack).not.toHaveBeenCalled();
   });
 });

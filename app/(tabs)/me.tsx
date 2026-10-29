@@ -19,22 +19,31 @@
  * Since Q4 ("launch look") this is the Me tab of the bottom bar
  * (app/(tabs)/me.tsx, still at "/me"), so it has no Back button. Tapping
  * the Me tab while already here scrolls back to the top.
+ *
+ * Motion (VC-76, design/vc76-motion-spec.md 2a, 2b, 3a): the spinner only
+ * shows if loading takes over 300 ms; the loaded list fades in once (later
+ * refreshes swap it in place); the card and rows shrink a touch while
+ * pressed, with a lighter background, and the gear circle shrinks to 0.96.
+ * No shrinking under Reduce Motion (src/components/PressableScale.tsx).
  */
 import { useFocusEffect, useRouter, useScrollToTop } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
 import type { ComponentRef } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Button } from '@/components/Button';
+import { FadeIn } from '@/components/FadeIn';
 import { FormMessage } from '@/components/FormMessage';
 import { Icon } from '@/components/Icon';
+import { PressableScale } from '@/components/PressableScale';
 import { wordColour } from '@/components/VibeMeter';
 import { useAuth } from '@/lib/auth-context';
 import { nightWord, recapDateLine } from '@/lib/recap';
 import type { RecapItem } from '@/lib/recap';
 import { getMyRecap } from '@/lib/recap-api';
-import { colors, iconSize, minTapTarget, radius, spacing, typography } from '@/theme';
+import { useDelayedFlag } from '@/lib/use-delayed-flag';
+import { colors, iconSize, minTapTarget, motion, radius, spacing, typography } from '@/theme';
 
 /** What the screen is showing. */
 type Phase =
@@ -56,6 +65,8 @@ export default function MeScreen() {
   // The scroll view, so a tap on the already-open Me tab scrolls to the top.
   const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
   useScrollToTop(scrollRef);
+  // VC-76: the spinner only after 300 ms of loading (no flash on fast loads).
+  const showSpinner = useDelayedFlag(phase.kind === 'loading');
 
   // Load the last 36 hours (for the card) and the whole list together. The
   // server decides what counts as "last night", so the app doesn't repeat
@@ -102,7 +113,7 @@ export default function MeScreen() {
 
         {phase.kind === 'loading' ? (
           <View style={styles.centre} accessible accessibilityLabel="Loading">
-            <ActivityIndicator color={colors.accent} size="large" />
+            {showSpinner ? <ActivityIndicator color={colors.accent} size="large" /> : null}
           </View>
         ) : null}
 
@@ -120,31 +131,34 @@ export default function MeScreen() {
           </View>
         ) : null}
 
-        {phase.kind === 'ready' && phase.recent[0] ? (
-          <LastNightCard item={phase.recent[0]} onPress={() => router.push('/recap')} />
-        ) : null}
-
+        {/* VC-76: the loaded part fades in once; refreshes swap it in place. */}
         {phase.kind === 'ready' ? (
-          <View>
-            <Text style={styles.sectionLabel} accessibilityRole="header">
-              YOUR NIGHTS OUT
-            </Text>
-            {phase.all.length === 0 ? (
-              <Text style={styles.muted}>
-                No nights yet. Check in and rate an event, and it shows up here.
+          <FadeIn style={styles.ready}>
+            {phase.recent[0] ? (
+              <LastNightCard item={phase.recent[0]} onPress={() => router.push('/recap')} />
+            ) : null}
+
+            <View>
+              <Text style={styles.sectionLabel} accessibilityRole="header">
+                YOUR NIGHTS OUT
               </Text>
-            ) : (
-              phase.all.map((item) => (
-                <NightRow
-                  key={item.eventId}
-                  item={item}
-                  onPress={() =>
-                    router.push({ pathname: '/recap', params: { event: item.eventId } })
-                  }
-                />
-              ))
-            )}
-          </View>
+              {phase.all.length === 0 ? (
+                <Text style={styles.muted}>
+                  No nights yet. Check in and rate an event, and it shows up here.
+                </Text>
+              ) : (
+                phase.all.map((item) => (
+                  <NightRow
+                    key={item.eventId}
+                    item={item}
+                    onPress={() =>
+                      router.push({ pathname: '/recap', params: { event: item.eventId } })
+                    }
+                  />
+                ))
+              )}
+            </View>
+          </FadeIn>
         ) : null}
       </ScrollView>
     </SafeAreaView>
@@ -160,14 +174,16 @@ export default function MeScreen() {
  */
 function SettingsButton({ onPress }: { onPress: () => void }) {
   return (
-    <Pressable
+    // A circle button: the existing dimming plus a 0.96 shrink (VC-76).
+    <PressableScale
+      scaleTo={motion.pressScale.circle}
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel="Settings"
       style={({ pressed }) => [styles.gear, pressed && styles.pressed]}
     >
       <Icon name="gear" size={iconSize.md} color={colors.text} />
-    </Pressable>
+    </PressableScale>
   );
 }
 
@@ -184,11 +200,13 @@ function LastNightCard({ item, onPress }: { item: RecapItem; onPress: () => void
     ? `You called ${item.mine.label}. The room said ${room}.`
     : `You called ${item.mine.label}. See how the night went.`;
   return (
-    <Pressable
+    // A card: shrinks to 0.98 with a lighter background while pressed (VC-76).
+    <PressableScale
+      scaleTo={motion.pressScale.card}
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={`Last night, rated. ${text} Opens your recap.`}
-      style={({ pressed }) => [styles.lastNight, pressed && styles.pressed]}
+      style={({ pressed }) => [styles.lastNight, pressed && styles.rowPressed]}
     >
       <View style={styles.lastNightText}>
         <Text style={styles.goldLabel}>LAST NIGHT, RATED</Text>
@@ -196,7 +214,7 @@ function LastNightCard({ item, onPress }: { item: RecapItem; onPress: () => void
       </View>
       {/* "Opens another screen" arrow: decoration, the label says it all. */}
       <Icon name="chevron-right" size={iconSize.md} color={colors.muted} />
-    </Pressable>
+    </PressableScale>
   );
 }
 
@@ -211,11 +229,13 @@ function NightRow({ item, onPress }: { item: RecapItem; onPress: () => void }) {
   const room = nightWord(item.vibe);
   const line = `${recapDateLine(item)} · You: ${item.mine.label}`;
   return (
-    <Pressable
+    // A row: shrinks to 0.97 with a lighter background while pressed (VC-76).
+    <PressableScale
+      scaleTo={motion.pressScale.row}
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={`${item.title}. ${line}. ${room ? `The room: ${room}` : 'No night word'}.`}
-      style={({ pressed }) => [styles.row, pressed && styles.pressed]}
+      style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
     >
       <View style={styles.rowText}>
         <Text style={styles.rowTitle}>{item.title}</Text>
@@ -224,7 +244,7 @@ function NightRow({ item, onPress }: { item: RecapItem; onPress: () => void }) {
       <Text style={[styles.rowWord, { color: room ? wordColour(room) : colors.muted }]}>
         {room ?? '—'}
       </Text>
-    </Pressable>
+    </PressableScale>
   );
 }
 
@@ -282,5 +302,10 @@ const styles = StyleSheet.create({
   rowWord: { ...typography.button },
   body: { ...typography.bodySm, color: colors.text },
   muted: { ...typography.bodySm, color: colors.muted },
+  // The gear circle's pressed look (unchanged).
   pressed: { opacity: 0.7 },
+  // Cards and rows while pressed (VC-76, spec 3a): one step lighter.
+  rowPressed: { backgroundColor: colors.surfaceRaised },
+  // The loaded part keeps the page's 18 px gap inside its fade wrapper.
+  ready: { gap: 18 },
 });

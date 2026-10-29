@@ -18,8 +18,9 @@
  * readers (they read "Email, text field"), and every form looks the same.
  */
 import { useState } from 'react';
+import type { Ref } from 'react';
 import { StyleSheet, Text, TextInput, View } from 'react-native';
-import type { TextInputProps } from 'react-native';
+import type { TextInputInstance, TextInputProps } from 'react-native';
 
 import { FormMessage } from '@/components/FormMessage';
 import { colors, fieldHeight, radius, spacing, typography } from '@/theme';
@@ -32,6 +33,11 @@ export interface TextFieldProps extends TextInputProps {
   helper?: string;
   /** An error sentence. When set, the box gets a coral edge and the sentence shows under it. */
   error?: string | null;
+  /**
+   * A handle on the text box, so a form can move the typing cursor into it,
+   * e.g. when "Next" is tapped on the keyboard in the box above (VC-76).
+   */
+  inputRef?: Ref<TextInputInstance>;
 }
 
 /**
@@ -48,6 +54,7 @@ export function TextField({
   onFocus,
   onBlur,
   accessibilityHint,
+  inputRef,
   ...inputProps
 }: TextFieldProps) {
   const [focused, setFocused] = useState(false);
@@ -66,6 +73,7 @@ export function TextField({
         {label}
       </Text>
       <TextInput
+        ref={inputRef}
         accessibilityLabel={label}
         // The error is also given as a hint, so it is read when the box is reached.
         accessibilityHint={error ?? accessibilityHint}

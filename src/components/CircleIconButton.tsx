@@ -12,12 +12,17 @@
  * background) instead of v3's fainter #2B2B31, so the circle is visible to
  * people with low vision. The fill is the screen background (v3's "dark
  * circle"), which matters when the button sits over something lighter.
+ *
+ * Press feel (VC-76, spec 3a): besides the lighter fill, the circle shrinks
+ * to 96% while pressed and springs back (not under Reduce Motion; see
+ * src/components/PressableScale.tsx).
  */
-import { Pressable, StyleSheet } from 'react-native';
+import { StyleSheet } from 'react-native';
 
 import { Icon } from '@/components/Icon';
 import type { IconName } from '@/components/Icon';
-import { colors, iconSize, minTapTarget } from '@/theme';
+import { PressableScale } from '@/components/PressableScale';
+import { colors, iconSize, minTapTarget, motion } from '@/theme';
 
 /** What a CircleIconButton needs. */
 export interface CircleIconButtonProps {
@@ -49,7 +54,8 @@ export function CircleIconButton({
   testID,
 }: CircleIconButtonProps) {
   return (
-    <Pressable
+    <PressableScale
+      scaleTo={motion.pressScale.circle}
       onPress={onPress}
       disabled={disabled}
       accessibilityRole="button"
@@ -61,7 +67,7 @@ export function CircleIconButton({
       {/* Decoration only; the label above is what screen readers say. Icons
           don't grow with text size, so it always fits the circle. */}
       <Icon name={icon} size={iconPx} color={colors.text} />
-    </Pressable>
+    </PressableScale>
   );
 }
 

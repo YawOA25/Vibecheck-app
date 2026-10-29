@@ -16,6 +16,16 @@
  * (and its "/admin" address) for everyone else. That only hides the button;
  * the server already refuses every admin action from non-admins, and the
  * admin forms themselves are guarded again in the root layout.
+ *
+ * Switching tabs (VC-76, design/vc76-motion-spec.md section 1): the founder
+ * hasn't chosen yet between a soft 150 ms cross-fade (the designer's
+ * recommendation) and the instant iOS-style switch. Both are built: flip
+ * TAB_CROSSFADE below (true = fade, false = instant). Under Reduce Motion
+ * the fade stays (a fade moves nothing) but takes 100 ms.
+ *
+ * (The spec also asks for `freezeOnBlur`, so hidden tabs stop re-drawing.
+ * Expo Router's own tabs ignore that option, so it isn't set; the home
+ * list's minute refresh already stops while its tab is out of view.)
  */
 import { Tabs } from 'expo-router/js-tabs';
 import type { ColorValue } from 'react-native';
@@ -24,7 +34,37 @@ import { Icon } from '@/components/Icon';
 import type { IconName } from '@/components/Icon';
 import { TabBar } from '@/components/TabBar';
 import { useAuth } from '@/lib/auth-context';
-import { colors } from '@/theme';
+import { motionAllowed, useReduceMotion } from '@/lib/reduce-motion';
+import { colors, motion } from '@/theme';
+
+/**
+ * The founder's one-line switch for the tab change (VC-76):
+ *   true  = a 150 ms cross-fade between tabs (designer's recommendation);
+ *   false = instant, no animation (the iOS convention, as before VC-76).
+ */
+export const TAB_CROSSFADE = true;
+
+/**
+ * The tab change settings for the bottom tabs.
+ *
+ * @param crossfade - TAB_CROSSFADE (a parameter so tests can try both).
+ * @param reduceMotion - the phone's Reduce Motion answer (null = not known).
+ * @returns `{ animation: 'none' }` for the instant switch, or a fade
+ *   lasting 150 ms (100 ms under Reduce Motion or before the phone answers).
+ */
+export function tabTransition(crossfade: boolean, reduceMotion: boolean | null) {
+  if (!crossfade) return { animation: 'none' as const };
+  return {
+    animation: 'fade' as const,
+    transitionSpec: {
+      animation: 'timing' as const,
+      config: {
+        duration: motionAllowed(reduceMotion) ? motion.tabFade : motion.reducedFade,
+        easing: motion.base.easing,
+      },
+    },
+  };
+}
 
 /**
  * Builds a tab's icon drawer: the tab bar calls it with the colour to use
@@ -48,6 +88,8 @@ export default function TabsLayout() {
   const { profile } = useAuth();
   // Only admins get the Admin tab (the server checks every admin action too).
   const isAdmin = profile?.role === 'admin';
+  // VC-76: shortens the tab fade under Reduce Motion.
+  const reduceMotion = useReduceMotion();
   return (
     <Tabs
       // Our own bar (src/components/TabBar.tsx) with the gold indicator.
@@ -57,8 +99,8 @@ export default function TabsLayout() {
       screenOptions={{
         // Each screen draws its own big title, so no top bar.
         headerShown: false,
-        // No fade or slide when switching tabs (spec: instant).
-        animation: 'none',
+        // VC-76: cross-fade or instant, per TAB_CROSSFADE above.
+        ...tabTransition(TAB_CROSSFADE, reduceMotion),
         sceneStyle: { backgroundColor: colors.bg },
       }}
     >

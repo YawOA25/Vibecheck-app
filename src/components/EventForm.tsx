@@ -23,8 +23,9 @@
  *   - the Test event switch explains it can't change once people have
  *     checked in (the server enforces that, error VCTST).
  */
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
+import type { TextInputInstance } from 'react-native';
 
 import { AreaPicker } from '@/components/AreaPicker';
 import { Button } from '@/components/Button';
@@ -264,6 +265,10 @@ export function EventFormFields({ form, mode, saving }: EventFormFieldsProps) {
   const { values, errors, update } = form;
   const editing = mode === 'edit';
   const summaryWords = wordCount(values.summary);
+  // The last text boxes, so "Next" on the keyboard can move the cursor
+  // down the form: entry link, then ticket link, then summary (VC-76).
+  const ticketRef = useRef<TextInputInstance>(null);
+  const summaryRef = useRef<TextInputInstance>(null);
   // Where each picker opens when nothing is picked yet (10 PM on the start
   // date; the end 4 hours after the start).
   const startingPoints = pickerStartingPoints(values, new Date());
@@ -456,6 +461,10 @@ export function EventFormFields({ form, mode, saving }: EventFormFieldsProps) {
           autoCapitalize="none"
           autoCorrect={false}
           placeholder="https://partiful.com/e/..."
+          // VC-76: "Next" moves on to the ticket link.
+          returnKeyType="next"
+          submitBehavior="submit"
+          onSubmitEditing={() => ticketRef.current?.focus()}
         />
       )}
       <TextField
@@ -468,6 +477,11 @@ export function EventFormFields({ form, mode, saving }: EventFormFieldsProps) {
         autoCapitalize="none"
         autoCorrect={false}
         placeholder="https://www.eventbrite.com/e/..."
+        inputRef={ticketRef}
+        // VC-76: "Next" moves on to the summary.
+        returnKeyType="next"
+        submitBehavior="submit"
+        onSubmitEditing={() => summaryRef.current?.focus()}
       />
       <TextField
         label="Summary (optional)"
@@ -477,6 +491,8 @@ export function EventFormFields({ form, mode, saving }: EventFormFieldsProps) {
         helper={`In our own words, never copied. ${summaryWords} of ${MAX_SUMMARY_WORDS} words.`}
         autoCapitalize="sentences"
         placeholder="Afrobeats on the roof, sunset start."
+        inputRef={summaryRef}
+        returnKeyType="done"
       />
     </>
   );
