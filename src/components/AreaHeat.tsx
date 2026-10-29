@@ -16,7 +16,15 @@
  * only a faint grey wash with a dashed edge.
  *
  * It's decoration only: every fact is also on the tag in words and numbers.
+ *
+ * VC-83 Batch 2: when the band changes (a new snapshot was published), the
+ * old glow fades out while the new one fades in, over 400 ms in 4 steps
+ * (spec §3). Map circles can't use React Native's animation driver, so the
+ * fade re-sends the circles' colours 4 times; that happens only on a
+ * publish, so it costs nothing the rest of the time. Under Reduce Motion
+ * the change is instant.
  */
+import { useEffect, useState } from 'react';
 import { Circle } from 'react-native-maps';
 
 import type { VibeLabel } from '@/lib/rating';
@@ -69,22 +77,28 @@ const RECIPES: Record<
 /** The circles' sizes, outer first, as shares of the area's radius. */
 const SCALES = [1, 0.66, 0.33] as const;
 
+/** How long a band change fades, in ms (spec §3), and in how many steps. */
+export const GLOW_FADE_MS = 400;
+const GLOW_FADE_STEPS = 4;
+
 /**
  * Works out the circles for one area.
  *
  * @param band - the band to show (for an area with 2+ parties, the hottest
  *   published band among them), or null when none has a published score.
+ * @param strength - 0 to 1: how far faded in (1, the default, is the full
+ *   glow; used only while a band change cross-fades).
  * @returns the circles, outer first. With no band: one faint grey circle
  *   with a dashed edge (the middle and core would be fully clear, so they
  *   aren't drawn at all).
  */
-export function heatLayers(band: VibeLabel | null): HeatLayer[] {
+export function heatLayers(band: VibeLabel | null, strength: number = 1): HeatLayer[] {
   if (band === null) {
     return [
       {
         scale: 1,
-        fill: rgba(colors.muted, 0.05),
-        stroke: rgba(colors.muted, 0.5),
+        fill: rgba(colors.muted, 0.05 * strength),
+        stroke: rgba(colors.muted, 0.5 * strength),
         strokeWidth: 1,
         dash: [6, 6],
       },
@@ -93,9 +107,10 @@ export function heatLayers(band: VibeLabel | null): HeatLayer[] {
   const recipe = RECIPES[band];
   return SCALES.map((scale, i) => ({
     scale,
-    fill: rgba(recipe.colour, recipe.fills[i]),
+    fill: rgba(recipe.colour, recipe.fills[i] * strength),
     // Only the outer circle gets an edge, and only for Hot and Fire.
-    stroke: i === 0 && recipe.stroke > 0 ? rgba(recipe.colour, recipe.strokeAlpha) : undefined,
+    stroke:
+      i === 0 && recipe.stroke > 0 ? rgba(recipe.colour, recipe.strokeAlpha * strength) : undefined,
     strokeWidth: i === 0 ? recipe.stroke : 0,
   }));
 }
@@ -109,20 +124,65 @@ export interface AreaHeatProps {
   radius: number;
   /** The band to show, or null for "no score yet". */
   band: VibeLabel | null;
+  /** false under Reduce Motion: a band change is instant instead of fading. */
+  fade?: boolean;
+}
+
+/** One circle to draw: its layer and a key that stays put while it fades. */
+interface DrawnLayer {
+  key: string;
+  layer: HeatLayer;
 }
 
 /**
  * Renders the stacked circles.
  *
- * @returns 1 to 3 map circles (testID "map-circle" in the Jest fake).
+ * @returns 1 to 3 map circles (testID "map-circle" in the Jest fake); for
+ *   400 ms after a band change, the old band's circles too, fading out.
  */
-export function AreaHeat({ latitude, longitude, radius, band }: AreaHeatProps) {
+export function AreaHeat({ latitude, longitude, radius, band, fade = false }: AreaHeatProps) {
   const center = { latitude, longitude };
+  // The band drawn last, and (while fading) the band it is fading from.
+  // "Adjust state when a prop changes": noticed during the render.
+  const [shownBand, setShownBand] = useState(band);
+  const [fadingFrom, setFadingFrom] = useState<{ band: VibeLabel | null } | null>(null);
+  // How far the fade has got: 0 just started, 1 done.
+  const [progress, setProgress] = useState(1);
+  if (shownBand !== band) {
+    setShownBand(band);
+    setFadingFrom(fade ? { band: shownBand } : null);
+    setProgress(fade ? 0 : 1);
+  }
+  useEffect(() => {
+    if (!fadingFrom) return;
+    // Step the fade along on a timer (state set only inside the timer).
+    const stepMs = GLOW_FADE_MS / GLOW_FADE_STEPS;
+    let step = 0;
+    const timer = setInterval(() => {
+      step += 1;
+      setProgress(step / GLOW_FADE_STEPS);
+      if (step >= GLOW_FADE_STEPS) {
+        clearInterval(timer);
+        setFadingFrom(null);
+      }
+    }, stepMs);
+    return () => clearInterval(timer);
+  }, [fadingFrom]);
+
+  const drawn: DrawnLayer[] = [];
+  if (fadingFrom) {
+    for (const layer of heatLayers(fadingFrom.band, 1 - progress)) {
+      drawn.push({ key: `old-${layer.scale}`, layer });
+    }
+  }
+  for (const layer of heatLayers(band, fadingFrom ? progress : 1)) {
+    drawn.push({ key: `${layer.scale}`, layer });
+  }
   return (
     <>
-      {heatLayers(band).map((layer) => (
+      {drawn.map(({ key, layer }) => (
         <Circle
-          key={layer.scale}
+          key={key}
           center={center}
           radius={radius * layer.scale}
           fillColor={layer.fill}

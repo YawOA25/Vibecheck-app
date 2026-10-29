@@ -14,7 +14,9 @@
  *   - VC-83: the published score is kept only once started and only when
  *     it's a real 0-10 number; tagState / tagTrailing / tagName / tagSpoken
  *     say "8.4", "10 PM" or "Too early" (nobody rated and 1-4 raters read
- *     the same); hottestBand uses only published bands.
+ *     the same); hottestBand uses only published bands;
+ *   - VC-83 Batch 2: a stale score is spoken as "stale"; pagerOrder puts
+ *     the hottest published score first, then the rest by start time.
  */
 import { THIS_WEEK, filterWindow } from '@/lib/date-filter';
 import {
@@ -32,6 +34,8 @@ import {
   tagSpoken,
   tagState,
   tagTrailing,
+  compareHeat,
+  pagerOrder,
 } from '@/lib/map-read';
 import type { MapPoint } from '@/lib/map-read';
 import { supabase } from '@/lib/supabase';
@@ -271,5 +275,39 @@ describe('listMapPoints', () => {
       ok: false,
       message: "We couldn't load events. Please try again.",
     });
+  });
+});
+
+describe('VC-83 Batch 2: stale spoken, pager order', () => {
+  it('speaks "stale" after an old score, and only then', () => {
+    const scored = { has_started: true, vibe_word: 'Hot', vibe_score: 8.4 };
+    expect(tagSpoken(point({ ...scored, vibe_stale: true }))).toBe(
+      'Party, house party, area only, Shaw, Hot, 8.4, stale',
+    );
+    expect(tagSpoken(point(scored))).not.toMatch(/stale/);
+  });
+
+  it('orders pages hottest first, then by start time', () => {
+    const early = point({
+      event_id: 'early',
+      has_started: true,
+      starts_at: '2026-11-07T01:00:00+00:00',
+    });
+    const later = point({ event_id: 'later', starts_at: '2026-11-07T05:00:00+00:00' });
+    const sooner = point({ event_id: 'sooner', starts_at: '2026-11-07T04:00:00+00:00' });
+    const good = point({ event_id: 'good', has_started: true, vibe_word: 'Good', vibe_score: 6.1 });
+    const fire = point({ event_id: 'fire', has_started: true, vibe_word: 'Fire', vibe_score: 9.2 });
+    const input = [later, good, early, fire, sooner];
+    expect(pagerOrder(input).map((p) => p.event_id)).toEqual([
+      'fire',
+      'good',
+      'early',
+      'sooner',
+      'later',
+    ]);
+    // The input list is left as it was.
+    expect(input[0].event_id).toBe('later');
+    // Same score and start: the id decides, so the order never flickers.
+    expect(compareHeat(point({ event_id: 'a' }), point({ event_id: 'b' }))).toBeLessThan(0);
   });
 });

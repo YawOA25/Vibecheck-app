@@ -29,14 +29,20 @@
  *     than 300" notes;
  *   - the map region's spoken summary and the always-there "See the list";
  *   - Reduce Motion: the framing doesn't glide;
- *   - Android: "Map coming soon" with "See the list", and no map at all.
+ *   - Android: "Map coming soon" with "See the list", and no map at all;
+ *   - VC-83 Batch 2: far zoom draws count bubbles (a count of events and a
+ *     band colour only: never a score or a rater count) and heat dots, and a
+ *     tapped bubble zooms in; the card's pages go hottest first; at most 5
+ *     tags pulse, still under Reduce Motion; a band change cross-fades the
+ *     glow (instant under Reduce Motion); a swipe down or the screen
+ *     reader's escape closes the card; a stale score is spoken as "stale".
  */
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import * as Location from 'expo-location';
-import { AccessibilityInfo, Platform } from 'react-native';
+import { AccessibilityInfo, Animated, Platform } from 'react-native';
 import * as Maps from 'react-native-maps';
 
-import { heatLayers } from '@/components/AreaHeat';
+import { GLOW_FADE_MS, heatLayers } from '@/components/AreaHeat';
 import { TAG_REDRAW_MS } from '@/components/MapTag';
 import {
   ANDROID_TITLE,
@@ -47,11 +53,15 @@ import {
   LOCATE_LABEL,
   MAP_LOADING_LABEL,
   MORE_THAN_LIMIT,
+  LEGEND_BUBBLE_TEXT,
   SEE_LIST_LABEL,
   TonightMap,
+  isSwipeDown,
+  swipeCloses,
 } from '@/components/TonightMap';
 import { useAuth } from '@/lib/auth-context';
 import { THIS_WEEK, filterWindow } from '@/lib/date-filter';
+import { CLOSE_DELTA, MAX_PULSES } from '@/lib/map-cluster';
 import { TOO_EARLY } from '@/lib/map-read';
 import { resetReduceMotionForTests } from '@/lib/reduce-motion';
 import { supabase } from '@/lib/supabase';
@@ -589,5 +599,365 @@ describe('TonightMap on Android', () => {
     expect(rpc).not.toHaveBeenCalled();
     await fireEvent.press(screen.getByRole('button', { name: SEE_LIST_LABEL }));
     expect(onSeeList).toHaveBeenCalled();
+  });
+});
+
+/**
+ * Moves the fake map's view, as the real map reports after a pan or zoom.
+ *
+ * @param region - the new view.
+ */
+async function moveMapTo(region: {
+  latitude: number;
+  longitude: number;
+  latitudeDelta: number;
+  longitudeDelta: number;
+}) {
+  await fireEvent(screen.getByTestId('tonight-map'), 'regionChangeComplete', region);
+}
+
+/** Zoomed far out over DC (about 55 km across). */
+const FAR_VIEW = { latitude: 38.9, longitude: -77.05, latitudeDelta: 0.5, longitudeDelta: 0.5 };
+
+describe('TonightMap far zoom (VC-83 Batch 2)', () => {
+  it('draws a count bubble and a heat dot instead of names', async () => {
+    await drawMap();
+    await moveMapTo(FAR_VIEW);
+    // Shaw's two parties: one bubble "2", edged in the hottest published band.
+    const bubble = screen.getByTestId('map-cluster-Shaw, DC');
+    expect(bubble).toHaveTextContent('2');
+    expect(bubble.props.accessibilityLabel).toBe(
+      '2 parties close together, hottest vibe Hot. Zooms in.',
+    );
+    // Clarendon's single event: a heat dot that still speaks its tag's words.
+    expect(screen.getByTestId('map-dot-Clarendon, VA').props.accessibilityLabel).toMatch(
+      /^Clarendon pick, staff pick, area only, Clarendon, starts /,
+    );
+    // No names and no tags at this zoom.
+    expect(screen.queryByText('Clarendon pick')).toBeNull();
+    expect(screen.queryByTestId('map-area-Shaw, DC')).toBeNull();
+    // The legend explains the bubble colour.
+    expect(screen.getByText(LEGEND_BUBBLE_TEXT)).toBeOnTheScreen();
+    // The glows stay, at the areas' own size.
+    expect(circlesAt(38.9123).map((c) => c.radius)).toEqual([600, 396, 198]);
+  });
+
+  it('merges nearby areas into one bubble at the average of their events', async () => {
+    await drawMap();
+    await moveMapTo({ ...FAR_VIEW, latitudeDelta: 1, longitudeDelta: 1 });
+    const bubble = screen.getByTestId('map-cluster-Clarendon, VA|Shaw, DC');
+    expect(bubble).toHaveTextContent('3');
+    // A staff pick inside: "events", not "parties".
+    expect(bubble.props.accessibilityLabel).toBe(
+      '3 events close together, hottest vibe Hot. Zooms in.',
+    );
+    // Two Shaw events and one Clarendon: the plain average of the three.
+    expect(bubble.props.coordinate.latitude).toBeCloseTo((2 * 38.9123 + 38.8868) / 3, 10);
+    expect(bubble.props.coordinate.longitude).toBeCloseTo((2 * -77.0219 + -77.0953) / 3, 10);
+  });
+
+  it('never shows a score, a rater count or "N hot" in bubbles', async () => {
+    const leaky = [
+      ...THREE_ROWS,
+      row({
+        event_id: 'e4',
+        title: 'Shaw fire',
+        has_started: true,
+        is_live: true,
+        vibe_word: 'Fire',
+        vibe_score: 9.3,
+        starts_at: new Date(Date.now() - HOUR).toISOString(),
+      }),
+    ].map((r) => ({ ...r, raters: 4321, here: 8765 }));
+    rpc.mockResolvedValue({ data: leaky, error: null });
+    await drawMap();
+    await moveMapTo({ ...FAR_VIEW, latitudeDelta: 1, longitudeDelta: 1 });
+    const bubble = screen.getByTestId('map-cluster-Clarendon, VA|Shaw, DC');
+    // Only the number of events, and the band as a word in the spoken label.
+    expect(bubble).toHaveTextContent(/^4$/);
+    expect(bubble.props.accessibilityLabel).toBe(
+      '4 events close together, hottest vibe Fire. Zooms in.',
+    );
+    const drawn = JSON.stringify(screen.toJSON());
+    expect(drawn).not.toMatch(/9\.3|7\.4|4321|8765/);
+    expect(drawn).not.toMatch(/\d+ (hot|fire)\b/i);
+    expect(drawn).not.toMatch(/\b(raters?|ratings?|people|headcount)\b/i);
+  });
+
+  it('zooms in on a tapped bubble (close zoom for one area)', async () => {
+    await drawMap();
+    await moveMapTo(FAR_VIEW);
+    commands.animateToRegion.mockClear();
+    await fireEvent.press(screen.getByTestId('map-cluster-Shaw, DC'));
+    expect(commands.animateToRegion).toHaveBeenCalledWith(
+      {
+        latitude: 38.9123,
+        longitude: -77.0219,
+        latitudeDelta: CLOSE_DELTA,
+        longitudeDelta: CLOSE_DELTA,
+      },
+      CAMERA_MS,
+    );
+    // No card: a bubble only zooms.
+    expect(screen.queryByTestId('map-tap-card')).toBeNull();
+  });
+
+  it('opens the card from a heat dot', async () => {
+    await drawMap();
+    await moveMapTo(FAR_VIEW);
+    await fireEvent.press(screen.getByTestId('map-dot-Clarendon, VA'));
+    expect(String(screen.getByTestId('map-mini-card').props.accessibilityLabel)).toMatch(
+      /^Clarendon pick, /,
+    );
+  });
+});
+
+describe('TonightMap card pager order (VC-83 Batch 2)', () => {
+  it('puts the hottest party first, then the rest by start time', async () => {
+    const started = new Date(Date.now() - HOUR).toISOString();
+    rpc.mockResolvedValue({
+      data: [
+        row({ event_id: 'later', title: 'Later one' }),
+        row({
+          event_id: 'good',
+          title: 'Good one',
+          has_started: true,
+          starts_at: started,
+          vibe_word: 'Good',
+          vibe_score: 6.1,
+        }),
+        row({ event_id: 'early', title: 'Early one', has_started: true, starts_at: started }),
+        row({
+          event_id: 'fire',
+          title: 'Fire one',
+          has_started: true,
+          starts_at: started,
+          vibe_word: 'Fire',
+          vibe_score: 9.2,
+        }),
+      ],
+      error: null,
+    });
+    await drawMap();
+    await fireEvent.press(screen.getByTestId('map-area-Shaw, DC'));
+    const titles = screen
+      .getAllByTestId('map-mini-card')
+      .map((c) => String(c.props.accessibilityLabel).split(',')[0]);
+    expect(titles).toEqual(['Fire one', 'Good one', 'Early one', 'Later one']);
+    expect(screen.getByText('1 of 4')).toBeOnTheScreen();
+  });
+});
+
+/** Seven live Fire parties in seven areas close together. */
+function sevenFireRows() {
+  return Array.from({ length: 7 }, (_, i) =>
+    row({
+      event_id: `f${i}`,
+      title: `Fire ${i}`,
+      area_label: `Area ${i}, DC`,
+      lat: 38.9 + i * 0.002,
+      lng: -77,
+      has_started: true,
+      is_live: true,
+      vibe_word: 'Fire',
+      vibe_score: 9 + i / 10,
+      starts_at: new Date(Date.now() - HOUR).toISOString(),
+    }),
+  );
+}
+
+/** A close view over the seven areas (about 4.4 km across). */
+const CLOSE_VIEW = { latitude: 38.906, longitude: -77, latitudeDelta: 0.04, longitudeDelta: 0.04 };
+
+/** Every pulse ring on the map (they are hidden from screen readers). */
+const pulseRings = () => screen.queryAllByTestId(/-pulse$/, { includeHiddenElements: true });
+
+describe('TonightMap pulse (VC-83 Batch 2)', () => {
+  it('pulses at most 5 tags, the highest scores', async () => {
+    // Each fake loop counts itself as running until it is stopped. (A tag
+    // that pulsed at the first, middle zoom may stop once the close zoom
+    // picks its own top 5, so we count running loops, not started ones.)
+    let running = 0;
+    const loop = jest.spyOn(Animated, 'loop').mockImplementation(() => {
+      running += 1;
+      return { start: jest.fn(), stop: jest.fn(() => (running -= 1)), reset: jest.fn() };
+    });
+    rpc.mockResolvedValue({ data: sevenFireRows(), error: null });
+    await drawMap();
+    await moveMapTo(CLOSE_VIEW);
+    expect(pulseRings()).toHaveLength(MAX_PULSES);
+    // The two lowest (9.0 and 9.1) stay still.
+    const ids = pulseRings().map((r) => r.props.testID);
+    expect(ids).not.toContain('map-area-Area 0, DC-pulse');
+    expect(ids).not.toContain('map-area-Area 1, DC-pulse');
+    expect(running).toBe(MAX_PULSES);
+    loop.mockRestore();
+  });
+
+  it('never pulses a stale score', async () => {
+    rpc.mockResolvedValue({
+      data: sevenFireRows().map((r) => ({ ...r, vibe_stale: true })),
+      error: null,
+    });
+    await drawMap();
+    await moveMapTo(CLOSE_VIEW);
+    expect(pulseRings()).toHaveLength(0);
+  });
+
+  it('shows still rings and starts no animation under Reduce Motion', async () => {
+    (AccessibilityInfo.isReduceMotionEnabled as jest.Mock).mockResolvedValue(true);
+    const loop = jest.spyOn(Animated, 'loop');
+    rpc.mockResolvedValue({ data: sevenFireRows(), error: null });
+    await drawMap();
+    await moveMapTo(CLOSE_VIEW);
+    expect(pulseRings()).toHaveLength(MAX_PULSES);
+    expect(loop).not.toHaveBeenCalled();
+    loop.mockRestore();
+  });
+});
+
+describe('TonightMap band change (VC-83 Batch 2)', () => {
+  /** Shaw's started party turns from Hot to Fire on the next refresh. */
+  const FIRE_ROWS = [
+    { ...THREE_ROWS[0], vibe_word: 'Fire', vibe_score: 9.1 },
+    THREE_ROWS[1],
+    THREE_ROWS[2],
+  ];
+
+  it('cross-fades the glow over 400 ms', async () => {
+    jest.useFakeTimers();
+    await drawMap();
+    expect(circlesAt(38.9123)).toHaveLength(3);
+    rpc.mockResolvedValue({ data: FIRE_ROWS, error: null });
+    await act(() => jest.advanceTimersByTimeAsync(LIST_VIBE_REFRESH_MS));
+    // The old Hot glow (still fully on) plus the new Fire glow (not in yet).
+    const fading = circlesAt(38.9123);
+    expect(fading).toHaveLength(6);
+    expect(fading.slice(0, 3).map((c) => c.fillColor)).toEqual(
+      heatLayers('Hot').map((l) => l.fill),
+    );
+    expect(fading.slice(3).map((c) => c.fillColor)).toEqual(
+      heatLayers('Fire', 0).map((l) => l.fill),
+    );
+    await act(() => jest.advanceTimersByTimeAsync(GLOW_FADE_MS));
+    expect(circlesAt(38.9123).map((c) => c.fillColor)).toEqual(
+      heatLayers('Fire').map((l) => l.fill),
+    );
+  });
+
+  it('changes the glow at once under Reduce Motion', async () => {
+    jest.useFakeTimers();
+    (AccessibilityInfo.isReduceMotionEnabled as jest.Mock).mockResolvedValue(true);
+    await drawMap();
+    rpc.mockResolvedValue({ data: FIRE_ROWS, error: null });
+    await act(() => jest.advanceTimersByTimeAsync(LIST_VIBE_REFRESH_MS));
+    expect(circlesAt(38.9123).map((c) => c.fillColor)).toEqual(
+      heatLayers('Fire').map((l) => l.fill),
+    );
+  });
+});
+
+/**
+ * A fake touch for the card's swipe handler (React Native's responder
+ * system reads the finger's path from `touchHistory`).
+ *
+ * @param time - the moment of this touch, in ms.
+ * @param fromY - where the finger was at the previous touch.
+ * @param toY - where it is now.
+ * @returns the event.
+ */
+function touch(time: number, fromY: number, toY: number) {
+  return {
+    nativeEvent: {},
+    touchHistory: {
+      numberActiveTouches: 1,
+      indexOfSingleActiveTouch: 0,
+      mostRecentTimeStamp: time,
+      touchBank: [
+        {
+          touchActive: true,
+          startPageX: 100,
+          startPageY: fromY,
+          startTimeStamp: 0,
+          currentPageX: 100,
+          currentPageY: toY,
+          currentTimeStamp: time,
+          previousPageX: 100,
+          previousPageY: fromY,
+          previousTimeStamp: time - 1,
+        },
+      ],
+    },
+  };
+}
+
+/**
+ * Drags a finger down the card and lets go.
+ *
+ * @param distance - how far down, in px.
+ * @param ms - how long the drag takes.
+ */
+async function swipeCardDown(distance: number, ms: number) {
+  const card = screen.getByTestId('map-tap-card');
+  await act(async () => {
+    card.props.onResponderGrant(touch(1, 300, 300));
+    card.props.onResponderMove(touch(1 + ms, 300, 300 + distance));
+    card.props.onResponderRelease(touch(2 + ms, 300 + distance, 300 + distance));
+  });
+}
+
+describe('TonightMap card closing (VC-83 Batch 2)', () => {
+  it('tells a downward swipe from a sideways one or a tap', () => {
+    expect(isSwipeDown(2, 30)).toBe(true);
+    expect(isSwipeDown(40, 30)).toBe(false); // the pager's sideways swipe
+    expect(isSwipeDown(0, 5)).toBe(false); // a tap that wobbled
+    expect(isSwipeDown(0, -30)).toBe(false); // upwards
+    expect(swipeCloses(80, 0.1)).toBe(true);
+    expect(swipeCloses(30, 1)).toBe(true); // a quick flick
+    expect(swipeCloses(30, 0.1)).toBe(false);
+  });
+
+  it('closes with a swipe down, and stays open after a short drag', async () => {
+    await drawMap();
+    await fireEvent.press(screen.getByTestId('map-area-Shaw, DC'));
+    await swipeCardDown(20, 400);
+    expect(screen.getByTestId('map-tap-card')).toBeOnTheScreen();
+    await swipeCardDown(120, 300);
+    expect(screen.queryByTestId('map-tap-card')).toBeNull();
+  });
+
+  it('closes with the screen reader escape gesture', async () => {
+    await drawMap();
+    await fireEvent.press(screen.getByTestId('map-area-Shaw, DC'));
+    await act(async () => screen.getByTestId('map-tap-card').props.onAccessibilityEscape());
+    expect(screen.queryByTestId('map-tap-card')).toBeNull();
+  });
+});
+
+describe('TonightMap stale score (VC-83 Batch 2)', () => {
+  it('speaks "stale" on the tag and the card', async () => {
+    rpc.mockResolvedValue({
+      data: [
+        row({
+          title: 'Old news',
+          has_started: true,
+          is_live: true,
+          vibe_word: 'Hot',
+          vibe_score: 7.2,
+          vibe_stale: true,
+          starts_at: new Date(Date.now() - 3 * HOUR).toISOString(),
+        }),
+      ],
+      error: null,
+    });
+    await drawMap();
+    const tag = screen.getByTestId('map-area-Shaw, DC');
+    expect(tag.props.accessibilityLabel).toBe(
+      'Old news, house party, area only, Shaw, Hot, 7.2, stale',
+    );
+    await fireEvent.press(tag);
+    expect(String(screen.getByTestId('map-mini-card').props.accessibilityLabel)).toMatch(
+      /vibe Hot, 7\.2, stale$/,
+    );
   });
 });

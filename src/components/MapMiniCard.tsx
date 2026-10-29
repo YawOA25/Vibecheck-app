@@ -58,10 +58,14 @@ export function whereText(point: Pick<MapPoint, 'kind' | 'area_label'>): string 
  * The vibe part of the card's spoken summary.
  *
  * @param state - from tagState.
- * @returns "vibe Hot, 8.4", "Too early", or null before the start.
+ * @returns "vibe Hot, 8.4" ("vibe Hot, 8.4, stale" for an old score),
+ *   "Too early", or null before the start.
  */
 export function cardVibeSpoken(state: TagState): string | null {
-  if (state.kind === 'score') return `vibe ${state.band}, ${state.score.toFixed(1)}`;
+  if (state.kind === 'score') {
+    // VC-83 Batch 2: an old score is spoken as "stale", as on the tag.
+    return `vibe ${state.band}, ${state.score.toFixed(1)}${state.stale ? ', stale' : ''}`;
+  }
   if (state.kind === 'early') return TOO_EARLY;
   return null;
 }

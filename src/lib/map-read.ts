@@ -404,8 +404,9 @@ export function hottestBand(points: MapPoint[]): VibeLabel | null {
  *
  * @param point - the map row.
  * @returns e.g. "Rooftop Sundown, house party, area only, Navy Yard, Hot,
- *   8.4"; "…, starts 10 PM" before the start; "…, Too early" without a
- *   score. Never a rater count or a headcount.
+ *   8.4" ("…, Hot, 8.4, stale" when the score is old); "…, starts 10 PM"
+ *   before the start; "…, Too early" without a score. Never a rater count
+ *   or a headcount.
  */
 export function tagSpoken(point: MapPoint): string {
   const state = tagState(point);
@@ -413,11 +414,53 @@ export function tagSpoken(point: MapPoint): string {
     point.kind === 'venue'
       ? 'venue'
       : `${point.source === 'staff_pick' ? 'staff pick' : 'house party'}, area only`;
+  // VC-83 Batch 2: a stale score says so out loud too (sighted guests see it
+  // on the card's gauge).
   const vibe =
     state.kind === 'score'
-      ? `${state.band}, ${state.score.toFixed(1)}`
+      ? `${state.band}, ${state.score.toFixed(1)}${state.stale ? ', stale' : ''}`
       : state.kind === 'before'
         ? `starts ${state.time}`
         : TOO_EARLY;
   return `${point.title}, ${what}, ${shortArea(point.area_label)}, ${vibe}`;
+}
+
+/**
+ * Orders events "hottest first" (VC-83 Batch 2): for the card's pager and
+ * for deciding which tags the map shows when it can't show them all.
+ *
+ * Rules, in order:
+ *   1. events with a published score come first, highest score first (each
+ *      score is already shown on its own tag or card, so the order reveals
+ *      nothing new);
+ *   2. then everything without one ("Too early" and not started yet);
+ *   3. ties go to the earlier start time, then to the event id, so the
+ *      order never jumps around between two identical refreshes.
+ *
+ * @param a - one map row.
+ * @param b - another map row.
+ * @returns a negative number when `a` comes first, positive when `b` does.
+ */
+export function compareHeat(a: MapPoint, b: MapPoint): number {
+  const sa = tagState(a);
+  const sb = tagState(b);
+  // -1 stands for "no published score", below every real score (0 to 10).
+  const scoreA = sa.kind === 'score' ? sa.score : -1;
+  const scoreB = sb.kind === 'score' ? sb.score : -1;
+  if (scoreA !== scoreB) return scoreB - scoreA;
+  const startA = Date.parse(a.starts_at);
+  const startB = Date.parse(b.starts_at);
+  if (startA !== startB) return startA - startB;
+  return a.event_id < b.event_id ? -1 : a.event_id > b.event_id ? 1 : 0;
+}
+
+/**
+ * The order of the pages in an area's card: hottest first, then by start
+ * time (spec §6).
+ *
+ * @param events - the events in one area (any order).
+ * @returns a new, sorted list (the input is left alone).
+ */
+export function pagerOrder(events: MapPoint[]): MapPoint[] {
+  return [...events].sort(compareHeat);
 }

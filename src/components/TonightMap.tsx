@@ -24,6 +24,19 @@
  *     one mini card per event there (swipe sideways when there are several,
  *     "1 of 2"). Each mini card opens the event page. Tapping empty map
  *     closes it;
+ *   - VC-83 Batch 2, ZOOM LEVELS (src/lib/map-cluster.ts): zoomed far out
+ *     (over 25 km, or over 12 places on screen) the names drop away: places
+ *     close together on screen merge into round COUNT BUBBLES ("5"), edged
+ *     in the hottest published band inside (a word band, never a score),
+ *     and a place with one event is a small heat dot. Tapping a bubble zooms
+ *     in on it. In the middle, the 8 hottest places get full tags and the
+ *     rest are dots (a tag that would overlap a hotter one becomes a dot;
+ *     tags are never moved). Close in (under 6 km), every tag shows;
+ *   - VC-83 Batch 2, PULSE: up to 5 live Hot/Fire tags (fresh scores only)
+ *     pulse slowly; still rings under Reduce Motion or when the screen
+ *     isn't in view. A band change cross-fades in 400 ms (tag dot and glow);
+ *   - the card's pages go hottest first, then by start time, and the card
+ *     closes with a swipe down (or the screen reader's "escape" gesture);
  *   - your blue location dot, ONLY if you already allowed location for the
  *     app (for example at check-in). This screen never asks: it only reads
  *     the current permission. When it shows, a round button centres on you;
@@ -65,6 +78,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   AppState,
+  PanResponder,
   Platform,
   Pressable,
   ScrollView,
@@ -79,9 +93,10 @@ import type { MapPressEvent, Region, UserLocationChangeEvent } from 'react-nativ
 import { AreaHeat } from '@/components/AreaHeat';
 import { Button } from '@/components/Button';
 import { CircleIconButton } from '@/components/CircleIconButton';
+import { MapCluster, MapDot } from '@/components/MapDots';
 import { MapMiniCard } from '@/components/MapMiniCard';
 import { MapTag } from '@/components/MapTag';
-import type { MapTagProps } from '@/components/MapTag';
+import type { MapTagProps, PulseMode } from '@/components/MapTag';
 import { StatusPanel } from '@/components/StatusPanel';
 import { wordColour } from '@/components/VibeMeter';
 import { useAuth } from '@/lib/auth-context';
@@ -100,9 +115,18 @@ import {
   tagName,
   tagSpoken,
   tagState,
+  pagerOrder,
   tagTrailing,
 } from '@/lib/map-read';
 import type { AreaGroup, MapPoint } from '@/lib/map-read';
+import {
+  DEFAULT_MAP_SIZE,
+  estimateTagWidth,
+  planMap,
+  pulseDelay,
+  regionToFit,
+} from '@/lib/map-cluster';
+import type { MapSize, MapSpot, PlannedMarker } from '@/lib/map-cluster';
 import { motionAllowed, useReduceMotion } from '@/lib/reduce-motion';
 import { LIST_VIBE_REFRESH_MS } from '@/lib/vibe';
 import { colors, fonts, minTapTarget, radius, spacing, typography } from '@/theme';
@@ -115,6 +139,37 @@ export const ANDROID_BODY = 'The map is on iPhone for now. Everything is in the 
 export const LOCATE_LABEL = 'Show my location';
 export const MORE_THAN_LIMIT = `Showing the first ${MAP_LIMIT}. Narrow the dates.`;
 export const LEGEND_TEXT = 'Circles show the area, not the address';
+/** The legend's extra line while count bubbles show (far zoom; the mock's words). */
+export const LEGEND_BUBBLE_TEXT = 'Bubble colour = hottest inside';
+
+/** A swipe down at least this far (in px) closes the card. */
+export const SWIPE_CLOSE_PX = 60;
+
+/** ...or a quicker flick down than this (px per ms) closes it too. */
+const SWIPE_CLOSE_SPEED = 0.5;
+
+/**
+ * Whether a finger movement on the card is a swipe DOWN (so the card takes
+ * it), rather than a sideways swipe for the pager or a tap.
+ *
+ * @param dx - how far the finger moved sideways, in px.
+ * @param dy - how far it moved down (negative: up), in px.
+ * @returns true when it moved down more than 10 px and mostly downwards.
+ */
+export function isSwipeDown(dx: number, dy: number): boolean {
+  return dy > 10 && Math.abs(dy) > Math.abs(dx) * 2;
+}
+
+/**
+ * Whether a finished swipe down closes the card.
+ *
+ * @param dy - how far down the finger moved, in px.
+ * @param vy - its speed downwards when let go, in px per ms.
+ * @returns true for a long enough drag or a quick flick.
+ */
+export function swipeCloses(dy: number, vy: number): boolean {
+  return dy >= SWIPE_CLOSE_PX || (dy > 10 && vy > SWIPE_CLOSE_SPEED);
+}
 
 /** How long the camera takes to ease to a picked tag, in ms. */
 export const CAMERA_MS = 350;
@@ -238,9 +293,15 @@ function IosMap({ filter, onSeeList, onOpenEvent }: TonightMapProps) {
   // Which load the map last framed itself for (person + filter + "Try
   // again"), so a minute refresh never moves the map under the guest's finger.
   const framedFor = useRef<string | null>(null);
-  // The map's current view (updated after every pan or zoom), so easing to
-  // a picked tag keeps the guest's own zoom level.
-  const region = useRef<Region>(DC_REGION);
+  // The map's current view (updated after every pan or zoom): easing to a
+  // picked tag keeps the guest's own zoom level, and the zoom level decides
+  // between bubbles, dots and tags (VC-83 Batch 2). Only updated when a pan
+  // or zoom ENDS, so markers aren't re-planned mid-gesture.
+  const [region, setRegion] = useState<Region>(DC_REGION);
+  // The map's size on screen (null until measured; Jest never measures).
+  const [mapSize, setMapSize] = useState<MapSize | null>(null);
+  // Whether this screen is in view: the pulse rests (still rings) when not.
+  const [focused, setFocused] = useState(true);
   // Location: shown only if already allowed. Never asked for here.
   const [locationAllowed, setLocationAllowed] = useState(false);
   // The last known spot of the blue dot (only on this phone, never sent).
@@ -318,7 +379,22 @@ function IosMap({ filter, onSeeList, onOpenEvent }: TonightMapProps) {
     }, [filterKey, viewerId]),
   );
 
+  // The pulse only moves while this screen is in view (spec §4).
+  useFocusEffect(
+    useCallback(() => {
+      setFocused(true);
+      return () => setFocused(false);
+    }, []),
+  );
+
   const layout = useMemo(() => groupMapPoints(state.kind === 'ready' ? state.points : []), [state]);
+  // Every spot on the map (areas, then venues), with its tag's width.
+  const spots = useMemo(() => mapSpots(layout), [layout]);
+  // What to draw for this zoom: bubbles, dots or tags (src/lib/map-cluster.ts).
+  const plan = useMemo(
+    () => planMap(spots, region, mapSize ?? DEFAULT_MAP_SIZE, selected),
+    [spots, region, mapSize, selected],
+  );
 
   // Frame the circles once per load (not on refreshes). With nothing to
   // show, centre on DC. Under Reduce Motion the map jumps instead of gliding.
@@ -346,7 +422,7 @@ function IosMap({ filter, onSeeList, onOpenEvent }: TonightMapProps) {
    */
   function pick(key: string, at: { latitude: number; longitude: number }) {
     setSelected(key);
-    const { latitudeDelta, longitudeDelta } = region.current;
+    const { latitudeDelta, longitudeDelta } = region;
     mapRef.current?.animateToRegion(
       {
         // Centre a little SOUTH of the tag, so the tag shows above the centre.
@@ -356,6 +432,75 @@ function IosMap({ filter, onSeeList, onOpenEvent }: TonightMapProps) {
         longitudeDelta,
       },
       moving ? CAMERA_MS : 0,
+    );
+  }
+
+  /**
+   * A tap on a count bubble: zooms in just enough to open it up (350 ms,
+   * or a jump under Reduce Motion). One area with several parties zooms to
+   * the close level around its centre, where its tag shows.
+   *
+   * @param cluster - the tapped bubble.
+   */
+  function openCluster(cluster: Extract<PlannedMarker, { kind: 'cluster' }>) {
+    mapRef.current?.animateToRegion(regionToFit(cluster.spots, region), moving ? CAMERA_MS : 0);
+  }
+
+  /** Closes the card (empty map tap, swipe down, or the screen reader's escape). */
+  const closeCard = useCallback(() => setSelected(null), []);
+
+  /**
+   * Draws one planned marker: a count bubble, a heat dot or a full tag.
+   *
+   * @param marker - from the plan.
+   * @returns the map marker.
+   */
+  function renderMarker(marker: PlannedMarker) {
+    if (marker.kind === 'cluster') {
+      const events = marker.spots.flatMap((s) => s.events);
+      return (
+        <MapCluster
+          key={`cluster-${marker.key}`}
+          coordinate={{ latitude: marker.latitude, longitude: marker.longitude }}
+          count={marker.count}
+          band={marker.band}
+          noun={events.every((e) => e.source === 'host') ? 'parties' : 'events'}
+          onPress={() => openCluster(marker)}
+          testID={`map-cluster-${marker.key}`}
+        />
+      );
+    }
+    const { spot } = marker;
+    const at = { latitude: spot.latitude, longitude: spot.longitude };
+    const look = spotLook(spot);
+    if (marker.kind === 'dot') {
+      return (
+        <MapDot
+          key={`dot-${spot.key}`}
+          coordinate={at}
+          dot={look.dot}
+          picked={spot.key === selected}
+          onPress={() => pick(spot.key, at)}
+          spoken={look.spoken}
+          testID={`map-dot-${spot.key}`}
+        />
+      );
+    }
+    // A pulsing tag moves only with motion allowed and the screen in view;
+    // otherwise its ring stays still.
+    const pulse: PulseMode = !marker.pulse ? 'off' : moving && focused ? 'moving' : 'still';
+    return (
+      <MapTag
+        key={`tag-${spot.key}`}
+        coordinate={at}
+        {...look}
+        picked={spot.key === selected}
+        onPress={() => pick(spot.key, at)}
+        animate={moving}
+        pulse={pulse}
+        pulseDelay={pulseDelay(spot.key)}
+        testID={spotTestID(spot)}
+      />
     );
   }
 
@@ -405,6 +550,10 @@ function IosMap({ filter, onSeeList, onOpenEvent }: TonightMapProps) {
         accessible
         accessibilityLabel={spokenSummary}
         testID="tonight-map-region"
+        onLayout={(e: LayoutChangeEvent) => {
+          const { width, height } = e.nativeEvent.layout;
+          if (width > 0 && height > 0) setMapSize({ width, height });
+        }}
       >
         <MapView
           ref={mapRef}
@@ -423,31 +572,24 @@ function IosMap({ filter, onSeeList, onOpenEvent }: TonightMapProps) {
           showsUserLocation={locationAllowed}
           onUserLocationChange={locationAllowed ? onUserLocation : undefined}
           onMapReady={() => setMapReady(true)}
-          onRegionChangeComplete={(r: Region) => {
-            region.current = r;
-          }}
+          onRegionChangeComplete={(r: Region) => setRegion(r)}
           onPress={onMapPress}
         >
+          {/* Every area's glow, at every zoom (its size is the area's). */}
           {layout.areas.map((area) => (
-            <AreaShape
-              key={area.label}
-              area={area}
-              picked={area.label === selected}
-              onPick={() => pick(area.label, area)}
-              animate={moving}
+            <AreaHeat
+              key={`heat-${area.label}`}
+              latitude={area.latitude}
+              longitude={area.longitude}
+              radius={area.radius}
+              band={hottestBand(area.events)}
+              fade={moving}
             />
           ))}
-          {/* Venue tags: only for kind 'venue', and none arrive while the
-              server's staff-pick pin switch is off. */}
-          {layout.venues.map((venue) => (
-            <VenueTag
-              key={venue.event_id}
-              venue={venue}
-              picked={selected === venueKey(venue)}
-              onPick={pick}
-              animate={moving}
-            />
-          ))}
+          {/* Then the markers this zoom calls for. Venue spots exist only for
+              kind 'venue', and none arrive while the server's staff-pick pin
+              switch is off. */}
+          {plan.markers.map(renderMarker)}
         </MapView>
       </View>
 
@@ -503,7 +645,7 @@ function IosMap({ filter, onSeeList, onOpenEvent }: TonightMapProps) {
       {/* Bottom: the legend, "See the list", the locate button, the card. */}
       <View style={styles.bottom} pointerEvents="box-none">
         <View style={styles.bottomRow} pointerEvents="box-none">
-          <Legend />
+          <Legend bubbles={plan.markers.some((m) => m.kind === 'cluster')} />
           {locationAllowed ? (
             <CircleIconButton
               icon="pin"
@@ -530,6 +672,7 @@ function IosMap({ filter, onSeeList, onOpenEvent }: TonightMapProps) {
             area={selectedArea}
             now={now}
             onOpenEvent={onOpenEvent}
+            onClose={closeCard}
             animatePress={moving}
             rise={moving}
           />
@@ -632,94 +775,69 @@ export function groupTag(area: AreaGroup): TagLook {
 }
 
 /**
- * A staff pick's venue tag (only for kind 'venue', i.e. once the server's
- * venue-pin switch is on; none arrive today). One tag at the venue, no
- * circle.
+ * What a spot's tag (or the dot standing in for it) says.
  *
- * @param props.venue - the 'venue' row.
- * @param props.picked - true while its card is open.
- * @param props.onPick - opens its card (gets the key and the point).
- * @param props.animate - false under Reduce Motion.
- * @returns the tag, or nothing without coordinates.
+ * @param spot - an area's spot or a venue's spot.
+ * @returns the one event's tag, or the "Shaw 2 parties" group tag.
  */
-function VenueTag({
-  venue,
-  picked,
-  onPick,
-  animate,
-}: {
-  venue: MapPoint;
-  picked: boolean;
-  onPick: (key: string, at: { latitude: number; longitude: number }) => void;
-  animate: boolean;
-}) {
-  if (venue.kind !== 'venue' || venue.lat === null || venue.lng === null) return null;
-  const at = { latitude: venue.lat, longitude: venue.lng };
-  return (
-    <MapTag
-      coordinate={at}
-      {...eventTag(venue)}
-      picked={picked}
-      onPress={() => onPick(venueKey(venue), at)}
-      animate={animate}
-      testID={`map-venue-${venue.event_id}`}
-    />
-  );
+function spotLook(spot: MapSpot): TagLook {
+  if (spot.events.length === 1) return eventTag(spot.events[0]);
+  return groupTag({ label: spot.key, ...spot, radius: 0 });
 }
 
 /**
- * One area: its heat glow and its tag at the centre.
+ * The test id of a spot's tag (unchanged from Batch 1).
  *
- * @param props.area - the area and its events.
- * @param props.picked - true while its card is open (the tag turns gold).
- * @param props.onPick - opens its card.
- * @param props.animate - false under Reduce Motion.
- * @returns the glow circles and the tag.
+ * @param spot - an area's spot or a venue's spot.
+ * @returns "map-venue-<event id>" for a venue, "map-area-<label>" for an area.
  */
-function AreaShape({
-  area,
-  picked,
-  onPick,
-  animate,
-}: {
-  area: AreaGroup;
-  picked: boolean;
-  onPick: () => void;
-  animate: boolean;
-}) {
-  const look = area.events.length === 1 ? eventTag(area.events[0]) : groupTag(area);
-  return (
-    <>
-      <AreaHeat
-        latitude={area.latitude}
-        longitude={area.longitude}
-        radius={area.radius}
-        band={hottestBand(area.events)}
-      />
-      <MapTag
-        coordinate={{ latitude: area.latitude, longitude: area.longitude }}
-        {...look}
-        picked={picked}
-        onPress={onPick}
-        animate={animate}
-        testID={`map-area-${area.label}`}
-      />
-    </>
-  );
+function spotTestID(spot: MapSpot): string {
+  const one = spot.events[0];
+  return spot.key === venueKey(one) ? `map-venue-${one.event_id}` : `map-area-${spot.key}`;
+}
+
+/**
+ * Turns the map's layout into spots for the zoom planner: one per area (all
+ * its parties share the area's centre) and one per venue (only kind
+ * 'venue', none while the server's pin switch is off).
+ *
+ * @param layout - from groupMapPoints.
+ * @returns the spots, each with its full tag's estimated width.
+ */
+function mapSpots(layout: { areas: AreaGroup[]; venues: MapPoint[] }): MapSpot[] {
+  const spots: MapSpot[] = [];
+  /** Adds one spot, measuring its tag from what the tag will say. */
+  const add = (key: string, latitude: number, longitude: number, events: MapPoint[]) => {
+    const spot: MapSpot = { key, latitude, longitude, events, tagWidth: 0 };
+    const look = spotLook(spot);
+    spot.tagWidth = estimateTagWidth(look.name, look.trailing);
+    spots.push(spot);
+  };
+  for (const area of layout.areas) add(area.label, area.latitude, area.longitude, area.events);
+  for (const venue of layout.venues) {
+    if (venue.kind === 'venue' && venue.lat !== null && venue.lng !== null) {
+      add(venueKey(venue), venue.lat, venue.lng, [venue]);
+    }
+  }
+  return spots;
 }
 
 /**
  * The legend at the bottom left: the four bands as small gold swatches,
- * coolest to hottest, and a reminder that circles show areas only.
+ * coolest to hottest, and a reminder that circles show areas only. While
+ * count bubbles show, one more line: "Bubble colour = hottest inside".
  *
+ * @param props.bubbles - true while the map shows count bubbles (far zoom).
  * @returns the legend (read out as one sentence).
  */
-function Legend() {
+function Legend({ bubbles }: { bubbles: boolean }) {
   return (
     <View
       style={styles.legend}
       accessible
-      accessibilityLabel={`Heat from ${BANDS.join(', ')}. ${LEGEND_TEXT}.`}
+      accessibilityLabel={`Heat from ${BANDS.join(', ')}. ${LEGEND_TEXT}.${
+        bubbles ? ` ${LEGEND_BUBBLE_TEXT}.` : ''
+      }`}
       testID="map-legend"
     >
       <View style={styles.legendBands}>
@@ -735,6 +853,11 @@ function Legend() {
       <Text style={styles.legendText} maxFontSizeMultiplier={1.3}>
         {LEGEND_TEXT}
       </Text>
+      {bubbles ? (
+        <Text style={styles.legendText} maxFontSizeMultiplier={1.3}>
+          {LEGEND_BUBBLE_TEXT}
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -744,23 +867,31 @@ function Legend() {
  * swiped sideways, with "1 of 2" when there are several. It rises into
  * place (spec §6: 240 ms), or simply appears under Reduce Motion.
  *
+ * VC-83 Batch 2: the pages go hottest first (each with its own published
+ * score; there is no area score), then by start time. A swipe down closes
+ * the card; screen reader users close it with the "escape" gesture (two
+ * fingers in a Z on iPhone), or by tapping elsewhere.
+ *
  * @param props.area - the picked area.
  * @param props.now - the moment the points were loaded (for "when" lines).
  * @param props.onOpenEvent - opens an event's page.
+ * @param props.onClose - closes the card (must stay the same function).
  * @param props.animatePress - false under Reduce Motion.
- * @param props.rise - false under Reduce Motion.
+ * @param props.rise - false under Reduce Motion (no rise, no spring back).
  * @returns the card.
  */
 function AreaCard({
   area,
   now,
   onOpenEvent,
+  onClose,
   animatePress,
   rise,
 }: {
   area: AreaGroup;
   now: Date;
   onOpenEvent: (id: string) => void;
+  onClose: () => void;
   animatePress: boolean;
   rise: boolean;
 }) {
@@ -768,6 +899,37 @@ function AreaCard({
   const [width, setWidth] = useState(0);
   const [page, setPage] = useState(0);
   const n = area.events.length;
+  // Hottest first, then by start time (spec §6).
+  const pages = useMemo(() => pagerOrder(area.events), [area.events]);
+
+  // Swipe down to close. How far the card has been dragged down, in px.
+  const [drag] = useState(() => new Animated.Value(0));
+  // Bumped when a swipe should close the card. The swipe handler is built
+  // once, so it can't call the latest onClose itself; an effect does
+  // (expo lint's rule about values reachable from such handlers, VC-76).
+  const [closeAsks, setCloseAsks] = useState(0);
+  const [swipe] = useState(() =>
+    PanResponder.create({
+      // Take the touch only for a clear downward drag, so sideways swipes
+      // still turn the pager's pages and taps still open the event.
+      onMoveShouldSetPanResponderCapture: (_e, g) => isSwipeDown(g.dx, g.dy),
+      onPanResponderMove: (_e, g) => drag.setValue(Math.max(0, g.dy)),
+      onPanResponderRelease: (_e, g) => {
+        if (swipeCloses(g.dy, g.vy)) setCloseAsks((k) => k + 1);
+        else
+          Animated.timing(drag, {
+            toValue: 0,
+            duration: rise ? 160 : 0,
+            useNativeDriver: true,
+          }).start();
+      },
+      // Another view took the touch over: put the card back.
+      onPanResponderTerminate: () => drag.setValue(0),
+    }),
+  );
+  useEffect(() => {
+    if (closeAsks > 0) onClose();
+  }, [closeAsks, onClose]);
   // 0 = lowered and clear, 1 = in place. The card is drawn anew for each
   // pick (its key is the pick), so this runs once per opened card.
   const [shown] = useState(() => new Animated.Value(rise ? 0 : 1));
@@ -778,16 +940,27 @@ function AreaCard({
   // It rises the last 30 px into place.
   const lift = shown.interpolate({ inputRange: [0, 1], outputRange: [30, 0] });
 
-  /** Works out which page the pager stopped on. */
+  /**
+   * Works out which page the pager stopped on.
+   *
+   * @param event - the scroll view's "momentum ended" event; its sideways
+   *   offset divided by the page width is the page number.
+   */
   function onScrollEnd(event: NativeSyntheticEvent<NativeScrollEvent>) {
     if (width > 0) setPage(Math.round(event.nativeEvent.contentOffset.x / width));
   }
 
   return (
     <Animated.View
-      style={[styles.tapCard, { opacity: shown, transform: [{ translateY: lift }] }]}
+      style={[
+        styles.tapCard,
+        // It rises into place, and follows the finger down while swiped.
+        { opacity: shown, transform: [{ translateY: Animated.add(lift, drag) }] },
+      ]}
       testID="map-tap-card"
       onLayout={(e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width - 2 * spacing.gap12)}
+      onAccessibilityEscape={onClose}
+      {...swipe.panHandlers}
     >
       <ScrollView
         horizontal
@@ -795,7 +968,7 @@ function AreaCard({
         showsHorizontalScrollIndicator={false}
         onMomentumScrollEnd={onScrollEnd}
       >
-        {area.events.map((point) => (
+        {pages.map((point) => (
           <View key={point.event_id} style={width > 0 ? { width } : styles.pageFallback}>
             <MapMiniCard
               point={point}
