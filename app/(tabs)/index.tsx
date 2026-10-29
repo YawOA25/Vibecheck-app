@@ -61,6 +61,28 @@
  *     iPhone only for now: on Android the Map side says "Map coming soon"
  *     with a way back to the list (no Google Maps key yet).
  *
+ *   - VC-80 (home redesign, Concept A "Live hero + carousel", founder
+ *     approved 2026-10-29; design/vc80-home-redesign-spec.md): tonight's
+ *     events no longer sit in the plain list. At the top, a big HERO card
+ *     shows the live event with the highest published live score ("ON FIRE
+ *     RIGHT NOW"), or with none yet the soonest event still to start ("NEXT
+ *     UP"). Under it the other tonight events: one wide art card when there
+ *     is only one other, else a sideways CAROUSEL that snaps card by card
+ *     (the middle card full size, its neighbours 94%, the art drifting 12 px
+ *     against the scroll). Then the later nights as the usual cards, under
+ *     day headings that now STICK to the top while their night scrolls by.
+ *     When the filter covers tonight but nothing is on tonight, a moon note
+ *     says so above the later nights. The rules for who goes where are plain
+ *     functions in src/lib/home-layout.ts. The scores are the same published
+ *     snapshots the cards always used (no new data). As you scroll, the big
+ *     title shrinks into a slim 17 px title (the kicker fades), with the
+ *     chips staying put; the header keeps its height, so pull to refresh
+ *     and the sticky day headings work as before. Light "ticks" (haptics):
+ *     picking a date chip, the carousel settling on a new card, a new day
+ *     heading reaching the top; a light tap when a pull to refresh starts.
+ *     Under Reduce Motion: no title shrink, no scaling, no parallax and no
+ *     LIVE pulse.
+ *
  * Not here on purpose (VC-31, not approved for the MVP): genre filters, the
  * featured host card, photos and clips.
  *
@@ -71,7 +93,7 @@
  * while already here scrolls the list back to the top (useScrollToTop).
  */
 import { useFocusEffect, useRouter, useScrollToTop } from 'expo-router';
-import type { SectionListData, SectionListRenderItem } from 'react-native';
+import type { SectionListData, SectionListRenderItem, ListViewToken } from 'react-native';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
@@ -91,8 +113,10 @@ import { DateFilterBar } from '@/components/DateFilterBar';
 import { EventCard } from '@/components/EventCard';
 import { FormMessage } from '@/components/FormMessage';
 import { Icon } from '@/components/Icon';
+import { LiveDot } from '@/components/LiveDot';
 import { ListSkeleton } from '@/components/Skeleton';
 import { StatusPanel } from '@/components/StatusPanel';
+import { ArtCard, HeroCard, TonightCarousel } from '@/components/TonightCards';
 import { TonightMap } from '@/components/TonightMap';
 import { TwoWaySwitch } from '@/components/TwoWaySwitch';
 import type { SwitchOption } from '@/components/TwoWaySwitch';
@@ -101,15 +125,25 @@ import {
   FILTER_LABELS,
   THIS_WEEK,
   createdNotice,
+  filterCoversNight,
   filterEmptyText,
   filterKicker,
   filterTitle,
 } from '@/lib/date-filter';
 import type { DateFilter } from '@/lib/date-filter';
 import { listHomeEvents } from '@/lib/events-read';
+import { tapLight, tapSelection } from '@/lib/haptics';
+import {
+  heroLabel,
+  homeLayout,
+  laterLabel,
+  nothingTonightText,
+  othersLabel,
+} from '@/lib/home-layout';
+import type { HomeLayout } from '@/lib/home-layout';
 import { motionAllowed, useReduceMotion } from '@/lib/reduce-motion';
 import { sendTestError } from '@/lib/sentry';
-import { groupByDay, hasStarted } from '@/lib/tonight';
+import { groupByDay, hasStarted, nightOf } from '@/lib/tonight';
 import type { PublicEvent } from '@/lib/tonight';
 import { LIST_VIBE_REFRESH_MS } from '@/lib/vibe';
 import { getEventsVibe } from '@/lib/vibe-api';
@@ -141,6 +175,23 @@ export const VIEW_OPTIONS: readonly [SwitchOption<TonightView>, SwitchOption<Ton
   { key: 'map', label: 'Map', spoken: 'Map view' },
 ];
 /**
+ * VC-80 collapsing header: how far (in pixels of scrolling) the big title
+ * takes to shrink into the slim one, and the slim title's size (17 px from
+ * the 32 px title, spec "collapses into a 52 px bar with a 17 px title").
+ */
+export const COLLAPSE_DISTANCE = 60;
+export const SLIM_TITLE_SCALE = 17 / 32;
+/**
+ * How far the title moves up as it shrinks: into the middle of the title
+ * row, where the kicker (16 px) and its 4 px gap were.
+ */
+const SLIM_TITLE_LIFT = -10;
+/**
+ * When a row counts as on screen for the day-heading tick (VC-80): half of
+ * it showing is enough.
+ */
+const DAY_VIEWABILITY = { itemVisiblePercentThreshold: 50 } as const;
+/**
  * A stand-in "now" for when no list is loaded. Never shown: cards are only
  * drawn once a list is ready. Made once here (not per draw) so the memoised
  * cards (VC-76) don't see a new value every time.
@@ -170,6 +221,13 @@ export default function HomeScreen() {
   const router = useRouter();
   // The list, so a tap on the already-open Tonight tab can scroll it to the top.
   const listRef = useRef<SectionList<PublicEvent, { title: string }>>(null);
+  // VC-80: how far the list has scrolled, followed on the phone's UI thread
+  // (native driver) so the header can shrink smoothly with it.
+  const [scrollY] = useState(() => new Animated.Value(0));
+  // VC-80 day-heading tick: the night at the top of the later list last
+  // time, and whether the person has scrolled yet (no tick on first draw).
+  const topNight = useRef<string | null>(null);
+  const userScrolled = useRef(false);
   // The cast only quiets a typing gap: React Native 0.88's SectionList type
   // doesn't match the hook's older "scrollable" type, but at run time the
   // hook finds the list's scroll view (getScrollResponder) and scrolls it.
@@ -223,6 +281,12 @@ export default function HomeScreen() {
   // VC-76: true while a new filter's list loads and the old list is still
   // on screen (dimmed, untappable).
   const [dimmed, setDimmed] = useState(false);
+
+  // VC-80: a newly drawn list starts at the top (after the map, "Try
+  // again" or the first load), so the header starts fully open too.
+  useEffect(() => {
+    scrollY.setValue(0);
+  }, [view, state.kind, scrollY]);
 
   // VC-72 cross-fade: when a new list lands, start it see-through and fade
   // it in over 200 ms, so the swap from skeleton or old list feels soft.
@@ -346,6 +410,8 @@ export default function HomeScreen() {
    */
   const chooseFilter = useCallback(
     (next: DateFilter) => {
+      // VC-80: the light selection tick on a chip pick.
+      tapSelection();
       setFilter(next);
       if (state.kind === 'ready') setDimmed(true);
       else setState({ kind: 'loading' });
@@ -458,6 +524,37 @@ export default function HomeScreen() {
     }, [filter, refresh]),
   );
 
+  /**
+   * VC-80: the person pulled the list down. A light tap says "refreshing",
+   * then the refresh runs. (Kept apart from `refresh`, which also runs
+   * after an admin saves an event, when no tap should happen.)
+   */
+  const pullToRefresh = useCallback(() => {
+    tapLight();
+    void refresh();
+  }, [refresh]);
+
+  /**
+   * VC-80: a light tick when a new night's cards reach the top while the
+   * person scrolls (that night's heading is the one sticking). React Native
+   * doesn't allow this function to change while the list is on screen, so
+   * it keeps what it needs in refs.
+   *
+   * @param info.viewableItems - the rows on screen, top first.
+   */
+  const onViewableItemsChanged = useCallback(
+    ({ viewableItems }: { viewableItems: ListViewToken[] }) => {
+      const top = viewableItems.find((row) => row.isViewable && row.section);
+      const night = top ? (top.section as { title: string }).title : null;
+      if (night === null || night === topNight.current) return;
+      const first = topNight.current === null;
+      topNight.current = night;
+      // No tick for the first rows drawn, only for the person's own scrolling.
+      if (!first && userScrolled.current) tapSelection();
+    },
+    [],
+  );
+
   /** Opens an event's page, e.g. /event/1234. One function shared by every card. */
   const openEvent = useCallback(
     (id: string) => router.push({ pathname: '/event/[id]', params: { id } }),
@@ -476,8 +573,15 @@ export default function HomeScreen() {
   // on with the minute refresh.
   const loadedAt = state.kind === 'ready' ? state.loadedAt : null;
   const listNow = loadedAt && clock && clock > loadedAt ? clock : (loadedAt ?? NO_LIST);
-  // VC-72: the 0.98 press scale, only when motion is allowed.
+  // VC-72: the 0.98 press scale, only when motion is allowed. VC-80: the
+  // same answer switches the LIVE pulse, carousel motion and header shrink.
   const animatePress = motionAllowed(reduceMotion);
+  // VC-80: the hero, the other tonight events and the later nights. The
+  // night sections stay as loaded; who is "live" moves on with the clock.
+  const layout = useMemo(() => homeLayout(sections, vibes, listNow), [sections, vibes, listNow]);
+  // VC-80: whether the filter covers tonight (for the "Nothing on tonight
+  // yet" note), worked out from the list's load moment.
+  const coversTonight = loadedAt !== null && filterCoversNight(filter, nightOf(loadedAt), loadedAt);
 
   /** Draws one card. Kept steady so unchanged cards aren't re-drawn. */
   const renderItem = useCallback<SectionListRenderItem<PublicEvent, { title: string }>>(
@@ -510,21 +614,15 @@ export default function HomeScreen() {
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <View style={styles.header}>
         {/* The kicker line over the title; the List / Map switch on the
-            right (VC-79). */}
+            right (VC-79). VC-80: on scroll the kicker fades and the title
+            shrinks to 17 px in its place (CollapsingTitle, below). */}
         <View style={styles.titleRow}>
-          <View style={styles.titleBlock}>
-            <Text style={styles.kicker}>{filterKicker(filter, new Date())}</Text>
-            {/* accessibilityRole="header" lets screen readers announce this as a heading.
-              Developers only (__DEV__ is false in store builds): a long-press
-              on the title sends a test crash report to Sentry (VC-26). */}
-            <Text
-              style={styles.title}
-              accessibilityRole="header"
-              onLongPress={__DEV__ ? confirmTestError : undefined}
-            >
-              {filterTitle(filter, new Date())}
-            </Text>
-          </View>
+          <CollapsingTitle
+            kicker={filterKicker(filter, new Date())}
+            title={filterTitle(filter, new Date())}
+            scrollY={scrollY}
+            collapse={animatePress && view === 'list'}
+          />
           <TwoWaySwitch options={VIEW_OPTIONS} value={view} onChange={setView} />
         </View>
         <DateFilterBar filter={filter} now={new Date()} onChange={chooseFilter} />
@@ -557,10 +655,12 @@ export default function HomeScreen() {
             pointerEvents={dimmed ? 'none' : 'auto'}
             testID="tonight-list-dim"
           >
-            <SectionList
+            <Animated.SectionList
               ref={listRef}
               testID="tonight-list"
-              sections={sections}
+              // VC-80: only the later nights are sections; tonight is drawn
+              // above them (the hero and carousel, in the list's header).
+              sections={layout.later}
               keyExtractor={(event) => event.id}
               renderItem={renderItem}
               renderSectionHeader={renderSectionHeader}
@@ -571,16 +671,32 @@ export default function HomeScreen() {
               maxToRenderPerBatch={8}
               windowSize={7}
               removeClippedSubviews={Platform.OS === 'android'}
-              // Section headings scroll away with their cards instead of sticking.
-              stickySectionHeadersEnabled={false}
+              // VC-80: each night's heading sticks to the top while its
+              // cards scroll by (it has the page colour behind it).
+              stickySectionHeadersEnabled
               ItemSeparatorComponent={Gap}
               ListHeaderComponent={
-                refreshError ? (
-                  <View style={styles.refreshError}>
-                    <FormMessage message={refreshError} />
-                  </View>
-                ) : undefined
+                <TonightPart
+                  layout={layout}
+                  vibes={vibes}
+                  now={listNow}
+                  onOpen={openEvent}
+                  animate={animatePress}
+                  filterKind={filter.kind}
+                  showNothingTonight={coversTonight && layout.later.length > 0}
+                  refreshError={refreshError}
+                />
               }
+              // VC-80: the header shrink follows the scroll on the UI thread.
+              onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], {
+                useNativeDriver: true,
+              })}
+              scrollEventThrottle={16}
+              onScrollBeginDrag={() => {
+                userScrolled.current = true;
+              }}
+              onViewableItemsChanged={onViewableItemsChanged}
+              viewabilityConfig={DAY_VIEWABILITY}
               // VC-66: near the end of the list, load the next page (if any).
               onEndReached={state.hasMore ? () => void loadMore() : undefined}
               onEndReachedThreshold={0.5}
@@ -599,18 +715,22 @@ export default function HomeScreen() {
                   </View>
                 ) : undefined
               }
+              // The empty card only when there is nothing at all (tonight
+              // events with no later nights leave the sections empty too).
               ListEmptyComponent={
-                <EmptyState
-                  filter={filter}
-                  onShowWeek={filter.kind === 'week' ? null : () => chooseFilter(THIS_WEEK)}
-                />
+                state.events.length === 0 ? (
+                  <EmptyState
+                    filter={filter}
+                    onShowWeek={filter.kind === 'week' ? null : () => chooseFilter(THIS_WEEK)}
+                  />
+                ) : undefined
               }
               contentContainerStyle={styles.listContent}
               // Pull down to refresh. The spinner is gold to match the theme.
               refreshControl={
                 <RefreshControl
                   refreshing={refreshing}
-                  onRefresh={refresh}
+                  onRefresh={pullToRefresh}
                   tintColor={colors.accent}
                   colors={[colors.accent]}
                   progressBackgroundColor={colors.surface}
@@ -637,6 +757,197 @@ function confirmTestError() {
     sent
       ? 'Look for it in the Sentry dashboard (environment: development) in a minute.'
       : 'Add EXPO_PUBLIC_SENTRY_DSN to .env, then restart Expo.',
+  );
+}
+
+/**
+ * The header's kicker and title, which shrink as the list scrolls (VC-80).
+ *
+ * @param props.kicker - the small line ("SATURDAY TO FRIDAY").
+ * @param props.title - the big title ("This week").
+ * @param props.scrollY - how far the list has scrolled (animated).
+ * @param props.collapse - false under Reduce Motion (or on the map): then
+ *   nothing moves and the header stays as it is.
+ * @returns the two lines. Over the first 30 px of scrolling the kicker
+ *   fades out; over the first 60 px the title shrinks from 32 to 17 px and
+ *   moves up into the kicker's place. All of it runs on the phone's UI
+ *   thread (native driver), and scrolling back to the top undoes it.
+ */
+function CollapsingTitle({
+  kicker,
+  title,
+  scrollY,
+  collapse,
+}: {
+  kicker: string;
+  title: string;
+  scrollY: Animated.Value;
+  collapse: boolean;
+}) {
+  // The three moving values, made only when their inputs change.
+  const moves = useMemo(() => {
+    if (!collapse) return null;
+    /** Maps the scroll distance (0 to `to` px) onto a range, held at the ends. */
+    const follow = (to: number, range: [number, number]) =>
+      scrollY.interpolate({ inputRange: [0, to], outputRange: range, extrapolate: 'clamp' });
+    return {
+      kickerOpacity: follow(COLLAPSE_DISTANCE / 2, [1, 0]),
+      titleScale: follow(COLLAPSE_DISTANCE, [1, SLIM_TITLE_SCALE]),
+      titleLift: follow(COLLAPSE_DISTANCE, [0, SLIM_TITLE_LIFT]),
+    };
+  }, [collapse, scrollY]);
+
+  return (
+    <View style={styles.titleBlock}>
+      <Animated.Text
+        style={[styles.kicker, moves && { opacity: moves.kickerOpacity }]}
+        testID="tonight-kicker"
+      >
+        {kicker}
+      </Animated.Text>
+      {/* accessibilityRole="header" lets screen readers announce this as a heading.
+          Developers only (__DEV__ is false in store builds): a long-press
+          on the title sends a test crash report to Sentry (VC-26).
+          The shrink is measured from the title's left edge, so it stays
+          lined up with the page's left margin. */}
+      <Animated.Text
+        style={[
+          styles.title,
+          moves && {
+            transformOrigin: 'left center',
+            transform: [{ translateY: moves.titleLift }, { scale: moves.titleScale }],
+          },
+        ]}
+        accessibilityRole="header"
+        onLongPress={__DEV__ ? confirmTestError : undefined}
+        testID="tonight-title"
+      >
+        {title}
+      </Animated.Text>
+    </View>
+  );
+}
+
+/** What the tonight part (the list's header) needs. */
+interface TonightPartProps {
+  layout: HomeLayout;
+  vibes: Record<string, Vibe>;
+  now: Date;
+  onOpen: (id: string) => void;
+  /** false under Reduce Motion. */
+  animate: boolean;
+  filterKind: DateFilter['kind'];
+  /** true to show the "Nothing on tonight yet" note above later nights. */
+  showNothingTonight: boolean;
+  /** A pull-to-refresh failure message, shown at the very top. */
+  refreshError: string | null;
+}
+
+/**
+ * The top of the list (VC-80): the hero card, the other tonight events (a
+ * wide card for one, the carousel for two or more), the "Nothing on tonight
+ * yet" note when it applies, and the label over the later nights.
+ *
+ * @returns the views above the later nights' sections.
+ */
+function TonightPart({
+  layout,
+  vibes,
+  now,
+  onOpen,
+  animate,
+  filterKind,
+  showNothingTonight,
+  refreshError,
+}: TonightPartProps) {
+  const { hero, others, later, shape } = layout;
+  return (
+    <View>
+      {refreshError ? (
+        <View style={styles.refreshError}>
+          <FormMessage message={refreshError} />
+        </View>
+      ) : null}
+      {hero ? (
+        <View style={styles.block}>
+          <View style={styles.labelRow}>
+            {/* The pulsing dot next to "ON FIRE RIGHT NOW" (decoration). */}
+            {hero.kind === 'live' ? <LiveDot animate={animate} testID="hero-label-dot" /> : null}
+            <Text style={styles.blockLabel} accessibilityRole="header">
+              {heroLabel(hero, vibes[hero.event.id])}
+            </Text>
+          </View>
+          <HeroCard
+            event={hero.event}
+            kind={hero.kind}
+            vibe={vibes[hero.event.id]}
+            now={now}
+            onPress={onOpen}
+            animate={animate}
+          />
+        </View>
+      ) : null}
+      {shape === 'pair' && others[0] ? (
+        <View style={styles.block}>
+          <Text style={styles.blockLabel} accessibilityRole="header">
+            {othersLabel(1)}
+          </Text>
+          <ArtCard
+            event={others[0]}
+            vibe={vibes[others[0].id]}
+            now={now}
+            onPress={onOpen}
+            animate={animate}
+            variant="wide"
+          />
+        </View>
+      ) : null}
+      {shape === 'carousel' ? (
+        <View style={styles.block}>
+          <Text style={styles.blockLabel} accessibilityRole="header">
+            {othersLabel(others.length)}
+          </Text>
+          {/* The carousel runs edge to edge, past the list's side margins. */}
+          <View style={styles.bleed}>
+            <TonightCarousel
+              events={others}
+              vibes={vibes}
+              now={now}
+              onPress={onOpen}
+              animate={animate}
+            />
+          </View>
+        </View>
+      ) : null}
+      {shape === 'none' && showNothingTonight ? <NothingTonight kind={filterKind} /> : null}
+      {shape !== 'none' && later.length > 0 ? (
+        <Text style={[styles.blockLabel, styles.laterLabel]} accessibilityRole="header">
+          {laterLabel(filterKind)}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
+/**
+ * The moon note when the filter covers tonight but nothing is on tonight
+ * (VC-80 "None tonight: moon card + list"); the later nights follow it.
+ *
+ * @param props.kind - the filter's kind, for "this week" or "this weekend".
+ * @returns a card with the moon, a heading and a sentence.
+ */
+function NothingTonight({ kind }: { kind: DateFilter['kind'] }) {
+  const text = nothingTonightText(kind);
+  return (
+    <View style={[styles.card, styles.nothingTonight]} testID="nothing-tonight">
+      <View style={styles.emptyIcon}>
+        <Icon name="moon" size={iconSize.lg} color={colors.muted} />
+      </View>
+      <Text style={[styles.emptyTitle, styles.centred]} accessibilityRole="header">
+        {text.title}
+      </Text>
+      <Text style={[styles.note, styles.centred]}>{text.body}</Text>
+    </View>
   );
 }
 
@@ -750,12 +1061,25 @@ const styles = StyleSheet.create({
     // flexGrow lets the empty state fill a list that can still be pulled down.
     flexGrow: 1,
   },
+  // VC-80: day headings stick to the top, so they carry the page colour
+  // (cards scrolling under them don't show through).
   sectionTitle: {
     ...typography.label,
     color: colors.muted,
     paddingTop: spacing.md,
     paddingBottom: spacing.sm,
+    backgroundColor: colors.bg,
   },
+  // VC-80: one part of the tonight block (a label over a card or carousel).
+  block: { paddingTop: spacing.md, gap: spacing.gap10 },
+  labelRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  blockLabel: { ...typography.label, color: colors.muted },
+  // The "LATER THIS WEEK" label, with room above it.
+  laterLabel: { paddingTop: spacing.lg },
+  // Lets the carousel run past the list's 16 px side margins.
+  bleed: { marginHorizontal: -spacing.gutter },
+  // The "Nothing on tonight yet" card sits a little lower.
+  nothingTonight: { marginBottom: spacing.sm },
   gap: { height: 14 },
   refreshError: { paddingTop: spacing.sm },
   // The "Load more events" button (and any error) under the last card.

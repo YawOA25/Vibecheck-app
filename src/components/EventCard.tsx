@@ -107,6 +107,34 @@ export function showsGoldEdge(live: boolean, vibe: Vibe | undefined): boolean {
 }
 
 /**
+ * The one sentence screen readers hear for an event card (shared since
+ * VC-80, so the home hero and carousel cards say exactly what a list card
+ * says).
+ *
+ * @param event - the event.
+ * @param now - the current moment.
+ * @param vibe - the vibe to mention, already dropped (undefined) for an
+ *   event that hasn't started.
+ * @returns e.g. "Saturday rooftop, Shaw, DC, Today · 10 PM, Staff pick,
+ *   74 here, vibe 8.0 out of 10, Hot".
+ */
+export function eventSpoken(event: PublicEvent, now: Date, vibe: Vibe | undefined): string {
+  const here = vibe ? hereText(vibe.here, false) : null;
+  return [
+    event.title,
+    event.is_test ? 'Test event' : null,
+    event.area_label,
+    whenLine(event, now),
+    isStaffPick(event) ? 'Staff pick' : null,
+    event.is_21_plus ? '21 and over' : null,
+    here,
+    vibe ? cardVibeSpoken(vibe) : null,
+  ]
+    .filter(Boolean)
+    .join(', ');
+}
+
+/**
  * Renders the card.
  *
  * @returns a pressable card. Screen readers hear one summary, e.g.
@@ -130,18 +158,7 @@ function EventCardView({ event, now, onPress, vibe: given, animatePress = false 
   const here = vibe ? hereText(vibe.here, false) : null;
   // One spoken summary, so screen-reader users don't have to swipe through
   // every small piece of the card.
-  const spoken = [
-    event.title,
-    event.is_test ? 'Test event' : null,
-    event.area_label,
-    when,
-    staffPick ? 'Staff pick' : null,
-    event.is_21_plus ? '21 and over' : null,
-    here,
-    vibe ? cardVibeSpoken(vibe) : null,
-  ]
-    .filter(Boolean)
-    .join(', ');
+  const spoken = eventSpoken(event, now, vibe);
 
   return (
     // The shared shrink-on-press wrapper (VC-76). It is not a button
@@ -195,16 +212,20 @@ export const EventCard = memo(EventCardView);
 
 /**
  * The vibe on the right of a card (v3: "8.8", or "Early" over "3 so far").
+ * Exported for the VC-80 home hero and carousel cards.
  *
  * @param props.vibe - the event's vibe.
+ * @param props.align - 'end' (default: right-aligned, as on a list card)
+ *   or 'start' (left-aligned, under the text on the VC-80 art cards).
  * @returns the badge view. It isn't read out by itself: the card's spoken
  *   summary already includes the vibe.
  */
-function VibeBadge({ vibe }: { vibe: Vibe }) {
+export function VibeBadge({ vibe, align = 'end' }: { vibe: Vibe; align?: 'start' | 'end' }) {
+  const badgeStyle = [styles.badge, align === 'start' && styles.badgeStart];
   if ((vibe.state === 'live' || vibe.state === 'stale') && vibe.score !== null) {
     const stale = vibe.state === 'stale';
     return (
-      <View style={styles.badge}>
+      <View style={badgeStyle}>
         <View style={styles.scoreRow}>
           <Text style={[styles.score, stale && styles.staleText]}>{formatScore(vibe.score)}</Text>
           {/* The word takes the gauge's colour for it (Q5 fix #6); a stale
@@ -222,7 +243,7 @@ function VibeBadge({ vibe }: { vibe: Vibe }) {
   }
   if (vibe.state === 'early') {
     return (
-      <View style={styles.badge}>
+      <View style={badgeStyle}>
         <Tag label={EARLY_LABEL} tone="muted" />
         <Text style={styles.note}>{vibe.raters} so far</Text>
       </View>
@@ -257,6 +278,7 @@ const styles = StyleSheet.create({
   tags: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 2 },
   // The vibe badge, right-aligned (v3: the number over a small note).
   badge: { alignItems: 'flex-end', gap: 2 },
+  badgeStart: { alignItems: 'flex-start' },
   scoreRow: { flexDirection: 'row', alignItems: 'baseline', gap: 6 },
   score: { fontFamily: fonts.bodyBold, fontSize: 16, lineHeight: 20, color: colors.text },
   // The colour is set per word in VibeBadge (the gauge's ramp).

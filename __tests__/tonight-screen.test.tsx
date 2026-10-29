@@ -10,7 +10,8 @@
  *   - the loading state while the list is on its way;
  *   - the error state, and that "Try again" loads again;
  *   - the empty state when there are no events;
- *   - the list: one section per night (Tonight, Tomorrow, weekday names),
+ *   - the list: tonight's events in the VC-80 hero card, then one section
+ *     per later night (Tomorrow, weekday names),
  *     area and time, the "Staff pick" tag, and that a card opens the event
  *     page;
  *   - VC-61: cards for events that haven't started show no vibe and no
@@ -45,6 +46,7 @@ import HomeScreen, {
 } from '../app/(tabs)/index';
 import { ONE_NIGHT, RANGE_NOTE } from '@/components/CustomDatesPicker';
 import { TEST_LABEL } from '@/components/EventCard';
+import { ON_NOW_LABEL } from '@/lib/home-layout';
 import { useAuth } from '@/lib/auth-context';
 import { noteCreatedEvent, takeCreatedEvent } from '@/lib/created-event';
 import { listHomeEvents } from '@/lib/events-read';
@@ -258,11 +260,14 @@ describe('HomeScreen events', () => {
     expect(screen.getByText('21+')).toBeOnTheScreen();
   });
 
-  it('puts a running event under Tonight with "On now"', async () => {
+  // VC-80: tonight's events sit in the hero card, not under a TONIGHT heading.
+  it('puts a running event in the hero card with "On now"', async () => {
     list.mockResolvedValue({ ok: true, events: [makeEvent({}, -1)] });
     await render(<HomeScreen />);
-    expect(await screen.findByText('TONIGHT')).toBeOnTheScreen();
+    expect(await screen.findByRole('header', { name: ON_NOW_LABEL })).toBeOnTheScreen();
+    expect(screen.getByTestId('hero-card')).toBeOnTheScreen();
     expect(screen.getByText(/On now · until /)).toBeOnTheScreen();
+    expect(screen.queryByText('TONIGHT')).toBeNull();
   });
 
   it('keeps the old list and shows a message if a pull-to-refresh fails', async () => {
@@ -375,10 +380,14 @@ describe('HomeScreen week view (VC-61)', () => {
 
     // The section logic itself (5 AM edges, daylight saving) is tested in
     // tonight.test.ts; here we check the screen draws each heading.
+    // VC-80: tonight's event is the hero card; the later nights keep their
+    // headings, under the "LATER THIS WEEK" label.
     const titles = groupByDay(events, new Date()).map((s) => s.title.toUpperCase());
     expect(titles[0]).toBe('TONIGHT');
     expect(titles.length).toBeGreaterThanOrEqual(3);
-    for (const title of titles) expect(screen.getByText(title)).toBeOnTheScreen();
+    expect(screen.getByTestId('hero-card')).toHaveTextContent(/Running now/);
+    expect(screen.getByText('LATER THIS WEEK')).toBeOnTheScreen();
+    for (const title of titles.slice(1)) expect(screen.getByText(title)).toBeOnTheScreen();
   });
 
   it('asks only about started events, and shows nothing for the others even if sent', async () => {

@@ -4,24 +4,26 @@
  * expo-haptics is replaced with a fake, so no phone is needed. We check:
  *   - in Jest the wrapper is OFF by default, so no test ever buzzes;
  *   - once switched on, each tap asks expo-haptics for the right pattern
- *     (light impact, success, warning);
+ *     (light impact, success, warning, and the VC-80 selection tick);
  *   - a failure (a rejected promise, or a thrown error from a missing
  *     native module) is swallowed: a missing buzz never breaks a screen.
  */
 import * as Haptics from 'expo-haptics';
 
-import { setHapticsEnabled, tapLight, tapSuccess, tapWarning } from '@/lib/haptics';
+import { setHapticsEnabled, tapLight, tapSelection, tapSuccess, tapWarning } from '@/lib/haptics';
 
 // A fake expo-haptics: the two calls we use, plus the enum values we pass.
 jest.mock('expo-haptics', () => ({
   impactAsync: jest.fn(() => Promise.resolve()),
   notificationAsync: jest.fn(() => Promise.resolve()),
+  selectionAsync: jest.fn(() => Promise.resolve()),
   ImpactFeedbackStyle: { Light: 'light' },
   NotificationFeedbackType: { Success: 'success', Warning: 'warning' },
 }));
 
 const impact = Haptics.impactAsync as jest.Mock;
 const notify = Haptics.notificationAsync as jest.Mock;
+const select = Haptics.selectionAsync as jest.Mock;
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -35,8 +37,10 @@ describe('haptics wrapper', () => {
     tapLight();
     tapSuccess();
     tapWarning();
+    tapSelection();
     expect(impact).not.toHaveBeenCalled();
     expect(notify).not.toHaveBeenCalled();
+    expect(select).not.toHaveBeenCalled();
   });
 
   it('asks for a light impact, a success and a warning', () => {
@@ -47,6 +51,12 @@ describe('haptics wrapper', () => {
     expect(notify).toHaveBeenLastCalledWith('success');
     tapWarning();
     expect(notify).toHaveBeenLastCalledWith('warning');
+  });
+
+  it('asks for the selection tick (VC-80: chip pick, carousel snap, sticky day)', () => {
+    setHapticsEnabled(true);
+    tapSelection();
+    expect(select).toHaveBeenCalledTimes(1);
   });
 
   it('ignores a rejected vibration (e.g. no motor, or the web)', async () => {

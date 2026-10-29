@@ -39,6 +39,12 @@
  *   - the gauge is wrapped in React.memo, so the card re-drawing around it
  *     doesn't touch it mid-sweep.
  *
+ * Mini size (VC-80, home hero card): `size="mini"` draws the same gauge
+ * 96 px wide with a thicker (12) arc, a 24 px number and a 13 px word. The
+ * maths is the same; only the measurements change. A mini gauge sits inside
+ * a card that is one button with its own spoken summary (which already
+ * says the score), so it isn't a separate screen-reader item.
+ *
  * Glow (VC-70, approved as proposal P3): a live Hot or Fire score gets a
  * soft gold glow behind the arc, a radial gradient that fades from 14%
  * gold in the middle to nothing at the edge (under the 15% cap). It never
@@ -69,6 +75,13 @@ const ARC_PATH = 'M14 100 A86 86 0 0 1 186 100';
 export const ARC_LENGTH = Math.PI * 86;
 /** How thick the arc is (the spec chose 8 over v3's 6: it reads better on a phone). */
 const STROKE = 8;
+/**
+ * The mini gauge's arc thickness (VC-80). Drawn on the same 200-wide
+ * grid but shown 96 px wide, so 12 here is about 6 px on screen.
+ */
+const MINI_STROKE = 12;
+/** The mini gauge's width in pixels (VC-80 spec: 96). */
+export const MINI_GAUGE_WIDTH = 96;
 
 /** Timings from the spec, in milliseconds. */
 export const FIRST_SWEEP_MS = 700;
@@ -151,6 +164,11 @@ export interface VibeMeterProps {
    * (start at once), e.g. when the page wasn't slid in at all.
    */
   sweepReady?: boolean;
+  /**
+   * 'full' (default): the event page gauge. 'mini': the 96 px gauge on the
+   * home hero card (VC-80), not read out by itself (the card speaks).
+   */
+  size?: 'full' | 'mini';
 }
 
 /**
@@ -165,7 +183,10 @@ function VibeMeterView({
   loading = false,
   blank = false,
   sweepReady = true,
+  size = 'full',
 }: VibeMeterProps) {
+  const mini = size === 'mini';
+  const stroke = mini ? MINI_STROKE : STROKE;
   const reduceMotion = useReduceMotion();
   const hasScore = !loading && !blank && vibe.score !== null && vibe.label !== null;
   // The All night view: a word and no number (it never has a score).
@@ -289,16 +310,18 @@ function VibeMeterView({
 
   return (
     <View
-      style={styles.meter}
-      accessible
-      accessibilityRole={hasScore ? 'progressbar' : undefined}
+      style={[styles.meter, mini && styles.miniMeter]}
+      // The mini gauge sits inside a card button that already says the
+      // score, so it isn't a second screen-reader item (VC-80).
+      accessible={!mini}
+      accessibilityRole={hasScore && !mini ? 'progressbar' : undefined}
       accessibilityLabel={
         loading ? 'Loading the vibe' : blank ? VIBE_LOAD_ERROR : meterSpoken(vibe, view)
       }
       accessibilityValue={hasScore ? { min: 0, max: 10, now: Math.round(target) } : undefined}
       testID="vibe-meter"
     >
-      <View style={styles.gauge}>
+      <View style={[styles.gauge, mini && styles.miniGauge]}>
         {/* The arc itself: decoration for sighted people, hidden from screen
             readers (the number and word carry the meaning). */}
         <Svg
@@ -334,7 +357,7 @@ function VibeMeterView({
             testID="vibe-meter-track"
             d={ARC_PATH}
             stroke={colors.border}
-            strokeWidth={STROKE}
+            strokeWidth={stroke}
             strokeLinecap="round"
             fill="none"
           />
@@ -344,7 +367,7 @@ function VibeMeterView({
               testID="vibe-meter-fill"
               d={ARC_PATH}
               stroke={fillColour}
-              strokeWidth={STROKE}
+              strokeWidth={stroke}
               strokeLinecap="round"
               fill="none"
               strokeDasharray={ARC_LENGTH}
@@ -372,7 +395,7 @@ function VibeMeterView({
           // Plain text over the arc, bottom-centred (not SVG text, so it
           // follows the phone's text size, capped so it stays in the arc).
           <Animated.Text
-            style={[styles.score, { color: numberColour }]}
+            style={[styles.score, mini && styles.miniScore, { color: numberColour }]}
             maxFontSizeMultiplier={headlineMaxScale}
           >
             {formatScore(shownNumber)}
@@ -380,7 +403,9 @@ function VibeMeterView({
         ) : null}
       </View>
       {hasScore ? (
-        <Animated.Text style={[styles.word, { color: wordTextColour }]}>{vibe.label}</Animated.Text>
+        <Animated.Text style={[styles.word, mini && styles.miniWord, { color: wordTextColour }]}>
+          {vibe.label}
+        </Animated.Text>
       ) : loading || blank || wordOnly ? null : (
         <Text style={styles.title}>{vibe.state === 'early' ? EARLY_TITLE : NO_VIBE_TITLE}</Text>
       )}
@@ -412,6 +437,11 @@ const styles = StyleSheet.create({
     lineHeight: 52,
   },
   word: { ...typography.cardTitle, marginTop: 4 },
+  // VC-80 mini gauge: 96 px wide, no space above, a smaller number and word.
+  miniMeter: { alignSelf: 'auto', width: MINI_GAUGE_WIDTH, marginTop: 0 },
+  miniGauge: { maxWidth: MINI_GAUGE_WIDTH },
+  miniScore: { fontSize: 24, lineHeight: 28 },
+  miniWord: { fontFamily: fonts.displaySemi, fontSize: 13, lineHeight: 18, marginTop: 2 },
   // The All night word in the arc: big, but smaller than a number so long
   // words ("Quiet") fit.
   nightWord: {

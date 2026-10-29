@@ -1,8 +1,12 @@
 /**
  * Small vibrations ("haptics") for key moments (proposal VC-32d, Q6).
  *
- * Three taps, each tied to one moment:
- *   - tapLight:   a rating was saved (Rate screen);
+ * Four taps, each tied to one moment:
+ *   - tapLight:   a rating was saved (Rate screen), and a pull to refresh
+ *                 started on the home list (VC-80);
+ *   - tapSelection: the lightest "tick", for picking something (VC-80: a
+ *                 date chip, the home carousel settling on a new card, a
+ *                 day heading sticking to the top). Never on plain scroll;
  *   - tapSuccess: a check-in passed (GPS check-in or the party code);
  *   - tapWarning: the party code was wrong.
  *
@@ -54,6 +58,14 @@ function safely(run: () => Promise<void>): void {
 /** A light tap: a rating was saved. */
 export function tapLight(): void {
   safely(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light));
+}
+
+/**
+ * The lightest "tick" (expo-haptics selectionAsync), VC-80: a date chip was
+ * picked, the carousel settled on a new card, or a day heading stuck.
+ */
+export function tapSelection(): void {
+  safely(() => Haptics.selectionAsync());
 }
 
 /** The phone's "success" pattern: a check-in passed. */
