@@ -22,6 +22,10 @@ import { getMyRecap } from '@/lib/recap-api';
 
 jest.mock('@/lib/auth-context', () => ({ useAuth: jest.fn() }));
 jest.mock('@/lib/recap-api', () => ({ getMyRecap: jest.fn() }));
+// VC-81: the Me screen's stats row; not what these tests are about.
+jest.mock('@/lib/profile-stats-api', () => ({
+  getMyStats: jest.fn(() => Promise.resolve({ ok: false })),
+}));
 // The "mock" prefix lets jest.mock (which runs first) use this fake.
 const mockPush = jest.fn();
 jest.mock('expo-router', () => ({

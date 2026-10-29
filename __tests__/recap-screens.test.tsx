@@ -9,7 +9,10 @@
  *   - one event from Nights out opens on its own (`?event=`);
  *   - loading, error with "Try again", and empty states work;
  *   - Me shows the "Last night, rated" card and the Nights out list, and
- *     their taps open the right recap.
+ *     their taps open the right recap;
+ *   - VC-81: Me shows "MEMBER SINCE OCT 2026" under the name and the stats
+ *     row (NIGHTS OUT, RATINGS, read out as one sentence); if the stats
+ *     fail, the row is left out and the rest of Me still works.
  */
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 
@@ -18,9 +21,12 @@ import RecapScreen from '../app/recap';
 import { useAuth } from '@/lib/auth-context';
 import { parseRecap } from '@/lib/recap';
 import type { RecapItem } from '@/lib/recap';
+import { getMyStats } from '@/lib/profile-stats-api';
 import { getMyRecap } from '@/lib/recap-api';
 
 jest.mock('@/lib/recap-api', () => ({ getMyRecap: jest.fn() }));
+jest.mock('@/lib/profile-stats-api', () => ({ getMyStats: jest.fn() }));
+const stats = getMyStats as jest.Mock;
 jest.mock('@/lib/auth-context', () => ({ useAuth: jest.fn() }));
 // The "mock" prefix lets jest.mock (which runs first) use these fakes.
 const mockPush = jest.fn();
@@ -111,6 +117,8 @@ beforeEach(() => {
   (useAuth as jest.Mock).mockReturnValue({
     profile: { id: 'p1', display_name: 'Ava', role: 'user' },
   });
+  // VC-81: by default the stats don't load (the row is left out).
+  stats.mockResolvedValue({ ok: false });
 });
 
 describe('Your night (recap)', () => {
@@ -169,6 +177,33 @@ describe('Your night (recap)', () => {
     expect(await screen.findByText("We couldn't load your nights out.")).toBeOnTheScreen();
     await fireEvent.press(screen.getByRole('button', { name: 'Try again' }));
     expect(await screen.findByText('Rooftop Sundown')).toBeOnTheScreen();
+  });
+});
+
+describe('Me stats row (VC-81)', () => {
+  it('shows the member-since line and the two counts, read out as one sentence', async () => {
+    recap.mockResolvedValue({ ok: true, items: [] });
+    stats.mockResolvedValue({
+      ok: true,
+      // 2 AM UTC on 1 Nov is still 31 Oct in New York: the month is October.
+      stats: { nightsOut: 4, ratings: 1, memberSince: new Date('2026-11-01T02:00:00Z') },
+    });
+    await render(<MeScreen />);
+    expect(await screen.findByText('MEMBER SINCE OCT 2026')).toBeOnTheScreen();
+    const row = screen.getByTestId('me-stats');
+    expect(row.props.accessibilityLabel).toBe('4 nights out, 1 rating');
+    expect(screen.getByText('NIGHTS OUT')).toBeOnTheScreen();
+    expect(screen.getByText('RATINGS')).toBeOnTheScreen();
+    expect(screen.getByText('4')).toBeOnTheScreen();
+    expect(stats).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves the row out when the stats fail, and the rest of Me still shows', async () => {
+    recap.mockResolvedValue({ ok: true, items: [] });
+    await render(<MeScreen />);
+    expect(await screen.findByText(/No nights yet/)).toBeOnTheScreen();
+    expect(screen.queryByTestId('me-stats')).toBeNull();
+    expect(screen.queryByText(/MEMBER SINCE/)).toBeNull();
   });
 });
 

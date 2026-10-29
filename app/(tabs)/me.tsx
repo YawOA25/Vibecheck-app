@@ -10,8 +10,15 @@
  *     that night's recap.
  * Words only for the room, never a number (the same rule as "All night").
  *
- * Not here on purpose (VC-31, not approved for the MVP): the photo, the
- * stats row, "Your sound" genres and clips.
+ * VC-81 (founder approved 2026-10-29): under the name, "MEMBER SINCE OCT
+ * 2026"; under that, the v3 stats row with two numbers, NIGHTS OUT
+ * (different event nights you checked in to) and RATINGS (events you
+ * rated). They are your own counts only, from get_my_stats
+ * (src/lib/profile-stats-api.ts). They load next to the list; if they fail,
+ * the row is simply left out (no error for a nice extra).
+ *
+ * Not here on purpose (VC-31, not approved for the MVP): the photo,
+ * "Your sound" genres and clips (and so no CLIPS number in the stats row).
  *
  * The round gear button next to the name opens Settings (sign out, delete
  * account, terms and privacy), as in the v3 design (VC-B13).
@@ -39,11 +46,23 @@ import { Icon } from '@/components/Icon';
 import { PressableScale } from '@/components/PressableScale';
 import { wordColour } from '@/components/VibeMeter';
 import { useAuth } from '@/lib/auth-context';
+import { memberSinceText } from '@/lib/profile-stats';
+import type { MyStats } from '@/lib/profile-stats';
+import { getMyStats } from '@/lib/profile-stats-api';
 import { nightWord, recapDateLine } from '@/lib/recap';
 import type { RecapItem } from '@/lib/recap';
 import { getMyRecap } from '@/lib/recap-api';
 import { useDelayedFlag } from '@/lib/use-delayed-flag';
-import { colors, iconSize, minTapTarget, motion, radius, spacing, typography } from '@/theme';
+import {
+  colors,
+  fonts,
+  iconSize,
+  minTapTarget,
+  motion,
+  radius,
+  spacing,
+  typography,
+} from '@/theme';
 
 /** What the screen is showing. */
 type Phase =
@@ -62,6 +81,8 @@ export default function MeScreen() {
   const [phase, setPhase] = useState<Phase>({ kind: 'loading' });
   // Bumped by "Try again" to load once more.
   const [attempt, setAttempt] = useState(0);
+  // VC-81: your own counts, or null until (or unless) they load.
+  const [stats, setStats] = useState<MyStats | null>(null);
   // The scroll view, so a tap on the already-open Me tab scrolls to the top.
   const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
   useScrollToTop(scrollRef);
@@ -92,6 +113,11 @@ export default function MeScreen() {
         }
         setPhase({ kind: 'ready', recent: recent.items, all: all.items });
       });
+      // VC-81: the stats load on their own. A failure keeps the last good
+      // numbers (or none), and never turns the screen into an error.
+      getMyStats().then((outcome) => {
+        if (active && outcome.ok) setStats(outcome.stats);
+      });
       return () => {
         active = false;
       };
@@ -105,11 +131,19 @@ export default function MeScreen() {
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <ScrollView ref={scrollRef} contentContainerStyle={styles.content}>
         <View style={styles.header}>
-          <Text style={styles.title} accessibilityRole="header">
-            {profile?.display_name || 'Me'}
-          </Text>
+          <View style={styles.nameBlock}>
+            <Text style={styles.title} accessibilityRole="header">
+              {profile?.display_name || 'Me'}
+            </Text>
+            {/* VC-81: the month you joined, under your name (v3 profile). */}
+            {stats?.memberSince ? (
+              <Text style={styles.memberSince}>{memberSinceText(stats.memberSince)}</Text>
+            ) : null}
+          </View>
           <SettingsButton onPress={() => router.push('/settings')} />
         </View>
+
+        {stats ? <StatsRow stats={stats} /> : null}
 
         {phase.kind === 'loading' ? (
           <View style={styles.centre} accessible accessibilityLabel="Loading">
@@ -188,6 +222,31 @@ function SettingsButton({ onPress }: { onPress: () => void }) {
 }
 
 /**
+ * The stats row (VC-81, v3 profile design): two numbers side by side,
+ * NIGHTS OUT and RATINGS, with a thin line between them.
+ *
+ * @param props.stats - your counts.
+ * @returns the row, read out as one sentence, e.g. "4 nights out, 7 ratings".
+ */
+function StatsRow({ stats }: { stats: MyStats }) {
+  const spoken = `${stats.nightsOut} ${stats.nightsOut === 1 ? 'night' : 'nights'} out, ${
+    stats.ratings
+  } ${stats.ratings === 1 ? 'rating' : 'ratings'}`;
+  return (
+    <View style={styles.stats} accessible accessibilityLabel={spoken} testID="me-stats">
+      <View style={styles.stat}>
+        <Text style={styles.statNumber}>{stats.nightsOut}</Text>
+        <Text style={styles.statLabel}>NIGHTS OUT</Text>
+      </View>
+      <View style={[styles.stat, styles.statDivider]}>
+        <Text style={styles.statNumber}>{stats.ratings}</Text>
+        <Text style={styles.statLabel}>RATINGS</Text>
+      </View>
+    </View>
+  );
+}
+
+/**
  * The gold "LAST NIGHT, RATED" card: your word and the room's word.
  *
  * @param props.item - the newest event rated in the last 36 hours.
@@ -259,7 +318,30 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.lg,
   },
   header: { flexDirection: 'row', alignItems: 'center', gap: 14 },
-  title: { ...typography.title, color: colors.text, flex: 1 },
+  // The name and, under it, the VC-81 "member since" line.
+  nameBlock: { flex: 1, gap: 2 },
+  title: { ...typography.title, color: colors.text },
+  memberSince: { ...typography.label, color: colors.muted },
+  // VC-81 stats row (v3): a surface card, numbers in Bricolage 600 30/32.
+  stats: {
+    flexDirection: 'row',
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.card,
+    paddingVertical: 14,
+  },
+  stat: { flex: 1, alignItems: 'center', gap: 2 },
+  // The thin line between the two numbers.
+  statDivider: { borderLeftWidth: 1, borderLeftColor: colors.border },
+  statNumber: {
+    fontFamily: fonts.displaySemi,
+    fontSize: 30,
+    lineHeight: 32,
+    letterSpacing: -0.6,
+    color: colors.text,
+  },
+  statLabel: { ...typography.label, color: colors.muted },
   gear: {
     width: minTapTarget,
     height: minTapTarget,
