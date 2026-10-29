@@ -10,7 +10,9 @@
  *     party in "Shaw, DC" shares one circle), venue pins (none for now), and
  *     a count of events the map can't place (typed free-text areas);
  *   - {@link areaAt} finds which circle a tap landed in (map circles can't
- *     be tapped by themselves in react-native-maps).
+ *     be tapped by themselves in react-native-maps);
+ *   - VC-83 (map v2): {@link tagState} and friends work out what each tag
+ *     says (name plus score, start time, or "Too early") and its heat band.
  *
  * Privacy: the server only ever sends area CENTRES (the same fixed point for
  * every event in an area, at least 600 m of circle around it) while its
@@ -24,7 +26,9 @@ import type { ErrorLike } from '@/lib/auth-errors';
 import { filterWindow, THIS_WEEK } from '@/lib/date-filter';
 import type { DateFilter } from '@/lib/date-filter';
 import { describeReadError } from '@/lib/events-read';
+import type { VibeLabel } from '@/lib/rating';
 import { supabase } from '@/lib/supabase';
+import { formatClock } from '@/lib/tonight';
 
 /** How many points the map shows at most; the server sends one more to say "there are more". */
 export const MAP_LIMIT = 300;
@@ -57,6 +61,13 @@ export interface MapPoint {
   is_live: boolean;
   /** "Hot", "Fire", "Early" ... only once started; null otherwise. */
   vibe_word: string | null;
+  /**
+   * VC-83: the published score, 0 to 10 with 1 decimal, only once started
+   * and only with 5+ raters (the server's floor); null otherwise.
+   */
+  vibe_score: number | null;
+  /** VC-83: true when that score is old (no new rating for 90+ minutes). */
+  vibe_stale: boolean;
 }
 
 /** One circle: an area and the events in it, soonest first. */
@@ -107,6 +118,8 @@ export function parseMapPoint(row: unknown): MapPoint | null {
   // A placed row needs both coordinates; otherwise treat it as not placed.
   const placed = kind !== 'none' && lat !== null && lng !== null;
   const radius = num(r.radius_m);
+  // VC-83: the score, like the word, only once the event has started.
+  const score = r.has_started === true ? parseScore(r.vibe_score) : null;
   return {
     event_id: id,
     title,
@@ -124,7 +137,24 @@ export function parseMapPoint(row: unknown): MapPoint | null {
     is_live: r.is_live === true,
     // VC-61: nothing about ratings before the start, whatever the server said.
     vibe_word: r.has_started === true ? text(r.vibe_word) : null,
+    vibe_score: score,
+    // "Stale" only means something next to a score.
+    vibe_stale: score !== null && r.vibe_stale === true,
   };
+}
+
+/**
+ * Checks the score from the server.
+ *
+ * @param value - the vibe_score field. Postgres "numeric" normally arrives
+ *   as a JSON number, but a string like "8.4" is accepted too.
+ * @returns the score rounded to 1 decimal, or null when it is missing or
+ *   not a number from 0 to 10.
+ */
+function parseScore(value: unknown): number | null {
+  const n = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
+  if (!Number.isFinite(n) || n < 0 || n > 10) return null;
+  return Math.round(n * 10) / 10;
 }
 
 /**
@@ -273,4 +303,121 @@ export function fitCoordinates(layout: MapLayout): { latitude: number; longitude
     if (v.lat !== null && v.lng !== null) coords.push({ latitude: v.lat, longitude: v.lng });
   }
   return coords;
+}
+
+// ---------------------------------------------------------------------------
+// VC-83 (map v2): what each tag says, and its heat band
+// ---------------------------------------------------------------------------
+
+/** The words for a started event without a published score (exported for tests). */
+export const TOO_EARLY = 'Too early';
+
+/** How many characters of an event's name a tag shows before "…" (spec §2). */
+export const TAG_NAME_MAX = 16;
+
+/** The four vibe bands, coolest first (the order "hottest" is judged by). */
+export const BANDS: readonly VibeLabel[] = ['Quiet', 'Good', 'Hot', 'Fire'];
+
+/**
+ * What one event's tag shows after its name:
+ *   before - not started yet: its start time ("10 PM"), nothing about ratings;
+ *   early  - started, but no published score (nobody rated, 1-4 raters, or
+ *            no snapshot yet): "Too early". The map never says which of
+ *            these it is, so it can't hint at how many people rated;
+ *   score  - a published score, its band (the server's word) and whether
+ *            it is stale.
+ */
+export type TagState =
+  | { kind: 'before'; time: string }
+  | { kind: 'early' }
+  | { kind: 'score'; score: number; band: VibeLabel; stale: boolean };
+
+/**
+ * Checks whether a word is one of the four vibe bands.
+ *
+ * @param word - e.g. "Hot", "Early" or null.
+ * @returns true for Quiet, Good, Hot and Fire.
+ */
+function isBand(word: string | null): word is VibeLabel {
+  return word !== null && (BANDS as readonly string[]).includes(word);
+}
+
+/**
+ * Works out what an event's tag shows.
+ *
+ * @param point - the map row.
+ * @returns before (with the start time in New York), early, or score. A
+ *   score needs BOTH the number and a band word from the server (they come
+ *   from the same snapshot); anything else reads "Too early".
+ */
+export function tagState(
+  point: Pick<MapPoint, 'has_started' | 'starts_at' | 'vibe_word' | 'vibe_score' | 'vibe_stale'>,
+): TagState {
+  if (!point.has_started) return { kind: 'before', time: formatClock(new Date(point.starts_at)) };
+  if (point.vibe_score === null || !isBand(point.vibe_word)) return { kind: 'early' };
+  return { kind: 'score', score: point.vibe_score, band: point.vibe_word, stale: point.vibe_stale };
+}
+
+/**
+ * The text after the name on a tag.
+ *
+ * @param state - from {@link tagState}.
+ * @returns "8.4" (always 1 decimal), "10 PM" or "Too early".
+ */
+export function tagTrailing(state: TagState): string {
+  if (state.kind === 'score') return state.score.toFixed(1);
+  if (state.kind === 'before') return state.time;
+  return TOO_EARLY;
+}
+
+/**
+ * Shortens a name for a tag.
+ *
+ * @param title - the event's name.
+ * @returns the name, or its first 16 characters (trimmed) and "…".
+ */
+export function tagName(title: string): string {
+  const clean = title.trim();
+  return clean.length <= TAG_NAME_MAX ? clean : `${clean.slice(0, TAG_NAME_MAX).trimEnd()}…`;
+}
+
+/**
+ * The hottest PUBLISHED band among some events (cto review point 1): used
+ * for the dot and glow of an area with 2+ parties.
+ *
+ * @param points - the events in one area.
+ * @returns the highest band among events that show a score, or null when
+ *   none does. Before-start and "Too early" events are ignored. Only the
+ *   band word is used: never a number, an average or a count.
+ */
+export function hottestBand(points: MapPoint[]): VibeLabel | null {
+  let best = -1;
+  for (const p of points) {
+    const state = tagState(p);
+    if (state.kind === 'score') best = Math.max(best, BANDS.indexOf(state.band));
+  }
+  return best >= 0 ? BANDS[best] : null;
+}
+
+/**
+ * How a tag or card is read out to a screen reader (spec §7).
+ *
+ * @param point - the map row.
+ * @returns e.g. "Rooftop Sundown, house party, area only, Navy Yard, Hot,
+ *   8.4"; "…, starts 10 PM" before the start; "…, Too early" without a
+ *   score. Never a rater count or a headcount.
+ */
+export function tagSpoken(point: MapPoint): string {
+  const state = tagState(point);
+  const what =
+    point.kind === 'venue'
+      ? 'venue'
+      : `${point.source === 'staff_pick' ? 'staff pick' : 'house party'}, area only`;
+  const vibe =
+    state.kind === 'score'
+      ? `${state.band}, ${state.score.toFixed(1)}`
+      : state.kind === 'before'
+        ? `starts ${state.time}`
+        : TOO_EARLY;
+  return `${point.title}, ${what}, ${shortArea(point.area_label)}, ${vibe}`;
 }

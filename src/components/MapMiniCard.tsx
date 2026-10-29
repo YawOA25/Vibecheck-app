@@ -1,33 +1,36 @@
 /**
- * One event in the map's tap card (VC-79, design/vc79-map-spec.md §3),
- * styled like the Tonight list's EventCard: the name and a "where · when"
- * line on the left, LIVE and the vibe word on the right.
+ * One event in the map's bottom card (VC-79, restyled for VC-83 map v2:
+ * design/vc83-map-v2-spec.md §6).
  *
- * What it shows:
- *   - the title;
- *   - where: "Somewhere in Shaw, DC" for an area circle (the map never says
- *     more than the area), or the area label for a venue pin;
- *   - when: the same "Today · 10 PM" / "On now · until 2 AM" line as the list;
- *   - "TEST" and "Staff pick" chips where they apply;
- *   - ONLY once the event has started: a LIVE dot while it's on, and the
- *     published vibe word ("Hot", "Fire", "Early"), or "No vibe yet" when
- *     nobody has rated. Before the start there is nothing about ratings
- *     (VC-61), whatever the server sent.
+ * What it shows, left to right:
+ *   - the event's generated art (84 px square; worked out from the id only);
+ *   - the name (Bricolage 22), where ("Somewhere in Shaw, DC" for an area
+ *     circle: the map never says more than the area; the area label for a
+ *     venue pin), and when ("On now · until 2 AM");
+ *   - ONLY once the event has started: the mini gauge with the published
+ *     score and word ("8.4 Hot"), or "Too early" when there's no published
+ *     score yet. "Nobody rated" and "1-4 raters" read the same "Too early"
+ *     on purpose (cto), so the card can't hint at how many people rated.
+ *     Before the start there is nothing about ratings (VC-61);
+ *   - a LIVE dot while it's on, and "TEST" / "Staff pick" chips.
+ * No rater count and no headcount, ever (they don't even reach the map).
  *
  * The whole card is one button that opens the event page.
  */
 import { StyleSheet, Text, View } from 'react-native';
 
+import { GeneratedArt } from '@/components/GeneratedArt';
 import { PressableScale } from '@/components/PressableScale';
 import { Tag } from '@/components/Tag';
-import { wordColour } from '@/components/VibeMeter';
-import type { MapPoint } from '@/lib/map-read';
-import type { VibeLabel } from '@/lib/rating';
+import { VibeMeter } from '@/components/VibeMeter';
+import { TOO_EARLY, tagState } from '@/lib/map-read';
+import type { MapPoint, TagState } from '@/lib/map-read';
 import { whenLine } from '@/lib/tonight';
-import { colors, fonts, minTapTarget, motion, radius, spacing, typography } from '@/theme';
+import type { Vibe } from '@/lib/vibe';
+import { colors, minTapTarget, motion, radius, spacing, typography } from '@/theme';
 
-/** The words for a started event nobody has rated yet (exported for tests). */
-export const MAP_NO_VIBE = 'No vibe yet';
+/** The art's size in the card, in pixels (spec §6). */
+export const CARD_ART_SIZE = 84;
 
 /** What a MapMiniCard needs. */
 export interface MapMiniCardProps {
@@ -52,39 +55,51 @@ export function whereText(point: Pick<MapPoint, 'kind' | 'area_label'>): string 
 }
 
 /**
- * The vibe word the card shows.
+ * The vibe part of the card's spoken summary.
  *
- * @param point - the map row.
- * @returns null before the start; otherwise the published word, or "No vibe
- *   yet" when there isn't one.
+ * @param state - from tagState.
+ * @returns "vibe Hot, 8.4", "Too early", or null before the start.
  */
-export function cardWord(point: Pick<MapPoint, 'has_started' | 'vibe_word'>): string | null {
-  if (!point.has_started) return null;
-  return point.vibe_word ?? MAP_NO_VIBE;
+export function cardVibeSpoken(state: TagState): string | null {
+  if (state.kind === 'score') return `vibe ${state.band}, ${state.score.toFixed(1)}`;
+  if (state.kind === 'early') return TOO_EARLY;
+  return null;
 }
 
 /**
- * The colour of a vibe word, matching the gauge (Quiet grey ... Fire bright
- * gold). "Early" and "No vibe yet" are grey.
+ * Builds what the shared mini gauge needs from a map score.
  *
- * @param word - the word shown.
- * @returns a colour.
+ * @param state - a 'score' tag state.
+ * @returns a Vibe holding only the score, its word and live/stale. The
+ *   gauge draws just the arc, the number and the word; the count fields are
+ *   required by the type but are zero here because the map never receives
+ *   them (and the mini gauge never shows them).
  */
-function colourFor(word: string): string {
-  const known: string[] = ['Quiet', 'Good', 'Hot', 'Fire'];
-  return known.includes(word) ? wordColour(word as VibeLabel) : colors.muted;
+function gaugeVibe(state: Extract<TagState, { kind: 'score' }>): Vibe {
+  return {
+    state: state.stale ? 'stale' : 'live',
+    raters: 0,
+    here: 0,
+    score: state.score,
+    label: state.band,
+    nightAverage: null,
+    minutesSinceLast: null,
+    reactions: [],
+    breakdown: null,
+    night: null,
+  };
 }
 
 /**
- * Renders the mini card.
+ * Renders the card.
  *
  * @returns a pressable card. Screen readers hear one summary, e.g. "Shaw
- *   kickback, Somewhere in Shaw, DC, On now · until 2 AM, Hot".
+ *   kickback, Somewhere in Shaw, DC, On now · until 2 AM, vibe Hot, 8.4".
  */
 export function MapMiniCard({ point, now, onPress, animatePress = false }: MapMiniCardProps) {
   const when = whenLine(point, now);
   const where = whereText(point);
-  const word = cardWord(point);
+  const state = tagState(point);
   const staffPick = point.source === 'staff_pick';
   const spoken = [
     point.title,
@@ -92,7 +107,7 @@ export function MapMiniCard({ point, now, onPress, animatePress = false }: MapMi
     where,
     when,
     staffPick ? 'Staff pick' : null,
-    word ? `vibe ${word}` : null,
+    cardVibeSpoken(state),
   ]
     .filter(Boolean)
     .join(', ');
@@ -108,13 +123,34 @@ export function MapMiniCard({ point, now, onPress, animatePress = false }: MapMi
       testID="map-mini-card"
       style={({ pressed }) => [styles.card, pressed && styles.pressed]}
     >
-      <View style={styles.left}>
+      <View style={styles.art}>
+        <GeneratedArt seed={point.event_id} height={CARD_ART_SIZE} />
+      </View>
+      <View style={styles.info}>
         <Text style={styles.title} numberOfLines={2}>
           {point.title}
         </Text>
-        <Text style={styles.meta}>
-          {where} · {when}
-        </Text>
+        <Text style={styles.meta}>{where}</Text>
+        <Text style={styles.meta}>{when}</Text>
+        {state.kind !== 'before' ? (
+          <View style={styles.vibeRow}>
+            {state.kind === 'score' ? (
+              <View testID="map-mini-card-gauge">
+                <VibeMeter vibe={gaugeVibe(state)} size="mini" />
+              </View>
+            ) : (
+              <Text testID="map-mini-card-early" style={styles.early}>
+                {TOO_EARLY}
+              </Text>
+            )}
+            {point.is_live ? (
+              <View style={styles.liveRow} testID="map-mini-card-live">
+                <View style={styles.liveDot} />
+                <Text style={styles.liveText}>LIVE</Text>
+              </View>
+            ) : null}
+          </View>
+        ) : null}
         {staffPick || point.is_test ? (
           <View style={styles.tags}>
             {point.is_test ? <Tag label="TEST" tone="gold" /> : null}
@@ -122,46 +158,34 @@ export function MapMiniCard({ point, now, onPress, animatePress = false }: MapMi
           </View>
         ) : null}
       </View>
-      {word ? (
-        <View style={styles.right}>
-          {point.is_live ? (
-            <View style={styles.liveRow} testID="map-mini-card-live">
-              <View style={styles.liveDot} />
-              <Text style={styles.liveText}>LIVE</Text>
-            </View>
-          ) : null}
-          <Text testID="map-mini-card-word" style={[styles.word, { color: colourFor(word) }]}>
-            {word}
-          </Text>
-        </View>
-      ) : null}
     </PressableScale>
   );
 }
 
-/** Styles built only from theme tokens (the EventCard look). */
+/** Styles built only from theme tokens (spec §6). */
 const styles = StyleSheet.create({
   card: {
     minHeight: minTapTarget,
     flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    alignItems: 'flex-start',
     gap: spacing.gap12,
     backgroundColor: colors.surface,
     borderRadius: radius.card,
-    borderWidth: 1,
-    borderColor: colors.border,
-    paddingVertical: 14,
-    paddingHorizontal: 18,
   },
   pressed: { backgroundColor: colors.surfaceRaised },
-  left: { flex: 1, flexShrink: 1, gap: 5 },
+  art: {
+    width: CARD_ART_SIZE,
+    height: CARD_ART_SIZE,
+    borderRadius: 14,
+    overflow: 'hidden',
+  },
+  info: { flex: 1, flexShrink: 1, gap: 3 },
   title: { ...typography.cardTitle, color: colors.text },
   meta: { ...typography.caption, color: colors.muted },
+  vibeRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.gap12, marginTop: 2 },
+  early: { ...typography.caption, color: colors.muted },
   tags: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 2 },
-  right: { alignItems: 'flex-end', gap: spacing.xs },
   liveRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.accent },
   liveText: { ...typography.label, color: colors.text },
-  word: { fontFamily: fonts.displaySemi, fontSize: 15, lineHeight: 20 },
 });

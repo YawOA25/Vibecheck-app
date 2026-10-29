@@ -10,18 +10,28 @@
  *   - areaAt: a tap inside a circle finds it (the nearest centre when
  *     circles overlap), a tap outside finds nothing;
  *   - listMapPoints: sends the list's date window to get_map_points, caps
- *     at 300 and says when there were more, and turns errors into a message.
+ *     at 300 and says when there were more, and turns errors into a message;
+ *   - VC-83: the published score is kept only once started and only when
+ *     it's a real 0-10 number; tagState / tagTrailing / tagName / tagSpoken
+ *     say "8.4", "10 PM" or "Too early" (nobody rated and 1-4 raters read
+ *     the same); hottestBand uses only published bands.
  */
 import { THIS_WEEK, filterWindow } from '@/lib/date-filter';
 import {
   MAP_LIMIT,
+  TOO_EARLY,
   areaAt,
   fitCoordinates,
   groupMapPoints,
+  hottestBand,
   listMapPoints,
   metresBetween,
   parseMapPoint,
   shortArea,
+  tagName,
+  tagSpoken,
+  tagState,
+  tagTrailing,
 } from '@/lib/map-read';
 import type { MapPoint } from '@/lib/map-read';
 import { supabase } from '@/lib/supabase';
@@ -51,6 +61,8 @@ function raw(overrides: Record<string, unknown> = {}) {
     has_started: false,
     is_live: false,
     vibe_word: null,
+    vibe_score: null,
+    vibe_stale: false,
     ...overrides,
   };
 }
@@ -85,6 +97,91 @@ describe('parseMapPoint', () => {
   it('drops the vibe word before the start (VC-61)', () => {
     expect(point({ vibe_word: 'Fire' }).vibe_word).toBeNull();
     expect(point({ vibe_word: 'Fire', has_started: true }).vibe_word).toBe('Fire');
+  });
+
+  it('keeps the published score only once started (VC-83)', () => {
+    expect(point({ vibe_word: 'Fire', vibe_score: 9.1 }).vibe_score).toBeNull();
+    const started = point({ has_started: true, vibe_word: 'Fire', vibe_score: 9.1 });
+    expect(started.vibe_score).toBe(9.1);
+    expect(started.vibe_stale).toBe(false);
+  });
+
+  it('rounds the score to 1 decimal, accepts "8.4" text, and drops nonsense', () => {
+    const at = (vibe_score: unknown) => point({ has_started: true, vibe_score }).vibe_score;
+    expect(at(8.46)).toBe(8.5);
+    expect(at('8.4')).toBe(8.4);
+    expect(at(11)).toBeNull();
+    expect(at(-1)).toBeNull();
+    expect(at('hot')).toBeNull();
+    expect(at(null)).toBeNull();
+  });
+
+  it('marks stale only next to a score', () => {
+    expect(point({ has_started: true, vibe_score: 6, vibe_stale: true }).vibe_stale).toBe(true);
+    expect(point({ has_started: true, vibe_score: null, vibe_stale: true }).vibe_stale).toBe(false);
+  });
+});
+
+describe('tag helpers (VC-83)', () => {
+  it('shows the start time before the start, never a score', () => {
+    const p = point({ vibe_word: 'Fire', vibe_score: 9.1 });
+    expect(tagState(p)).toEqual({ kind: 'before', time: '10 PM' });
+    expect(tagTrailing(tagState(p))).toBe('10 PM');
+  });
+
+  it('shows the published score with its band', () => {
+    const p = point({ has_started: true, vibe_word: 'Hot', vibe_score: 8, vibe_stale: true });
+    expect(tagState(p)).toEqual({ kind: 'score', score: 8, band: 'Hot', stale: true });
+    // Always 1 decimal.
+    expect(tagTrailing(tagState(p))).toBe('8.0');
+  });
+
+  it('reads "Too early" the same for nobody rated and for 1-4 raters', () => {
+    const nobody = point({ has_started: true, vibe_word: null });
+    const fewRaters = point({ has_started: true, vibe_word: 'Early' });
+    expect(tagState(nobody)).toEqual({ kind: 'early' });
+    expect(tagState(fewRaters)).toEqual({ kind: 'early' });
+    expect(tagTrailing(tagState(nobody))).toBe(TOO_EARLY);
+    // A number without a band word (never sent) is not trusted either.
+    expect(tagState(point({ has_started: true, vibe_score: 7 }))).toEqual({ kind: 'early' });
+  });
+
+  it('shortens long names to 16 characters and an ellipsis', () => {
+    expect(tagName('Rooftop Sundown')).toBe('Rooftop Sundown');
+    expect(tagName('Basement Sessions Vol 2')).toBe('Basement Session…');
+  });
+
+  it('picks the hottest PUBLISHED band, ignoring Too early and not started', () => {
+    expect(
+      hottestBand([
+        point({ has_started: true, vibe_word: 'Good', vibe_score: 5.2 }),
+        point({ has_started: true, vibe_word: 'Hot', vibe_score: 7.4 }),
+        point({ has_started: true, vibe_word: 'Early' }),
+        // Not started: its (impossible) Fire is ignored.
+        point({ vibe_word: 'Fire', vibe_score: 9.5 }),
+      ]),
+    ).toBe('Hot');
+    expect(hottestBand([point({ has_started: true, vibe_word: 'Early' })])).toBeNull();
+  });
+
+  it('speaks name, kind, area and vibe, and never a count', () => {
+    expect(
+      tagSpoken(
+        point({
+          title: 'Rooftop Sundown',
+          area_label: 'Navy Yard, DC',
+          has_started: true,
+          vibe_word: 'Hot',
+          vibe_score: 8.4,
+        }),
+      ),
+    ).toBe('Rooftop Sundown, house party, area only, Navy Yard, Hot, 8.4');
+    expect(tagSpoken(point({ source: 'staff_pick' }))).toBe(
+      'Party, staff pick, area only, Shaw, starts 10 PM',
+    );
+    expect(tagSpoken(point({ has_started: true }))).toBe(
+      'Party, house party, area only, Shaw, Too early',
+    );
   });
 });
 
