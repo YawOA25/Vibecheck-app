@@ -22,9 +22,15 @@
  *   - the location reading is never logged;
  *   - the Q5 layout: a round Close (X) on the form's top line that goes
  *     back (switched off while saving, as Back was), and "Drop my rating"
- *     pinned below the scrolling chips instead of scrolling with them.
+ *     pinned below the scrolling chips instead of scrolling with them;
+ *   - Q8b: a save with no answer gives up after 15 seconds (fake timers,
+ *     real submitRating over a fake server): Close works again, "Signal's
+ *     weak, try again" shows with the warning buzz, the taps stay for a
+ *     retry, and a rating that was saved anyway reads "Already rated." on
+ *     the retry. A re-check with no answer stops at 15 seconds too, without
+ *     sending the rating.
  */
-import { fireEvent, render, screen, within } from '@testing-library/react-native';
+import { act, fireEvent, render, screen, within } from '@testing-library/react-native';
 import { StyleSheet } from 'react-native';
 
 import RateScreenRoute, { CLOSE_LABEL, PROMPT, SAVING_LABEL, SUBMIT_LABEL } from '../app/rate/[id]';
@@ -36,6 +42,8 @@ import { getEvent } from '@/lib/events-read';
 import { getMyRatingStatus, submitRating } from '@/lib/ratings-api';
 import { offerRecapReminder } from '@/lib/recap-notifications';
 import { tapLight, tapSuccess, tapWarning } from '@/lib/haptics';
+import { NETWORK_TIMEOUT_MS, TIMEOUT_MESSAGE } from '@/lib/network-timeout';
+import { supabase } from '@/lib/supabase';
 import type { PublicEvent } from '@/lib/tonight';
 import { spacing } from '@/theme';
 
@@ -43,6 +51,9 @@ jest.mock('@/lib/events-read', () => ({ getEvent: jest.fn() }));
 jest.mock('@/lib/ratings-api', () => ({ getMyRatingStatus: jest.fn(), submitRating: jest.fn() }));
 jest.mock('@/lib/check-in-location', () => ({ readLocationQuietly: jest.fn() }));
 jest.mock('@/lib/check-in-api', () => ({ submitCheckIn: jest.fn() }));
+// Q8b: a fake server for the tests that use the REAL submitRating and
+// submitCheckIn (with their 15-second limit). Keeps the real client unloaded.
+jest.mock('@/lib/supabase', () => ({ supabase: { rpc: jest.fn() } }));
 jest.mock('@/lib/auth-context', () => ({ useAuth: jest.fn() }));
 // The 11 AM recap note (VC-B12); its own rules are in recap-notifications.test.ts.
 jest.mock('@/lib/recap-notifications', () => ({ offerRecapReminder: jest.fn() }));
@@ -541,5 +552,98 @@ describe('RateScreen next-morning recap note (VC-B12)', () => {
     expect(offerRecapReminder).not.toHaveBeenCalled();
     // Nothing was saved, so no "saved" tap either (VC-32d).
     expect(tapLight).not.toHaveBeenCalled();
+  });
+});
+
+describe('Q8b: a save with no answer (15-second timeout)', () => {
+  const rpc = supabase.rpc as jest.Mock;
+
+  /**
+   * Makes the fake server answer each call in turn (a never-settling
+   * promise = a request stuck on bad Wi-Fi). The fake request has the
+   * `.abortSignal()` method the real API calls.
+   *
+   * @param answers - one promise per call, in order.
+   */
+  function serverAnswers(...answers: Promise<unknown>[]) {
+    for (const answer of answers) {
+      rpc.mockImplementationOnce(() => {
+        const request = {
+          abortSignal: () => request,
+          then: (onDone: (value: unknown) => unknown, onFail: (reason: unknown) => unknown) =>
+            answer.then(onDone, onFail),
+        };
+        return request;
+      });
+    }
+  }
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    // The real submitRating (with its 15-second limit), over the fake server.
+    rate.mockImplementation(jest.requireActual('@/lib/ratings-api').submitRating);
+  });
+  afterEach(() => jest.useRealTimers());
+
+  /** Opens the form, taps the three rows and taps "Drop my rating". */
+  async function submitThreeTaps() {
+    await render(<RateScreenRoute />);
+    await screen.findByText(PROMPT);
+    await tapThreeRows();
+    await fireEvent.press(screen.getByRole('button', { name: SUBMIT_LABEL }));
+  }
+
+  it('after 15 seconds: Close works again, the message shows, the warning buzzes, the taps stay', async () => {
+    serverAnswers(new Promise(() => {}));
+    await submitThreeTaps();
+    await act(() => jest.advanceTimersByTimeAsync(NETWORK_TIMEOUT_MS - 1));
+    expect(screen.getByRole('button', { name: CLOSE_LABEL })).toBeDisabled();
+
+    await act(() => jest.advanceTimersByTimeAsync(1));
+    expect(await screen.findByText(TIMEOUT_MESSAGE)).toBeOnTheScreen();
+    expect(tapWarning).toHaveBeenCalledTimes(1);
+    expect(tapLight).not.toHaveBeenCalled();
+    // The taps are kept, so a retry is one tap.
+    expect(screen.getByRole('radio', { name: 'crowd: Packed' })).toBeChecked();
+    expect(screen.getByRole('button', { name: SUBMIT_LABEL })).toBeEnabled();
+    const close = screen.getByRole('button', { name: CLOSE_LABEL });
+    expect(close).toBeEnabled();
+    await fireEvent.press(close);
+    expect(mockBack).toHaveBeenCalledTimes(1);
+  });
+
+  it('a retry after the rating was saved anyway reads "Already rated." (never a second rating)', async () => {
+    // submit_rating keeps one rating per guest and event and refuses a new
+    // save within 60 minutes, so the retry gets "too soon".
+    serverAnswers(
+      new Promise(() => {}),
+      Promise.resolve({
+        data: { status: 'too_soon', minutes_left: 60, next_update_at: '2026-10-31T03:05:00Z' },
+        error: null,
+      }),
+    );
+    await submitThreeTaps();
+    await act(() => jest.advanceTimersByTimeAsync(NETWORK_TIMEOUT_MS));
+    await screen.findByText(TIMEOUT_MESSAGE);
+
+    await fireEvent.press(screen.getByRole('button', { name: SUBMIT_LABEL }));
+    expect(await screen.findByText(/less than an hour ago/)).toBeOnTheScreen();
+    expect(screen.queryByText(TIMEOUT_MESSAGE)).toBeNull();
+    expect(rpc).toHaveBeenCalledTimes(2);
+  });
+
+  it('a re-check with no answer stops at 15 seconds and never sends the rating', async () => {
+    // The real submitCheckIn for the quiet re-check, stuck on bad Wi-Fi.
+    checkIn.mockImplementation(jest.requireActual('@/lib/check-in-api').submitCheckIn);
+    serverAnswers(new Promise(() => {}));
+    await submitThreeTaps();
+    await act(() => jest.advanceTimersByTimeAsync(NETWORK_TIMEOUT_MS));
+
+    expect(await screen.findByText(TIMEOUT_MESSAGE)).toBeOnTheScreen();
+    expect(tapWarning).toHaveBeenCalledTimes(1);
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc).toHaveBeenCalledWith('check_in', expect.any(Object));
+    expect(rate).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: CLOSE_LABEL })).toBeEnabled();
   });
 });

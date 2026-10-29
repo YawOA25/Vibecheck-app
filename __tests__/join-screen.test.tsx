@@ -14,9 +14,13 @@
  *   - a network error shows a sentence and keeps the form;
  *   - the tester button: shown only to testers on test events, it calls
  *     the tester check-in; hidden for non-testers and on real events;
- *   - the typed code never reaches the console.
+ *   - the typed code never reaches the console;
+ *   - Q8b: a code check-in with no answer gives up after 15 seconds (fake
+ *     timers, real submitCodeCheckIn over a fake server): Back works again,
+ *     "Signal's weak, try again" shows with the warning buzz, the typed
+ *     code stays for a retry, and a late success shows as "You're in.".
  */
-import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 
 import JoinScreen, {
   CHECK_ME_IN,
@@ -30,6 +34,8 @@ import type { CodeCheckInOutcome } from '@/lib/code-check-in-api';
 import { getEvent } from '@/lib/events-read';
 import { INCOMPLETE_CODE_MESSAGE, wrongCodeMessage } from '@/lib/join-screens';
 import { tapSuccess, tapWarning } from '@/lib/haptics';
+import { NETWORK_TIMEOUT_MS, TIMEOUT_MESSAGE } from '@/lib/network-timeout';
+import { supabase } from '@/lib/supabase';
 import type { PublicEvent } from '@/lib/tonight';
 
 jest.mock('@/lib/events-read', () => ({ getEvent: jest.fn() }));
@@ -300,5 +306,73 @@ describe('after a code check-in (VC-B08)', () => {
     });
     await fireEvent.press(await screen.findByRole('button', { name: 'Rate the night' }));
     expect(mockReplace).toHaveBeenCalledWith({ pathname: '/rate/[id]', params: { id: 'e1' } });
+  });
+});
+
+describe('Q8b: a code check-in with no answer (15-second timeout)', () => {
+  const rpc = supabase.rpc as jest.Mock;
+
+  /**
+   * Makes the fake server answer each call in turn (a never-settling
+   * promise = a request stuck on bad Wi-Fi). The fake request has the
+   * `.abortSignal()` method the real API calls.
+   *
+   * @param answers - one promise per call, in order.
+   */
+  function serverAnswers(...answers: Promise<unknown>[]) {
+    for (const answer of answers) {
+      rpc.mockImplementationOnce(() => {
+        const request = {
+          abortSignal: () => request,
+          then: (onDone: (value: unknown) => unknown, onFail: (reason: unknown) => unknown) =>
+            answer.then(onDone, onFail),
+        };
+        return request;
+      });
+    }
+  }
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    // The real submit (with its 15-second limit), over the fake server.
+    submitCode.mockImplementation(jest.requireActual('@/lib/code-check-in-api').submitCodeCheckIn);
+  });
+  afterEach(() => jest.useRealTimers());
+
+  it('after 15 seconds: Back works again, the message shows, the warning buzzes, the code stays', async () => {
+    serverAnswers(new Promise(() => {}));
+    await enterCode('K7MX2Q');
+    await act(() => jest.advanceTimersByTimeAsync(NETWORK_TIMEOUT_MS - 1));
+    expect(screen.getByRole('button', { name: 'Back' })).toBeDisabled();
+
+    await act(() => jest.advanceTimersByTimeAsync(1));
+    expect(await screen.findByText(TIMEOUT_MESSAGE)).toBeOnTheScreen();
+    expect(tapWarning).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: CHECK_ME_IN })).toBeEnabled();
+    // The code stays in the boxes, so a retry is one tap.
+    expect(screen.getByLabelText(CODE_FIELD_LABEL).props.value).toBe('K7MX2Q');
+    const back = screen.getByRole('button', { name: 'Back' });
+    expect(back).toBeEnabled();
+    await fireEvent.press(back);
+    expect(mockBack).toHaveBeenCalledTimes(1);
+  });
+
+  it('a retry after a late success on the server shows "You\'re in."', async () => {
+    // check_in_with_code is repeat-proof (pgTAP 010 section 5).
+    serverAnswers(
+      new Promise(() => {}),
+      Promise.resolve({
+        data: { status: 'passed', first_at: '2026-10-31T02:00:00Z', already_checked_in: true },
+        error: null,
+      }),
+    );
+    await enterCode('K7MX2Q');
+    await act(() => jest.advanceTimersByTimeAsync(NETWORK_TIMEOUT_MS));
+    await screen.findByText(TIMEOUT_MESSAGE);
+
+    await fireEvent.press(screen.getByRole('button', { name: CHECK_ME_IN }));
+    expect(await screen.findByRole('header', { name: "You're in." })).toBeOnTheScreen();
+    expect(rpc).toHaveBeenCalledTimes(2);
+    expect(tapSuccess).toHaveBeenCalledTimes(1);
   });
 });

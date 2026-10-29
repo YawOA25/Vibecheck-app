@@ -9,7 +9,10 @@
  *   - error codes (not allowed, not found, staff, bad input) and network
  *     trouble become the right kind and a plain message;
  *   - the heads-up list skips tags this app doesn't know;
- *   - the guest's own check-in and rating are read from their own rows.
+ *   - the guest's own check-in and rating are read from their own rows;
+ *   - Q8b: a rating with no answer gives up after 15 seconds (fake timers)
+ *     and cancels the request; if it was saved anyway, the retry reads the
+ *     server's "too soon" (one rating, never two).
  */
 import {
   addHeadsUp,
@@ -20,10 +23,31 @@ import {
   parseRatingResult,
   submitRating,
 } from '@/lib/ratings-api';
+import { NETWORK_TIMEOUT_MS, TIMEOUT_MESSAGE } from '@/lib/network-timeout';
 import { supabase } from '@/lib/supabase';
 
 jest.mock('@/lib/supabase', () => ({ supabase: { rpc: jest.fn(), from: jest.fn() } }));
 const rpc = supabase.rpc as jest.Mock;
+/**
+ * What the fake server answers (Q8b). The API now calls
+ * `.abortSignal(signal)` on the request supabase.rpc returns (so it can
+ * cancel it after 15 seconds) before waiting for it. So the fake rpc hands
+ * back a stand-in request with that method, which answers whatever
+ * `rpcAnswer` is set to. `lastSignal` keeps the signal it was given.
+ */
+const rpcAnswer = jest.fn();
+let lastSignal: AbortSignal | undefined;
+rpc.mockImplementation(() => {
+  const request = {
+    abortSignal: (signal: AbortSignal) => {
+      lastSignal = signal;
+      return request;
+    },
+    then: (onDone: (value: unknown) => unknown, onFail: (reason: unknown) => unknown) =>
+      Promise.resolve(rpcAnswer()).then(onDone, onFail),
+  };
+  return request;
+});
 const from = supabase.from as jest.Mock;
 
 const DRAFT = { crowd: 3, music: 2, energy: 1, reaction: 'fire', tags: ['dress_code'] } as const;
@@ -32,7 +56,7 @@ beforeEach(() => jest.clearAllMocks());
 
 describe('submitRating', () => {
   it('sends the taps with the SQL parameter names and reads "saved"', async () => {
-    rpc.mockResolvedValue({
+    rpcAnswer.mockResolvedValue({
       data: {
         status: 'saved',
         updated: false,
@@ -64,7 +88,7 @@ describe('submitRating', () => {
   });
 
   it('turns the staff error into a "staff" kind with a plain message', async () => {
-    rpc.mockResolvedValue({ data: null, error: { code: 'VCSTF', message: 'x' } });
+    rpcAnswer.mockResolvedValue({ data: null, error: { code: 'VCSTF', message: 'x' } });
     await expect(submitRating('e1', { ...DRAFT, tags: [] })).resolves.toEqual({
       ok: false,
       kind: 'staff',
@@ -73,15 +97,48 @@ describe('submitRating', () => {
   });
 
   it('turns an unknown answer, or a thrown network error, into a failure', async () => {
-    rpc.mockResolvedValueOnce({ data: { status: 'weird' }, error: null });
+    rpcAnswer.mockResolvedValueOnce({ data: { status: 'weird' }, error: null });
     await expect(submitRating('e1', { ...DRAFT, tags: [] })).resolves.toMatchObject({
       ok: false,
       kind: 'unknown',
     });
-    rpc.mockRejectedValueOnce(new TypeError('Network request failed'));
+    rpcAnswer.mockRejectedValueOnce(new TypeError('Network request failed'));
     await expect(submitRating('e1', { ...DRAFT, tags: [] })).resolves.toMatchObject({
       ok: false,
       kind: 'network',
+    });
+  });
+});
+
+describe('submitRating with no answer (Q8b timeout)', () => {
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
+
+  it('gives up after 15 seconds and cancels the request', async () => {
+    rpcAnswer.mockReturnValue(new Promise(() => {}));
+    const pending = submitRating('e1', { ...DRAFT, tags: [] });
+    await jest.advanceTimersByTimeAsync(NETWORK_TIMEOUT_MS);
+    await expect(pending).resolves.toEqual({
+      ok: false,
+      kind: 'timeout',
+      message: TIMEOUT_MESSAGE,
+    });
+    expect(lastSignal?.aborted).toBe(true);
+  });
+
+  it('a rating saved after we gave up reads as "too soon" on the retry', async () => {
+    // submit_rating keeps one row per guest and event and refuses a new
+    // save within 60 minutes, so the retry can't count twice.
+    rpcAnswer.mockReturnValueOnce(new Promise(() => {})).mockResolvedValueOnce({
+      data: { status: 'too_soon', minutes_left: 60, next_update_at: '2026-10-31T03:05:00Z' },
+      error: null,
+    });
+    const first = submitRating('e1', { ...DRAFT, tags: [] });
+    await jest.advanceTimersByTimeAsync(NETWORK_TIMEOUT_MS);
+    await expect(first).resolves.toMatchObject({ kind: 'timeout' });
+    await expect(submitRating('e1', { ...DRAFT, tags: [] })).resolves.toEqual({
+      ok: true,
+      result: { status: 'too_soon', minutesLeft: 60, nextUpdateAt: '2026-10-31T03:05:00Z' },
     });
   });
 });
@@ -132,25 +189,25 @@ describe('describeRatingError', () => {
 
 describe('heads-ups', () => {
   it('addHeadsUp sends one tag and reads added / already / refusals', async () => {
-    rpc.mockResolvedValueOnce({ data: { status: 'added' }, error: null });
+    rpcAnswer.mockResolvedValueOnce({ data: { status: 'added' }, error: null });
     await expect(addHeadsUp('e1', 'lines_long')).resolves.toEqual({
       ok: true,
       result: { status: 'added' },
     });
     expect(rpc).toHaveBeenCalledWith('add_heads_up', { p_event_id: 'e1', p_tag: 'lines_long' });
 
-    rpc.mockResolvedValueOnce({ data: { status: 'already' }, error: null });
+    rpcAnswer.mockResolvedValueOnce({ data: { status: 'already' }, error: null });
     await expect(addHeadsUp('e1', 'lines_long')).resolves.toMatchObject({
       result: { status: 'already' },
     });
-    rpc.mockResolvedValueOnce({ data: { status: 'check_in_stale' }, error: null });
+    rpcAnswer.mockResolvedValueOnce({ data: { status: 'check_in_stale' }, error: null });
     await expect(addHeadsUp('e1', 'lines_long')).resolves.toMatchObject({
       result: { status: 'check_in_stale' },
     });
   });
 
   it("getEventHeadsUps reads the counts in the server's order", async () => {
-    rpc.mockResolvedValue({
+    rpcAnswer.mockResolvedValue({
       data: [
         { tag: 'lines_long', count: 3, mine: true },
         { tag: 'felt_unsafe', count: 3, mine: false },

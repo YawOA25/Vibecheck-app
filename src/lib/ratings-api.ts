@@ -21,6 +21,7 @@
 import type { ErrorLike } from '@/lib/auth-errors';
 import { isHeadsUpTag } from '@/lib/rating';
 import type { CompleteDraft, HeadsUpTag } from '@/lib/rating';
+import { TIMEOUT_MESSAGE, withTimeout } from '@/lib/network-timeout';
 import { supabase } from '@/lib/supabase';
 
 /** "Not now" answers shared by rating and +1 (the server's rating_gate). */
@@ -65,9 +66,13 @@ export interface HeadsUpCount {
   mine: boolean;
 }
 
-/** Kinds of failure the screens treat differently. */
+/**
+ * Kinds of failure the screens treat differently. 'timeout' (Q8b): the
+ * rating got no answer within 15 seconds, so we stopped waiting (if it was
+ * saved anyway, the next try answers "too soon", never a second rating).
+ */
 export type RatingErrorKind =
-  'notFound' | 'notAllowed' | 'staff' | 'badInput' | 'network' | 'unknown';
+  'notFound' | 'notAllowed' | 'staff' | 'badInput' | 'network' | 'timeout' | 'unknown';
 
 /** A failed call: what kind, and a sentence to show. */
 export type RatingFailure = { ok: false; kind: RatingErrorKind; message: string };
@@ -245,15 +250,23 @@ export function describeRatingError(error: ErrorLike): { kind: RatingErrorKind; 
  */
 export async function submitRating(eventId: string, draft: CompleteDraft): Promise<RatingOutcome> {
   try {
-    // Parameter names match the SQL function's.
-    const { data, error } = await supabase.rpc('submit_rating', {
-      p_event_id: eventId,
-      p_crowd: draft.crowd,
-      p_music: draft.music,
-      p_energy: draft.energy,
-      p_reaction: draft.reaction,
-      p_tags: draft.tags,
-    });
+    // Parameter names match the SQL function's. Gives up after 15 seconds
+    // (Q8b): Close is off while saving, so a hung request must not trap
+    // the guest.
+    const timed = await withTimeout((signal) =>
+      supabase
+        .rpc('submit_rating', {
+          p_event_id: eventId,
+          p_crowd: draft.crowd,
+          p_music: draft.music,
+          p_energy: draft.energy,
+          p_reaction: draft.reaction,
+          p_tags: draft.tags,
+        })
+        .abortSignal(signal),
+    );
+    if (timed.timedOut) return { ok: false, kind: 'timeout', message: TIMEOUT_MESSAGE };
+    const { data, error } = timed.value;
     if (error) return { ok: false, ...describeRatingError(error) };
     const result = parseRatingResult(data);
     return result ? { ok: true, result } : { ok: false, kind: 'unknown', message: GENERIC_MESSAGE };

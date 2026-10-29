@@ -90,7 +90,7 @@ import {
   toggleTag,
 } from '@/lib/rating';
 import type { RatingDraft, RowValue } from '@/lib/rating';
-import { tapLight } from '@/lib/haptics';
+import { tapLight, tapWarning } from '@/lib/haptics';
 import { getMyRatingStatus, submitRating } from '@/lib/ratings-api';
 import type { MyRatingStatus } from '@/lib/ratings-api';
 import { rateResultScreen, tooSoonScreen } from '@/lib/rating-screens';
@@ -265,6 +265,14 @@ export default function RateScreenRoute() {
         if (reading) {
           // The reading goes straight into the request and is then forgotten.
           const recheck = await submitCheckIn(event.id, reading);
+          // Q8b: the re-check got no answer in 15 seconds. Stop here rather
+          // than wait up to 15 more for the rating on the same weak signal:
+          // keep the taps, unlock Close, and let them try again.
+          if (!recheck.ok && recheck.kind === 'timeout') {
+            tapWarning();
+            setPhase({ ...form, saving: false, error: recheck.message });
+            return;
+          }
           // 'gps_locked' counts as too far too: each too_far here adds to the
           // server's 5-strike cap, so after 5 the answer turns into
           // gps_locked. Letting that through would let a guest at home rate
@@ -314,6 +322,10 @@ export default function RateScreenRoute() {
           screen: rateResultScreen({ source: 'staff' }, event.title),
         });
       } else {
+        // Q8b: a timeout gets the warning buzz. If the rating was saved
+        // after we gave up, the retry answers "too soon" (one rating, never
+        // two).
+        if (outcome.kind === 'timeout') tapWarning();
         // Keep the taps, show the message under the form, let them retry.
         setPhase({ ...form, saving: false, error: outcome.message });
       }

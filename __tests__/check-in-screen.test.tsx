@@ -23,6 +23,12 @@
  *     screen readers: the sheet is a modal dialog named "Check in", focus
  *     moves to its title, and Close (and the dimmed area) go back, but not
  *     while a check-in is being sent.
+ *   - Q8b: a check-in with no answer gives up after 15 seconds (fake
+ *     timers, real submitCheckIn over a fake server): Back and Close work
+ *     again, "Signal's weak, try again" shows with the warning buzz, a
+ *     retry is allowed, and if the first try landed on the server after
+ *     all, the retry shows "still checked in" (a late answer to the
+ *     abandoned request changes nothing).
  */
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react-native';
 import { AccessibilityInfo, Animated, BackHandler, Linking, StyleSheet } from 'react-native';
@@ -46,13 +52,18 @@ import { readLocationForCheckIn } from '@/lib/check-in-location';
 import type { ReadingOutcome } from '@/lib/check-in-location';
 import { GPS_LOCKED_BODY, RATE_THE_NIGHT } from '@/lib/check-in-screens';
 import { getEvent } from '@/lib/events-read';
-import { tapSuccess } from '@/lib/haptics';
+import { tapSuccess, tapWarning } from '@/lib/haptics';
+import { NETWORK_TIMEOUT_MS, TIMEOUT_MESSAGE } from '@/lib/network-timeout';
+import { supabase } from '@/lib/supabase';
 import type { PublicEvent } from '@/lib/tonight';
 import { colors } from '@/theme';
 
 jest.mock('@/lib/events-read', () => ({ getEvent: jest.fn() }));
 jest.mock('@/lib/check-in-location', () => ({ readLocationForCheckIn: jest.fn() }));
 jest.mock('@/lib/check-in-api', () => ({ submitCheckIn: jest.fn() }));
+// Q8b: a fake server for the tests that use the REAL submitCheckIn (with its
+// 15-second limit). Also keeps the real client (and AsyncStorage) unloaded.
+jest.mock('@/lib/supabase', () => ({ supabase: { rpc: jest.fn() } }));
 // VC-32d: fake vibrations, so tests can check WHEN each one fires.
 jest.mock('@/lib/haptics', () => ({
   tapLight: jest.fn(),
@@ -816,5 +827,116 @@ describe('the bottom sheet (Q7, fix #7)', () => {
     // and so is Android's back button.
     await act(async () => finishRead({ kind: 'denied' }));
     expect(mockPreventRemove).toHaveBeenLastCalledWith(false, expect.any(Function));
+  });
+});
+
+describe('Q8b: a check-in with no answer (15-second timeout)', () => {
+  const rpc = supabase.rpc as jest.Mock;
+
+  /**
+   * Makes the fake server answer each check_in call in turn. Each answer is
+   * a promise: one that never settles stands for a request stuck on bad
+   * Wi-Fi. The real API calls `.abortSignal()` on the request, so the fake
+   * request has that method too.
+   *
+   * @param answers - one promise per call, in order.
+   */
+  function serverAnswers(...answers: Promise<unknown>[]) {
+    for (const answer of answers) {
+      rpc.mockImplementationOnce(() => {
+        const request = {
+          abortSignal: () => request,
+          then: (onDone: (value: unknown) => unknown, onFail: (reason: unknown) => unknown) =>
+            answer.then(onDone, onFail),
+        };
+        return request;
+      });
+    }
+  }
+
+  /** The server's "passed, and you were already in" answer. */
+  const ALREADY_IN = {
+    data: { status: 'passed', first_at: '2026-10-31T02:00:00Z', already_checked_in: true },
+    error: null,
+  };
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    // Use the real submitCheckIn here, so its own 15-second limit runs.
+    submit.mockImplementation(jest.requireActual('@/lib/check-in-api').submitCheckIn);
+  });
+  afterEach(() => jest.useRealTimers());
+
+  /** Opens the sheet and taps "Yep, I'm here". */
+  async function startCheckIn() {
+    await render(<CheckInScreen />);
+    await fireEvent.press(await screen.findByRole('button', { name: IM_HERE }));
+  }
+
+  it('after 15 seconds: Back and Close work again, the error shows, and the warning buzzes', async () => {
+    const addSpy = jest.spyOn(BackHandler, 'addEventListener');
+    serverAnswers(new Promise(() => {}));
+    await startCheckIn();
+
+    // Still sending at 14.999 s: Close is off and removal is refused.
+    await act(() => jest.advanceTimersByTimeAsync(NETWORK_TIMEOUT_MS - 1));
+    expect(screen.getByRole('button', { name: CLOSE_LABEL })).toBeDisabled();
+    expect(mockPreventRemove).toHaveBeenLastCalledWith(true, expect.any(Function));
+    expect(screen.queryByText(TIMEOUT_MESSAGE)).toBeNull();
+
+    // 15 s: the API gives up.
+    await act(() => jest.advanceTimersByTimeAsync(1));
+    expect(await screen.findByText(TIMEOUT_MESSAGE)).toBeOnTheScreen();
+    expect(tapWarning).toHaveBeenCalledTimes(1);
+    expect(tapSuccess).not.toHaveBeenCalled();
+    expect(mockPreventRemove).toHaveBeenLastCalledWith(false, expect.any(Function));
+
+    // Android's back button closes the sheet again...
+    const backPress = addSpy.mock.calls.at(-1)?.[1] as () => boolean;
+    expect(backPress()).toBe(true);
+    await act(() => jest.runOnlyPendingTimersAsync());
+    expect(mockBack).toHaveBeenCalledTimes(1);
+    addSpy.mockRestore();
+  });
+
+  it('after a timeout, Close is enabled and goes back', async () => {
+    serverAnswers(new Promise(() => {}));
+    await startCheckIn();
+    await act(() => jest.advanceTimersByTimeAsync(NETWORK_TIMEOUT_MS));
+    await screen.findByText(TIMEOUT_MESSAGE);
+    const close = screen.getByRole('button', { name: CLOSE_LABEL });
+    expect(close).toBeEnabled();
+    await fireEvent.press(close);
+    expect(mockBack).toHaveBeenCalledTimes(1);
+  });
+
+  it('"Try again" sends a new check-in; a late success on the server shows "still checked in"', async () => {
+    // Try 1 lands on the server but its answer never comes back; try 2 gets
+    // the repeat-proof answer (check_in keeps one row, pgTAP 009 section 9).
+    serverAnswers(new Promise(() => {}), Promise.resolve(ALREADY_IN));
+    await startCheckIn();
+    await act(() => jest.advanceTimersByTimeAsync(NETWORK_TIMEOUT_MS));
+
+    await fireEvent.press(await screen.findByRole('button', { name: 'Try again' }));
+    expect(
+      await screen.findByText("You're still checked in to Rooftop Sundown."),
+    ).toBeOnTheScreen();
+    expect(screen.queryByText(TIMEOUT_MESSAGE)).toBeNull();
+    expect(rpc).toHaveBeenCalledTimes(2);
+    expect(tapSuccess).toHaveBeenCalledTimes(1);
+  });
+
+  it('a late answer to the abandoned request changes nothing on screen', async () => {
+    let lateAnswer!: (value: unknown) => void;
+    serverAnswers(new Promise((resolve) => (lateAnswer = resolve)));
+    await startCheckIn();
+    await act(() => jest.advanceTimersByTimeAsync(NETWORK_TIMEOUT_MS));
+    await screen.findByText(TIMEOUT_MESSAGE);
+
+    // The first request finally answers "passed": we already gave up on it,
+    // so the screen keeps the retry offer (the retry will show the truth).
+    await act(async () => lateAnswer(ALREADY_IN));
+    expect(screen.getByText(TIMEOUT_MESSAGE)).toBeOnTheScreen();
+    expect(tapSuccess).not.toHaveBeenCalled();
   });
 });

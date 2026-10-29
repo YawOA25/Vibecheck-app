@@ -154,6 +154,10 @@ export default function JoinScreen() {
       setCodeError(outcome.message);
       setPhase({ kind: 'form', event, busy: false });
     } else {
+      // Q8b: no answer in 15 seconds. Warning buzz plus "Signal's weak, try
+      // again"; the form unlocks so they can retry (a late success then
+      // shows as "already checked in").
+      if (outcome.kind === 'timeout') tapWarning();
       setNotice(outcome.message);
       setPhase({ kind: 'form', event, busy: false });
     }

@@ -15,6 +15,7 @@
  */
 import type { ErrorLike } from '@/lib/auth-errors';
 import type { LocationReading } from '@/lib/check-in-location';
+import { TIMEOUT_MESSAGE, withTimeout } from '@/lib/network-timeout';
 import { supabase } from '@/lib/supabase';
 
 /** The server's answer, tidied up. Mirrors the statuses in the migration. */
@@ -43,8 +44,13 @@ export type CheckInResult =
    */
   | { status: 'gps_locked' };
 
-/** Kinds of failure the screen treats differently. */
-export type CheckInErrorKind = 'notFound' | 'notAllowed' | 'badReading' | 'network' | 'unknown';
+/**
+ * Kinds of failure the screen treats differently. 'timeout' (Q8b): no
+ * answer within 15 seconds, so we stopped waiting (the server may still
+ * have checked the guest in; the next try will say so).
+ */
+export type CheckInErrorKind =
+  'notFound' | 'notAllowed' | 'badReading' | 'network' | 'timeout' | 'unknown';
 
 /** What {@link submitCheckIn} returns. */
 export type CheckInOutcome =
@@ -150,13 +156,20 @@ export async function submitCheckIn(
   reading: LocationReading,
 ): Promise<CheckInOutcome> {
   try {
-    // Parameter names match the SQL function's.
-    const { data, error } = await supabase.rpc('check_in', {
-      p_event_id: eventId,
-      p_lat: reading.lat,
-      p_lng: reading.lng,
-      p_accuracy_m: reading.accuracyM,
-    });
+    // Parameter names match the SQL function's. The call gives up after
+    // 15 seconds (Q8b) so a hung request can't trap the guest on the sheet.
+    const timed = await withTimeout((signal) =>
+      supabase
+        .rpc('check_in', {
+          p_event_id: eventId,
+          p_lat: reading.lat,
+          p_lng: reading.lng,
+          p_accuracy_m: reading.accuracyM,
+        })
+        .abortSignal(signal),
+    );
+    if (timed.timedOut) return { ok: false, kind: 'timeout', message: TIMEOUT_MESSAGE };
+    const { data, error } = timed.value;
     if (error) return { ok: false, ...describeCheckInError(error) };
     const result = parseCheckInResult(data);
     return result ? { ok: true, result } : { ok: false, kind: 'unknown', message: GENERIC_MESSAGE };

@@ -54,6 +54,9 @@
  * Q8a: while sending, a drag let go far down springs back to fully open
  * (before, it could rest part-way down), and Android's back button, or any
  * other attempt to remove the screen, is ignored until the answer lands.
+ * Q8b: the server call gives up after 15 seconds (weak venue Wi-Fi), so
+ * that block can't last longer: the sheet then shows "Signal's weak, try
+ * again" with a warning buzz, and Back and Close work again.
  * Reduce Motion: no slide in or out (the screen just fades, as built). The
  * drag still works, because the finger moves it, but letting go closes or
  * snaps back at once with no spring.
@@ -89,7 +92,7 @@ import { readLocationForCheckIn } from '@/lib/check-in-location';
 import { resultScreen } from '@/lib/check-in-screens';
 import type { CheckInAction, CheckInView } from '@/lib/check-in-screens';
 import { getEvent } from '@/lib/events-read';
-import { tapSuccess } from '@/lib/haptics';
+import { tapSuccess, tapWarning } from '@/lib/haptics';
 import { motionAllowed, useReduceMotion } from '@/lib/reduce-motion';
 import { useDelayedFlag } from '@/lib/use-delayed-flag';
 import type { PublicEvent } from '@/lib/tonight';
@@ -299,6 +302,11 @@ export default function CheckInScreen() {
       } else if (outcome.kind === 'notFound') {
         setPhase({ kind: 'notFound' });
       } else {
+        // Q8b: no answer in 15 seconds ("Signal's weak, try again"). The
+        // warning buzz tells the guest to look; "Try again" asks the server
+        // again, and if the first try landed late it answers "already
+        // checked in", never a second check-in.
+        if (outcome.kind === 'timeout') tapWarning();
         setPhase({ kind: 'error', event, message: outcome.message });
       }
     } finally {

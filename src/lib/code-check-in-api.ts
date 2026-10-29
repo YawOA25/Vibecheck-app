@@ -23,6 +23,7 @@
 import type { ErrorLike } from '@/lib/auth-errors';
 import type { CheckInResult } from '@/lib/check-in-api';
 import { parseCheckInResult } from '@/lib/check-in-api';
+import { TIMEOUT_MESSAGE, withTimeout } from '@/lib/network-timeout';
 import { supabase } from '@/lib/supabase';
 
 /** How many characters a party code has (server rule: 6 of A-Z and 0-9). */
@@ -45,9 +46,13 @@ export type CodeCheckInResult =
   /** The host hasn't switched the party code on for this event. */
   | { status: 'code_off' };
 
-/** Kinds of failure the join screen treats differently. */
+/**
+ * Kinds of failure the join screen treats differently. 'timeout' (Q8b): no
+ * answer within 15 seconds, so we stopped waiting (the next try shows the
+ * server's real answer, e.g. "already checked in").
+ */
 export type CodeCheckInErrorKind =
-  'notFound' | 'notAllowed' | 'badCode' | 'realEvent' | 'network' | 'unknown';
+  'notFound' | 'notAllowed' | 'badCode' | 'realEvent' | 'network' | 'timeout' | 'unknown';
 
 /** What the submit functions return. */
 export type CodeCheckInOutcome =
@@ -168,7 +173,10 @@ async function callCheckIn(
   args: Record<string, string>,
 ): Promise<CodeCheckInOutcome> {
   try {
-    const { data, error } = await supabase.rpc(name, args);
+    // Gives up after 15 seconds (Q8b): the form is locked while sending.
+    const timed = await withTimeout((signal) => supabase.rpc(name, args).abortSignal(signal));
+    if (timed.timedOut) return { ok: false, kind: 'timeout', message: TIMEOUT_MESSAGE };
+    const { data, error } = timed.value;
     if (error) return { ok: false, ...describeCodeCheckInError(error) };
     const result = parseCodeCheckInResult(data);
     return result ? { ok: true, result } : { ok: false, kind: 'unknown', message: GENERIC_MESSAGE };
